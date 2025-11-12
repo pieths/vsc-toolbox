@@ -569,4 +569,4 @@ for available commands.
 **Quick Links:**
 - [Report an Issue](https://github.com/pieths/vsc-toolbox/issues)
 - [VS Code Extension API](https://code.visualstudio.com/api)
-- [Language Model Tools API](https://code.visualstudio.com/api/extension-guides/language-model)
+- [Language Model Tools API](https://code.visualstudio.com/api/extension-guides/ai/tools)
