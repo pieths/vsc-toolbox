@@ -1,0 +1,168 @@
+{
+  "name": "vsc-toolbox",
+  "displayName": "VSC Toolbox",
+  "description": "Tools for VS Code",
+  "version": "0.1.0",
+  "publisher": "Piet Schouten",
+  "author": {
+    "name": "Piet Hein Schouten"
+  },
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vscToolbox.getFileName",
+        "title": "Copy File Name",
+        "category": "VSC Toolbox"
+      },
+      {
+        "command": "vscToolbox.searchRemoteCode",
+        "title": "Search Remote Code",
+        "category": "VSC Toolbox"
+      },
+      {
+        "command": "vscToolbox.getWinDbgBreakpointLocation",
+        "title": "Get WinDbg Breakpoint Location",
+        "category": "VSC Toolbox"
+      }
+    ],
+    "configuration": {
+      "title": "VSC Toolbox",
+      "properties": {
+        "vscToolbox.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable VSC Toolbox"
+        },
+        "vscToolbox.searchUrls": {
+          "type": "array",
+          "default": [
+            {
+              "name": "Chromium Source",
+              "url": "https://source.chromium.org/search?q=\"{query}\""
+            },
+            {
+              "name": "GitHub Code Search",
+              "url": "https://github.com/search?q={query}&type=code"
+            }
+          ],
+          "description": "List of code search engines. Each entry should have 'name' and 'url' properties. Use {query} as placeholder.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Display name for this search engine"
+              },
+              "url": {
+                "type": "string",
+                "description": "URL template with {query} placeholder"
+              }
+            },
+            "required": [
+              "name",
+              "url"
+            ]
+          }
+        },
+        "vscToolbox.windbgModuleName": {
+          "type": "string",
+          "default": "chrome",
+          "description": "Module name to use as prefix for WinDbg breakpoint locations"
+        }
+      }
+    },
+    "languageModelTools": [
+      {
+        "name": "workspace_symbol",
+        "displayName": "Search Symbols",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "symbol-search",
+        "userDescription": "Search for symbols (classes, functions, variables, etc.) in code",
+        "modelDescription": "Search for symbols (classes, functions, variables, etc.) across the entire codebase using workspace symbol providers. Supports fuzzy/partial matching. Returns symbol names, kinds (Class, Function, Variable, etc.), file locations, and container names. IMPORTANT: All returned line and character positions are ZERO-BASED. This means if the result shows 'line: 100', that refers to the 101st line in the file (line 100 in zero-based indexing). When passing these positions to other tools like textDocument_references, use them AS-IS without adding or subtracting 1. The optional 'filter' parameter can limit results to specific file paths.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Symbol text to search for. Supports fuzzy matching (e.g., 'MyClass', 'myFunc', 'Vec' will match 'Vector')"
+            },
+            "filter": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Optional array of path patterns to filter results (e.g., ['src/core', 'include/'])"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "textDocument_references",
+        "displayName": "Find References",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "symbol-references",
+        "userDescription": "Find all references to a symbol at a specific location",
+        "modelDescription": "Find all references to a symbol at a specific location in a file. Returns all locations where the symbol is used throughout the codebase, including declarations. Use this to understand how a symbol is used, find all call sites of a function, or see where a variable is accessed. Requires exact file URI (file:// format) and zero-based line/character position. The file will be automatically opened if needed.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "uri": {
+              "type": "string",
+              "description": "File URI in file:// format (e.g., 'file:///c:/path/to/file.cpp' on Windows or 'file:///path/to/file.cpp' on Unix)"
+            },
+            "position": {
+              "type": "object",
+              "properties": {
+                "line": {
+                  "type": "number",
+                  "description": "Zero-based line number (first line is 0)"
+                },
+                "character": {
+                  "type": "number",
+                  "description": "Zero-based character offset within the line (first character is 0)"
+                }
+              },
+              "required": [
+                "line",
+                "character"
+              ],
+              "description": "Position of the symbol in the document"
+            }
+          },
+          "required": [
+            "uri",
+            "position"
+          ]
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.50.0",
+    "typescript": "^5.2.0"
+  }
+}
