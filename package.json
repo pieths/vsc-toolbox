@@ -34,6 +34,11 @@
         "command": "vscToolbox.getWinDbgBreakpointLocation",
         "title": "Get WinDbg Breakpoint Location",
         "category": "VSC Toolbox"
+      },
+      {
+        "command": "vscToolbox.getGnTargetsForFile",
+        "title": "Get GN Targets For File",
+        "category": "VSC Toolbox"
       }
     ],
     "configuration": {

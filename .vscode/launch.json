@@ -12,6 +12,15 @@
         "${workspaceFolder}/out/**/*.js"
       ],
       "preLaunchTask": "${defaultBuildTask}"
+    },
+    {
+      "name": "Attach to VS Code with Environment",
+      "type": "extensionHost",
+      "request": "attach",
+      "port": 5870,
+      "outFiles": [
+        "${workspaceFolder}/out/**/*.js"
+      ]
     }
   ]
 }

@@ -34,6 +34,8 @@ VSC Toolbox is a collection of productivity tools for VS Code that includes:
   configurable remote code search engines (Chromium Source, GitHub, etc.)
 - **Get WinDbg Breakpoint Location** - Generate WinDbg breakpoint strings for
   methods or source lines
+- **Get GN Targets For File** - Find which GN build targets (executables,
+  libraries, etc.) a source file belongs to
 
 ### Language Model Tools (For AI Agents)
 
@@ -216,6 +218,32 @@ Generate WinDbg-formatted breakpoint strings for the current code location.
 
 Change `"chrome"` to your module name (e.g., `"myapp"`).
 
+### Get GN Targets For File
+
+**Command:** `VSC Toolbox: Get GN Targets For File`
+
+Find which GN build targets a source file belongs to by querying the GN build system.
+
+**Features:**
+- Automatically detects available output directories in the `out/` folder
+- Remembers your last-used output directory
+- Supports filtering by target type (executable, shared_library, static_library, etc.)
+- Displays results in a new editor window, sorted alphabetically
+- For single results, automatically copies the target name to clipboard
+- Shows the exact GN command that was executed
+
+**Usage:**
+1. Open any source file in your workspace
+2. Run the command
+3. Select an output directory (e.g., `release_x64`, `debug_x64`)
+4. Choose target type
+5. View results in the opened editor window
+
+**Requirements:**
+- GN build system must be available in your PATH
+- An `out/` directory with at least one build configuration
+- The file must be part of the GN build graph
+
 ## Language Model Tools
 
 These tools are automatically available to AI agents like GitHub Copilot when the extension is active.
@@ -364,6 +392,36 @@ Change to match your module (`"myapp"`, etc.).
 npm run compile    # Compile once
 npm run watch      # Watch mode (auto-compile on change)
 npm run lint       # Run ESLint
+```
+
+### Debugging in Custom Environments
+
+If you need to debug the extension in a VS Code instance launched from a
+specific command-line environment (e.g., with custom environment variables),
+follow these steps:
+
+**One-time setup:** Create a symbolic link for the extension directory (may
+*require administrator PowerShell):
+
+```powershell
+New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.vscode\extensions\vsc-toolbox-dev" -Target "d:\tools\vsc-toolbox"
+```
+
+**Each time you debug:** Launch VS Code from the command line with inspection enabled:
+
+```powershell
+code --inspect-extensions=5870 .
+```
+
+**Attach the debugger:** In the VS Code instance with the vsc-toolbox workspace
+*open, select the `Attach to VS Code with Environment` debug configuration and
+*press F5 to start debugging.
+
+When finished with debugging and testing the changes, the symbolic link can be
+removed with:
+
+```
+Remove-Item "$env:USERPROFILE\.vscode\extensions\vsc-toolbox-dev"
 ```
 
 ### Project Structure
