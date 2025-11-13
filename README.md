@@ -401,7 +401,7 @@ specific command-line environment (e.g., with custom environment variables),
 follow these steps:
 
 **One-time setup:** Create a symbolic link for the extension directory (may
-*require administrator PowerShell):
+require administrator PowerShell):
 
 ```powershell
 New-Item -ItemType SymbolicLink -Path "$env:USERPROFILE\.vscode\extensions\vsc-toolbox-dev" -Target "d:\tools\vsc-toolbox"
@@ -414,8 +414,8 @@ code --inspect-extensions=5870 .
 ```
 
 **Attach the debugger:** In the VS Code instance with the vsc-toolbox workspace
-*open, select the `Attach to VS Code with Environment` debug configuration and
-*press F5 to start debugging.
+open, select the `Attach to VS Code with Environment` debug configuration and
+press F5 to start debugging.
 
 When finished with debugging and testing the changes, the symbolic link can be
 removed with:
@@ -521,7 +521,7 @@ export const COMMAND_REGISTRY = [
 ```
 
 **That's it!** The command will be automatically registered and available in the
-*Command Palette.
+Command Palette.
 
 ### Adding New Language Model Tools
 
