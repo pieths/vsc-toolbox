@@ -153,6 +153,31 @@
             "position"
           ]
         }
+      },
+      {
+        "name": "chromium_callback_analysis",
+        "displayName": "Analyze Chromium Callback",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "chromium-callback",
+        "userDescription": "Trace Chromium callback flow: find bound function and invocation sites",
+        "modelDescription": "Traces Chromium callback flow by analyzing a line containing a callback (bind site, parameter, or variable). Given a file path and line number, extracts: (1) the function originally bound into the callback and its location, (2) where the callback is eventually invoked (.Run() calls). Works with base::BindOnce, base::BindRepeating, callback parameters, and callback variables. Returns boundFunction, boundLocation, callbackVariable (if applicable), and invocationLocations array.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "filePath": {
+              "type": "string",
+              "description": "Absolute file path to the C++ file containing the callback"
+            },
+            "line": {
+              "type": "number",
+              "description": "Zero-based line number where the callback is created"
+            }
+          },
+          "required": [
+            "filePath",
+            "line"
+          ]
+        }
       }
     ]
   },
