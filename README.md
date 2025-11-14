@@ -36,6 +36,8 @@ VSC Toolbox is a collection of productivity tools for VS Code that includes:
   methods or source lines
 - **Get GN Targets For File** - Find which GN build targets (executables,
   libraries, etc.) a source file belongs to
+- **Test Language Model Tool** - Test any registered Language Model Tool directly
+  from the Command Palette without needing an AI agent
 
 ### Language Model Tools (For AI Agents)
 
@@ -243,6 +245,26 @@ Find which GN build targets a source file belongs to by querying the GN build sy
 - GN build system must be available in your PATH
 - An `out/` directory with at least one build configuration
 - The file must be part of the GN build graph
+
+### Test Language Model Tool
+
+**Command:** `VSC Toolbox: Test Language Model Tool`
+
+Test any registered Language Model Tool directly from the Command Palette. This
+is useful for verifying tool output and debugging tools without needing to invoke
+them through an AI agent.
+
+**Features:**
+- Select from all registered Language Model Tools
+- Provides appropriate input prompts based on the selected tool
+- Displays tool output as formatted JSON in a new editor window
+- Useful for development and debugging of new tools
+
+**Usage:**
+1. Run the command
+2. Select which tool to test from the list
+3. Provide the required inputs (varies by tool)
+4. View the JSON results in the opened editor window
 
 ## Language Model Tools
 

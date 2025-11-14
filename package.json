@@ -39,6 +39,11 @@
         "command": "vscToolbox.getGnTargetsForFile",
         "title": "Get GN Targets For File",
         "category": "VSC Toolbox"
+      },
+      {
+        "command": "vscToolbox.testLanguageModelTool",
+        "title": "Test Language Model Tool",
+        "category": "VSC Toolbox"
       }
     ],
     "configuration": {

@@ -5,6 +5,7 @@ import { GetFileNameCommand } from './getFileName';
 import { SearchRemoteCodeCommand } from './searchRemoteCode';
 import { GetWinDbgBreakpointLocationCommand } from './getWinDbgBreakpointLocation';
 import { GetGnTargetsForFileCommand } from './getGnTargetsForFile';
+import { TestLanguageModelToolCommand } from './testLanguageModelTool';
 
 /**
  * Command registry - add new commands here to automatically register them
@@ -14,4 +15,5 @@ export const COMMAND_REGISTRY = [
     SearchRemoteCodeCommand,
     GetWinDbgBreakpointLocationCommand,
     GetGnTargetsForFileCommand,
+    TestLanguageModelToolCommand,
 ] as const;
