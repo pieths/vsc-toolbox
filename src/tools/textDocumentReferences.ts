@@ -79,7 +79,7 @@ export class TextDocumentReferencesTool implements vscode.LanguageModelTool<ITex
                 uri,
                 position,
                 totalReferences: references.length,
-                references: references.map((ref) => ({
+                references: await Promise.all(references.map(async (ref) => ({
                     uri: ref.uri.toString(),
                     range: {
                         start: {
@@ -91,7 +91,8 @@ export class TextDocumentReferencesTool implements vscode.LanguageModelTool<ITex
                             character: ref.range.end.character,
                         },
                     },
-                })),
+                    sourceContext: await this.getSourceContextFromLocation(ref, 10, 10),
+                }))),
             };
 
             return new vscode.LanguageModelToolResult([
@@ -100,5 +101,93 @@ export class TextDocumentReferencesTool implements vscode.LanguageModelTool<ITex
         } catch (error: any) {
             throw new Error(`Failed to find references: ${error.message}. Verify the file URI and position are correct.`);
         }
+    }
+
+    /**
+     * Get source context from a location
+     * @param location The location to get context from
+     * @param numLinesBefore Number of lines before the location to include
+     * @param numLinesAfter Number of lines after the location to include
+     * @returns Array of source code lines
+     */
+    private async getSourceContextFromLocation(
+        location: vscode.Location,
+        numLinesBefore: number,
+        numLinesAfter: number
+    ): Promise<string[]> {
+        try {
+            const document = await vscode.workspace.openTextDocument(location.uri);
+
+            // Get document symbols to find containing method/function
+            const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
+                'vscode.executeDocumentSymbolProvider',
+                location.uri
+            );
+
+            // Find the containing method/function
+            let methodRange: vscode.Range | undefined;
+            if (symbols) {
+                methodRange = this.findContainingMethod(symbols, location.range.start);
+            }
+
+            // Calculate start and end lines, constrained by method boundaries if found
+            let startLine = Math.max(0, location.range.start.line - numLinesBefore);
+            let endLine = Math.min(document.lineCount - 1, location.range.start.line + numLinesAfter);
+
+            if (methodRange) {
+                // Constrain to method boundaries
+                startLine = Math.max(startLine, methodRange.start.line);
+                endLine = Math.min(endLine, methodRange.end.line);
+            }
+
+            const lines: string[] = [];
+            for (let i = startLine; i <= endLine; i++) {
+                lines.push(document.lineAt(i).text);
+            }
+
+            return lines;
+        } catch (error: any) {
+            return [`Error reading source: ${error.message}`];
+        }
+    }
+
+    /**
+     * Find the containing method/function for a position
+     * @param symbols Document symbols to search
+     * @param position Position to find container for
+     * @returns Range of the containing method/function, or undefined if not found
+     */
+    private findContainingMethod(
+        symbols: vscode.DocumentSymbol[],
+        position: vscode.Position
+    ): vscode.Range | undefined {
+        for (const symbol of symbols) {
+            // Check if this symbol contains the position
+            if (symbol.range.contains(position)) {
+                // Check if this is a method or function
+                if (
+                    symbol.kind === vscode.SymbolKind.Method ||
+                    symbol.kind === vscode.SymbolKind.Function ||
+                    symbol.kind === vscode.SymbolKind.Constructor
+                ) {
+                    return symbol.range;
+                }
+
+                // Recursively search children
+                if (symbol.children && symbol.children.length > 0) {
+                    const childResult = this.findContainingMethod(symbol.children, position);
+                    if (childResult) {
+                        return childResult;
+                    }
+                }
+
+                // If we're in a class/namespace/etc but not in a method, check children
+                if (symbol.children && symbol.children.length > 0) {
+                    continue;
+                }
+            }
+        }
+
+        return undefined;
     }
 }
