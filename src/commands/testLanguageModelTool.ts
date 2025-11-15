@@ -136,12 +136,24 @@ export class TestLanguageModelToolCommand {
             return undefined;
         }
 
+        const position = editor.selection.active;
+        const document = editor.document;
+
+        // Get the word at the cursor position (the symbol name)
+        const wordRange = document.getWordRangeAtPosition(position);
+        const symbolName = wordRange ? document.getText(wordRange) : '';
+
+        // Get the source line
+        const sourceLine = document.lineAt(position.line).text;
+
         return {
-            uri: editor.document.uri.toString(),
+            uri: document.uri.toString(),
             position: {
-                line: editor.selection.active.line,
-                character: editor.selection.active.character,
-            }
+                line: position.line,
+                character: position.character,
+            },
+            symbolName,
+            sourceLine,
         };
     }
 }

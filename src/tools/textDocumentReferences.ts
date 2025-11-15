@@ -12,6 +12,8 @@ export interface ITextDocumentReferencesParams {
         line: number;
         character: number;
     };
+    symbolName: string;
+    sourceLine: string;
 }
 
 /**
@@ -25,15 +27,15 @@ export class TextDocumentReferencesTool implements vscode.LanguageModelTool<ITex
         options: vscode.LanguageModelToolInvocationPrepareOptions<ITextDocumentReferencesParams>,
         _token: vscode.CancellationToken
     ): Promise<vscode.PreparedToolInvocation> {
-        const { uri, position } = options.input;
+        const { uri, position, symbolName } = options.input;
         const fileName = uri.split('/').pop() || uri;
 
         return {
-            invocationMessage: `Finding references at ${fileName}:${position.line + 1}:${position.character + 1}`,
+            invocationMessage: `Finding references to '${symbolName}' at ${fileName}:${position.line + 1}:${position.character + 1}`,
             confirmationMessages: {
                 title: 'Find References',
                 message: new vscode.MarkdownString(
-                    `Find all references to the symbol at:\n\n` +
+                    `Find all references to the symbol **${symbolName}** at:\n\n` +
                     `- **File**: \`${fileName}\`\n` +
                     `- **Line**: ${position.line + 1}\n` +
                     `- **Column**: ${position.character + 1}`
@@ -46,7 +48,7 @@ export class TextDocumentReferencesTool implements vscode.LanguageModelTool<ITex
         options: vscode.LanguageModelToolInvocationOptions<ITextDocumentReferencesParams>,
         _token: vscode.CancellationToken
     ): Promise<vscode.LanguageModelToolResult> {
-        const { uri, position } = options.input;
+        const { uri, position, symbolName, sourceLine } = options.input;
 
         try {
             // Parse the URI
@@ -54,7 +56,14 @@ export class TextDocumentReferencesTool implements vscode.LanguageModelTool<ITex
 
             // Open the document (VS Code will handle this internally)
             const document = await vscode.workspace.openTextDocument(parsedUri);
-            const vscodePosition = new vscode.Position(position.line, position.character);
+
+            // Get the exact position by verifying the source line and symbol
+            const vscodePosition = await this.resolveExactPosition(
+                document,
+                position,
+                symbolName,
+                sourceLine
+            );
 
             // Use VS Code's built-in command which handles language server communication
             // This works even for files that aren't open because VS Code manages it
@@ -77,7 +86,12 @@ export class TextDocumentReferencesTool implements vscode.LanguageModelTool<ITex
 
             const result = {
                 uri,
-                position,
+                position: {
+                    line: vscodePosition.line,
+                    character: vscodePosition.character,
+                },
+                symbolName: symbolName,
+                sourceLine: sourceLine,
                 totalReferences: references.length,
                 references: await Promise.all(references.map(async (ref) => ({
                     uri: ref.uri.toString(),
@@ -101,6 +115,53 @@ export class TextDocumentReferencesTool implements vscode.LanguageModelTool<ITex
         } catch (error: any) {
             throw new Error(`Failed to find references: ${error.message}. Verify the file URI and position are correct.`);
         }
+    }
+
+    /**
+     * Resolve the exact position by matching the source line and finding the symbol
+     * @param document The document to search in
+     * @param position The approximate position
+     * @param symbolName The name of the symbol to find
+     * @param sourceLine The exact source line content
+     * @returns The exact position of the symbol
+     */
+    private async resolveExactPosition(
+        document: vscode.TextDocument,
+        position: { line: number; character: number },
+        symbolName: string,
+        sourceLine: string
+    ): Promise<vscode.Position> {
+        // Search for the matching line within a reasonable range (±5 lines)
+        const searchRange = 5;
+        const startLine = Math.max(0, position.line - searchRange);
+        const endLine = Math.min(document.lineCount - 1, position.line + searchRange);
+
+        for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
+            const line = document.lineAt(lineNum);
+
+            // Check if this line matches the source line
+            if (line.text.trim() === sourceLine.trim()) {
+                // Found the matching line, now find the symbol within it
+                const symbolIndex = line.text.indexOf(symbolName);
+
+                if (symbolIndex !== -1) {
+                    // Return the position at the start of the symbol
+                    return new vscode.Position(lineNum, symbolIndex);
+                }
+            }
+        }
+
+        // If we couldn't find a match, fall back to the original position
+        // but try to find the symbol on that line
+        const fallbackLine = document.lineAt(Math.min(position.line, document.lineCount - 1));
+        const symbolIndex = fallbackLine.text.indexOf(symbolName);
+
+        if (symbolIndex !== -1) {
+            return new vscode.Position(position.line, symbolIndex);
+        }
+
+        // Last resort: use the original position
+        return new vscode.Position(position.line, position.character);
     }
 
     /**
