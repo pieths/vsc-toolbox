@@ -84,7 +84,7 @@ export class TestLanguageModelToolCommand {
             case 'getWorkspaceSymbol':
                 return this.getWorkspaceSymbolInput();
 
-            case 'textDocument_references':
+            case 'getDocumentSymbolReferences':
                 return this.getTextDocumentReferencesInput();
 
             default:
@@ -126,7 +126,7 @@ export class TestLanguageModelToolCommand {
     }
 
     /**
-     * Get input for textDocument_references tool
+     * Get input for getDocumentSymbolReferences tool
      */
     private async getTextDocumentReferencesInput(): Promise<any | undefined> {
         const editor = vscode.window.activeTextEditor;

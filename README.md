@@ -43,7 +43,7 @@ VSC Toolbox is a collection of productivity tools for VS Code that includes:
 
 - **getWorkspaceSymbol** - Search for symbols (classes, functions, variables)
   across your entire codebase with fuzzy matching
-- **textDocument_references** - Find all references to a symbol at a
+- **getDocumentSymbolReferences** - Find all references to a symbol at a
   specific location
 
 ## Prerequisites
@@ -314,14 +314,14 @@ Search for symbols across the entire codebase.
 }
 ```
 
-#### textDocument_references
+#### getDocumentSymbolReferences
 
 Find all references to a symbol at a specific location.
 
 **Request Format:**
 ```json
 {
-  "tool": "textDocument_references",
+  "tool": "getDocumentSymbolReferences",
   "arguments": {
     "uri": "file:///path/to/file.cpp",
     "position": {
@@ -464,7 +464,7 @@ vsc-toolbox/
 │   └── tools/               # Language Model Tools (for AI)
 │       ├── index.ts         # Tool registry
 │       ├── getWorkspaceSymbol.ts      # Workspace symbol tool
-│       └── textDocumentReferences.ts  # References tool
+│       └── getDocumentSymbolReferences.ts  # References tool
 ├── out/                     # Compiled JavaScript (generated)
 ├── node_modules/            # Dependencies (generated)
 ├── package.json             # Extension manifest and dependencies
@@ -602,12 +602,12 @@ Add your tool to `src/tools/index.ts`:
 
 ```typescript
 import { GetWorkspaceSymbolTool } from './getWorkspaceSymbol';
-import { TextDocumentReferencesTool } from './textDocumentReferences';
+import { GetDocumentSymbolReferencesTool } from './getDocumentSymbolReferences';
 import { MyNewTool } from './myNewTool';  // Add import
 
 export const TOOL_REGISTRY = [
   { name: 'getWorkspaceSymbol', class: GetWorkspaceSymbolTool },
-  { name: 'textDocument_references', class: TextDocumentReferencesTool },
+  { name: 'getDocumentSymbolReferences', class: GetDocumentSymbolReferencesTool },
   { name: 'my_new_tool', class: MyNewTool },  // Add to registry
 ] as const;
 ```

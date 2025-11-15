@@ -17,10 +17,10 @@ export interface ITextDocumentReferencesParams {
 }
 
 /**
- * Text Document References Tool - Find all references to a symbol
+ * Get Document Symbol References Tool - Find all references to a symbol
  * Uses VS Code's built-in reference provider
  */
-export class TextDocumentReferencesTool implements vscode.LanguageModelTool<ITextDocumentReferencesParams> {
+export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool<ITextDocumentReferencesParams> {
     constructor() { }
 
     async prepareInvocation(

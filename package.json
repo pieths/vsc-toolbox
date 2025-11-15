@@ -121,10 +121,10 @@
         }
       },
       {
-        "name": "textDocument_references",
+        "name": "getDocumentSymbolReferences",
         "displayName": "Find References",
         "canBeReferencedInPrompt": true,
-        "toolReferenceName": "symbol-references",
+        "toolReferenceName": "get-document-symbol-references",
         "userDescription": "Find all references to a symbol at a specific location",
         "modelDescription": "Find all references to a symbol at a specific location in a file. Returns all locations where the symbol is used throughout the codebase, including declarations, along with source context (up to 10 lines before and 10 lines after each reference, constrained to method boundaries when applicable). Use this to understand how a symbol is used, find all call sites of a function, or see where a variable is accessed. Requires exact file URI (file:// format), zero-based line/character position, the symbol name, and the complete source line text. The symbol name and source line are used to verify and correct the exact position, helping prevent off-by-one errors. If you need more detailed information than what is returned, read the file directly.",
         "inputSchema": {
