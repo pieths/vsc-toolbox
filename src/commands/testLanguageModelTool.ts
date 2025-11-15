@@ -81,7 +81,7 @@ export class TestLanguageModelToolCommand {
      */
     private async getInputForTool(toolName: string): Promise<any | undefined> {
         switch (toolName) {
-            case 'workspace_symbol':
+            case 'getWorkspaceSymbol':
                 return this.getWorkspaceSymbolInput();
 
             case 'textDocument_references':
@@ -94,7 +94,7 @@ export class TestLanguageModelToolCommand {
     }
 
     /**
-     * Get input for workspace_symbol tool
+     * Get input for getWorkspaceSymbol tool
      */
     private async getWorkspaceSymbolInput(): Promise<any | undefined> {
         const query = await vscode.window.showInputBox({

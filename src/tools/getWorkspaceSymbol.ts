@@ -12,10 +12,10 @@ export interface IWorkspaceSymbolParams {
 }
 
 /**
- * Workspace Symbol Tool - Search for symbols across the codebase
+ * Get Workspace Symbol Tool - Search for symbols across the codebase
  * Uses VS Code's built-in workspace symbol provider
  */
-export class WorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspaceSymbolParams> {
+export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspaceSymbolParams> {
     constructor() { }
 
     async prepareInvocation(

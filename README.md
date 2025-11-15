@@ -41,7 +41,7 @@ VSC Toolbox is a collection of productivity tools for VS Code that includes:
 
 ### Language Model Tools (For AI Agents)
 
-- **workspace_symbol** - Search for symbols (classes, functions, variables)
+- **getWorkspaceSymbol** - Search for symbols (classes, functions, variables)
   across your entire codebase with fuzzy matching
 - **textDocument_references** - Find all references to a symbol at a
   specific location
@@ -274,14 +274,14 @@ These tools are automatically available to AI agents like GitHub Copilot when th
 
 Once the extension is active, AI agents can use the following tools:
 
-#### workspace_symbol
+#### getWorkspaceSymbol
 
 Search for symbols across the entire codebase.
 
 **Request Format:**
 ```json
 {
-  "tool": "workspace_symbol",
+  "tool": "getWorkspaceSymbol",
   "arguments": {
     "query": "HttpRequest",
     "filter": ["/src/net/", "/include/"]
@@ -463,7 +463,7 @@ vsc-toolbox/
 │   │   └── getWinDbgBreakpointLocation.ts  # WinDbg breakpoint command
 │   └── tools/               # Language Model Tools (for AI)
 │       ├── index.ts         # Tool registry
-│       ├── workspaceSymbol.ts      # Workspace symbol tool
+│       ├── getWorkspaceSymbol.ts      # Workspace symbol tool
 │       └── textDocumentReferences.ts  # References tool
 ├── out/                     # Compiled JavaScript (generated)
 ├── node_modules/            # Dependencies (generated)
@@ -601,12 +601,12 @@ export class MyNewTool implements vscode.LanguageModelTool<IMyNewToolParams> {
 Add your tool to `src/tools/index.ts`:
 
 ```typescript
-import { WorkspaceSymbolTool } from './workspaceSymbol';
+import { GetWorkspaceSymbolTool } from './getWorkspaceSymbol';
 import { TextDocumentReferencesTool } from './textDocumentReferences';
 import { MyNewTool } from './myNewTool';  // Add import
 
 export const TOOL_REGISTRY = [
-  { name: 'workspace_symbol', class: WorkspaceSymbolTool },
+  { name: 'getWorkspaceSymbol', class: GetWorkspaceSymbolTool },
   { name: 'textDocument_references', class: TextDocumentReferencesTool },
   { name: 'my_new_tool', class: MyNewTool },  // Add to registry
 ] as const;
