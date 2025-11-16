@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import * as vscode from 'vscode';
+import { createMarkdownCodeBlock } from '../common/markdownUtils';
 
 /**
  * Input parameters for finding references
@@ -58,6 +59,8 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
             const document = await vscode.workspace.openTextDocument(parsedUri);
 
             // Get the exact position by verifying the source line and symbol
+            // This helps in cases where the agent might have been off by one
+            // or more lines when providing the position.
             const vscodePosition = await this.resolveExactPosition(
                 document,
                 position,
@@ -84,33 +87,41 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                 ]);
             }
 
-            const result = {
-                uri,
-                position: {
-                    line: vscodePosition.line,
-                    character: vscodePosition.character,
-                },
-                symbolName: symbolName,
-                sourceLine: sourceLine,
-                totalReferences: references.length,
-                references: await Promise.all(references.map(async (ref) => ({
-                    uri: ref.uri.toString(),
-                    range: {
-                        start: {
-                            line: ref.range.start.line,
-                            character: ref.range.start.character,
-                        },
-                        end: {
-                            line: ref.range.end.line,
-                            character: ref.range.end.character,
-                        },
-                    },
-                    sourceContext: await this.getSourceContextFromLocation(ref, 10, 10),
-                }))),
-            };
+            const markdownParts: string[] = [];
+            markdownParts.push(`# References for \`${symbolName}\``);
+            markdownParts.push('');
+            markdownParts.push(`**Total References:** ${references.length}`);
+            markdownParts.push('');
+            markdownParts.push('## Original Symbol Location');
+            markdownParts.push('');
+            markdownParts.push(`- **URI**: ${uri}`);
+            markdownParts.push(`- **Line**: ${vscodePosition.line + 1}`);
+            markdownParts.push(`- **Character**: ${vscodePosition.character + 1}`);
+            markdownParts.push(`- **Source Line**: \`${sourceLine}\``);
+            markdownParts.push('');
+
+            if (references.length > 0) {
+                for (let i = 0; i < references.length; i++) {
+                    const ref = references[i];
+                    const sourceContext = await this.getSourceContextFromLocation(ref, 10, 10);
+
+                    markdownParts.push(`## Reference ${i + 1}`);
+                    markdownParts.push('');
+                    markdownParts.push(`- **URI**: ${ref.uri.toString()}`);
+                    markdownParts.push(`- **Line**: ${ref.range.start.line + 1}`);
+                    markdownParts.push(`- **Character**: ${ref.range.start.character + 1}`);
+                    markdownParts.push('');
+                    markdownParts.push('**Source Context:**');
+                    markdownParts.push('');
+                    markdownParts.push(...sourceContext);
+                    markdownParts.push('');
+                }
+            }
+
+            const markdown = markdownParts.join('\n');
 
             return new vscode.LanguageModelToolResult([
-                new vscode.LanguageModelTextPart(JSON.stringify(result, null, 2)),
+                new vscode.LanguageModelTextPart(markdown),
             ]);
         } catch (error: any) {
             throw new Error(`Failed to find references: ${error.message}. Verify the file URI and position are correct.`);
@@ -141,6 +152,9 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
 
             // Check if this line matches the source line
             if (line.text.trim() === sourceLine.trim()) {
+                // TODO: handle the case where multiple instances
+                // of the symbol exist on the same line.
+
                 // Found the matching line, now find the symbol within it
                 const symbolIndex = line.text.indexOf(symbolName);
 
@@ -169,7 +183,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
      * @param location The location to get context from
      * @param numLinesBefore Number of lines before the location to include
      * @param numLinesAfter Number of lines after the location to include
-     * @returns Array of source code lines
+     * @returns Array of markdown lines including code block
      */
     private async getSourceContextFromLocation(
         location: vscode.Location,
@@ -201,12 +215,9 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                 endLine = Math.min(endLine, methodRange.end.line);
             }
 
-            const lines: string[] = [];
-            for (let i = startLine; i <= endLine; i++) {
-                lines.push(document.lineAt(i).text);
-            }
-
-            return lines;
+            const range = new vscode.Range(startLine, 0, endLine, document.lineAt(endLine).text.length);
+            const codeBlock = createMarkdownCodeBlock(document, range);
+            return [`Showing source lines from ${startLine + 1} - ${endLine + 1}:`, ...codeBlock];
         } catch (error: any) {
             return [`Error reading source: ${error.message}`];
         }
