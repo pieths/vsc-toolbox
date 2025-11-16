@@ -135,6 +135,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
      * @param symbolName The name of the symbol to find
      * @param sourceLine The exact source line content
      * @returns The exact position of the symbol
+     * @throws Error if the source line or symbol cannot be found
      */
     private async resolveExactPosition(
         document: vscode.TextDocument,
@@ -162,20 +163,20 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                     // Return the position at the start of the symbol
                     return new vscode.Position(lineNum, symbolIndex);
                 }
+
+                // Found matching line but symbol not on it
+                throw new Error(
+                    `Found matching source line at line ${lineNum + 1}, but symbol '${symbolName}' ` +
+                    `was not found on that line. Line content: "${line.text}"`
+                );
             }
         }
 
-        // If we couldn't find a match, fall back to the original position
-        // but try to find the symbol on that line
-        const fallbackLine = document.lineAt(Math.min(position.line, document.lineCount - 1));
-        const symbolIndex = fallbackLine.text.indexOf(symbolName);
-
-        if (symbolIndex !== -1) {
-            return new vscode.Position(position.line, symbolIndex);
-        }
-
-        // Last resort: use the original position
-        return new vscode.Position(position.line, position.character);
+        // Could not find the matching source line
+        throw new Error(
+            `Could not find source line "${sourceLine}" within ±${searchRange} lines of line ${position.line + 1}. ` +
+            `Searched lines ${startLine + 1} to ${endLine + 1}. Please verify the position and source line are correct.`
+        );
     }
 
     /**
