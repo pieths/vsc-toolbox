@@ -65,7 +65,7 @@ export class TestLanguageModelToolCommand {
                         content: result.content.map(c =>
                             c instanceof vscode.LanguageModelTextPart ? c.value : ''
                         ).join('\n'),
-                        language: 'json',
+                        language: 'markdown',
                     });
 
                     await vscode.window.showTextDocument(doc);
