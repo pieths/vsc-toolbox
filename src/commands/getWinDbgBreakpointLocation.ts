@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import * as vscode from 'vscode';
-import { buildQualifiedName } from '../common/documentUtils';
+import { getQualifiedNameFromDocumentSymbol } from '../common/documentUtils';
 
 /**
  * Get WinDbg Breakpoint Location Command - Creates WinDbg breakpoint strings
@@ -74,7 +74,7 @@ export class GetWinDbgBreakpointLocationCommand {
             }
 
             // Find the symbol at the cursor position
-            const methodSymbol = this.findSymbolAtPosition(symbols, position);
+            const methodSymbol = this.findFunctionAtPosition(symbols, position);
 
             if (!methodSymbol) {
                 vscode.window.showWarningMessage('Could not find method at cursor position');
@@ -82,7 +82,7 @@ export class GetWinDbgBreakpointLocationCommand {
             }
 
             // Build the fully qualified method name
-            const qualifiedName = buildQualifiedName(symbols, methodSymbol, position);
+            const qualifiedName = getQualifiedNameFromDocumentSymbol(symbols, methodSymbol, position);
 
             return `${moduleName}!${qualifiedName}`;
         } catch (error) {
@@ -102,7 +102,15 @@ export class GetWinDbgBreakpointLocationCommand {
         return `\`${moduleName}!${windbgPath}:${lineNumber}\``;
     }
 
-    private findSymbolAtPosition(
+    /**
+     * Find the most specific symbol that is a method, function, or constructor
+     * at the given position. Recursively searches through the symbol hierarchy
+     * to find the deepest matching symbol.
+     * @param symbols Array of document symbols to search through
+     * @param position The position to find the symbol at
+     * @returns The most specific method/function/constructor symbol at the position, or undefined if none found
+     */
+    private findFunctionAtPosition(
         symbols: vscode.DocumentSymbol[],
         position: vscode.Position
     ): vscode.DocumentSymbol | undefined {
@@ -110,7 +118,7 @@ export class GetWinDbgBreakpointLocationCommand {
             if (symbol.range.contains(position)) {
                 // Check if a child symbol contains the position (more specific)
                 if (symbol.children && symbol.children.length > 0) {
-                    const childSymbol = this.findSymbolAtPosition(symbol.children, position);
+                    const childSymbol = this.findFunctionAtPosition(symbol.children, position);
                     if (childSymbol) {
                         return childSymbol;
                     }

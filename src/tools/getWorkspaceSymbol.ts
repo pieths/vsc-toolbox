@@ -3,6 +3,7 @@
 
 import * as vscode from 'vscode';
 import { createMarkdownCodeBlock } from '../common/markdownUtils';
+import { getQualifiedNameFromSymbolInfo } from '../common/documentUtils';
 
 /**
  * Input parameters for workspace symbol search
@@ -136,7 +137,7 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
         lines.push('');
 
         // Add fully qualified name
-        const qualifiedName = this.getFullyQualifiedName(symbolInfo);
+        const qualifiedName = await getQualifiedNameFromSymbolInfo(symbolInfo);
         lines.push('**Full Name**: `' + qualifiedName + '`');
         lines.push('');
 
@@ -228,19 +229,6 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
 
         // For non-C++ languages or if we didn't find ';' or '{', return the original range
         return symbolInfo.location.range;
-    }
-
-    /**
-     * Get the fully qualified name by combining container and symbol name
-     * @param symbolInfo The symbol information
-     * @returns Fully qualified name with namespace/class hierarchy
-     */
-    private getFullyQualifiedName(symbolInfo: vscode.SymbolInformation): string {
-        // TODO: update with more language support if needed
-        if (symbolInfo.containerName) {
-            return `${symbolInfo.containerName}::${symbolInfo.name}`;
-        }
-        return symbolInfo.name;
     }
 
     /**
