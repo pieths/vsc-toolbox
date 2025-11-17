@@ -97,10 +97,18 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
             markdownParts.push(`- **Filtered Results:** ${filteredSymbols.length}`);
             markdownParts.push('');
 
-            for (let i = 0; i < filteredSymbols.length; i++) {
-                const s = filteredSymbols[i];
-                const symbolMarkdown = await this.convertSymbolToMarkdown(s);
-                markdownParts.push(symbolMarkdown);
+            // Process symbols in batches to improve performance
+            const batchSize = 20;
+            for (let i = 0; i < filteredSymbols.length; i += batchSize) {
+                const batch = filteredSymbols.slice(i, i + batchSize);
+                // Promise.all to process batch concurrently and in order
+                // within each batch. batch.map starts all conversions,
+                // then we await all of them to complete before moving
+                // to the next batch.
+                const batchResults = await Promise.all(
+                    batch.map(s => this.convertSymbolToMarkdown(s))
+                );
+                markdownParts.push(...batchResults);
             }
 
             const markdown = markdownParts.join('\n');
