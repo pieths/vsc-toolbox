@@ -18,10 +18,28 @@ export interface ITextDocumentReferencesParams {
 }
 
 /**
+ * Group of references within a range of lines.
+ * The references contained in a group all fall
+ * within the startLine and endLine. This is used
+ * to cluster references when displaying them since
+ * multiple references may have overlapping source
+ * contexts and we want to avoid duplication in the
+ * output.
+ */
+interface ReferenceGroup {
+    references: vscode.Location[];
+    startLine: number;
+    endLine: number;
+}
+
+/**
  * Get Document Symbol References Tool - Find all references to a symbol
  * Uses VS Code's built-in reference provider
  */
 export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool<ITextDocumentReferencesParams> {
+    private contextLinesBefore: number = 10;
+    private contextLinesAfter: number = 10;
+
     constructor() { }
 
     async prepareInvocation(
@@ -74,51 +92,21 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                 'vscode.executeReferenceProvider',
                 document.uri,
                 vscodePosition
+            ) || [];
+
+            const consolidatedReferences = await this.consolidateReferences(
+                references,
+                this.contextLinesBefore,
+                this.contextLinesAfter
             );
 
-            if (!references) {
-                return new vscode.LanguageModelToolResult([
-                    new vscode.LanguageModelTextPart(JSON.stringify({
-                        uri,
-                        position,
-                        totalReferences: 0,
-                        references: []
-                    }, null, 2)),
-                ]);
-            }
-
-            const markdownParts: string[] = [];
-            markdownParts.push(`# References for \`${symbolName}\``);
-            markdownParts.push('');
-            markdownParts.push(`**Total References:** ${references.length}`);
-            markdownParts.push('');
-            markdownParts.push('## Original Symbol Location');
-            markdownParts.push('');
-            markdownParts.push(`- **URI**: ${uri}`);
-            markdownParts.push(`- **Line**: ${vscodePosition.line + 1}`);
-            markdownParts.push(`- **Character**: ${vscodePosition.character + 1}`);
-            markdownParts.push(`- **Source Line**: \`${sourceLine}\``);
-            markdownParts.push('');
-
-            if (references.length > 0) {
-                for (let i = 0; i < references.length; i++) {
-                    const ref = references[i];
-                    const sourceContext = await this.getSourceContextFromLocation(ref, 10, 10);
-
-                    markdownParts.push(`## Reference ${i + 1}`);
-                    markdownParts.push('');
-                    markdownParts.push(`- **URI**: ${ref.uri.toString()}`);
-                    markdownParts.push(`- **Line**: ${ref.range.start.line + 1}`);
-                    markdownParts.push(`- **Character**: ${ref.range.start.character + 1}`);
-                    markdownParts.push('');
-                    markdownParts.push('**Source Context:**');
-                    markdownParts.push('');
-                    markdownParts.push(...sourceContext);
-                    markdownParts.push('');
-                }
-            }
-
-            const markdown = markdownParts.join('\n');
+            const markdown = await this.getMarkdownFromReferences(
+                symbolName,
+                uri,
+                vscodePosition,
+                sourceLine,
+                consolidatedReferences
+            );
 
             return new vscode.LanguageModelToolResult([
                 new vscode.LanguageModelTextPart(markdown),
@@ -126,6 +114,126 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
         } catch (error: any) {
             throw new Error(`Failed to find references: ${error.message}. Verify the file URI and position are correct.`);
         }
+    }
+
+    private async consolidateReferences(
+        references: vscode.Location[],
+        contextLinesBefore: number,
+        contextLinesAfter: number
+    ): Promise<ReferenceGroup[]> {
+        const referenceGroups: ReferenceGroup[] = [];
+
+        // Start by getting the context ranges for each reference
+        for (let i = 0; i < references.length; i++) {
+            const range = await this.getSourceContextRangeFromLocation(
+                references[i],
+                contextLinesBefore,
+                contextLinesAfter
+            );
+            referenceGroups.push({
+                references: [references[i]],
+                startLine: range.start.line,
+                endLine: range.end.line
+            });
+        }
+
+        // Now that we have the desired source context ranges
+        // for each reference, consolidate overlapping or adjacent
+        // reference groups in the same file
+
+        // Group references by URI
+        const groupsByUri = new Map<string, ReferenceGroup[]>();
+        for (const group of referenceGroups) {
+            const uri = group.references[0].uri.toString();
+            if (!groupsByUri.has(uri)) {
+                groupsByUri.set(uri, []);
+            }
+            groupsByUri.get(uri)!.push(group);
+        }
+
+        // Consolidate groups within each file
+        const consolidated: ReferenceGroup[] = [];
+        for (const [uri, groups] of groupsByUri) {
+            // Sort groups by startLine
+            groups.sort((a, b) => a.startLine - b.startLine);
+
+            // Merge overlapping or adjacent groups
+            let currentGroup = groups[0];
+            for (let i = 1; i < groups.length; i++) {
+                const nextGroup = groups[i];
+
+                // Check if groups overlap or are adjacent
+                if (nextGroup.startLine <= currentGroup.endLine + 1) {
+                    // Merge: extend the current group and add references
+                    currentGroup.endLine = Math.max(currentGroup.endLine, nextGroup.endLine);
+                    currentGroup.references.push(...nextGroup.references);
+                } else {
+                    // No overlap, push current and start a new one
+                    consolidated.push(currentGroup);
+                    currentGroup = nextGroup;
+                }
+            }
+            // Don't forget the last group
+            consolidated.push(currentGroup);
+        }
+
+        return consolidated;
+    }
+
+    /**
+     * Generate markdown output from references
+     * @param symbolName The name of the symbol
+     * @param uri The original URI
+     * @param position The resolved position
+     * @param sourceLine The source line text
+     * @param references Array of reference locations
+     * @returns Formatted markdown string
+     */
+    private async getMarkdownFromReferences(
+        symbolName: string,
+        uri: string,
+        position: vscode.Position,
+        sourceLine: string,
+        references: ReferenceGroup[]
+    ): Promise<string> {
+        const totalReferences = references.reduce((sum, group) => sum + group.references.length, 0);
+
+        const markdownParts: string[] = [];
+        markdownParts.push(`# References for \`${symbolName}\``);
+        markdownParts.push('');
+        markdownParts.push(`**Total References:** ${totalReferences}`);
+        markdownParts.push('');
+        markdownParts.push('## Original Symbol Location');
+        markdownParts.push('');
+        markdownParts.push(`- **URI**: ${uri}`);
+        markdownParts.push(`- **Line**: ${position.line + 1}`);
+        markdownParts.push(`- **Character**: ${position.character + 1}`);
+        markdownParts.push(`- **Source Line**: \`${sourceLine}\``);
+        markdownParts.push('');
+
+        if (references.length > 0) {
+            for (let i = 0; i < references.length; i++) {
+                const ref = references[i];
+                const uri = ref.references[0].uri.toString();
+                const sourceContext = await this.getSourceContext(ref);
+                const positionStrings =
+                    ref.references.map(
+                        r => `L${r.range.start.line + 1}:${r.range.start.character + 1}`
+                    ).join(', ');
+
+                markdownParts.push(`## References ${i + 1}`);
+                markdownParts.push('');
+                markdownParts.push(`- **URI**: ${uri}`);
+                markdownParts.push(`- **Locations** (${ref.references.length} references): ${positionStrings}`);
+                markdownParts.push('');
+                markdownParts.push('**Source Context:**');
+                markdownParts.push('');
+                markdownParts.push(...sourceContext);
+                markdownParts.push('');
+            }
+        }
+
+        return markdownParts.join('\n');
     }
 
     /**
@@ -180,17 +288,17 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
     }
 
     /**
-     * Get source context from a location
+     * Get the source context range from a location
      * @param location The location to get context from
      * @param numLinesBefore Number of lines before the location to include
      * @param numLinesAfter Number of lines after the location to include
-     * @returns Array of markdown lines including code block
+     * @returns The range of source context, constrained by method boundaries if found
      */
-    private async getSourceContextFromLocation(
+    private async getSourceContextRangeFromLocation(
         location: vscode.Location,
         numLinesBefore: number,
         numLinesAfter: number
-    ): Promise<string[]> {
+    ): Promise<vscode.Range> {
         try {
             const document = await vscode.workspace.openTextDocument(location.uri);
 
@@ -217,8 +325,29 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
             }
 
             const range = new vscode.Range(startLine, 0, endLine, document.lineAt(endLine).text.length);
+            return range;
+        } catch (error: any) {
+            return location.range;
+        }
+    }
+
+    /**
+     * Get source context from a reference group
+     * @param referenceGroup The reference group containing locations and line range
+     * @returns Array of markdown lines including code block
+     */
+    private async getSourceContext(
+        referenceGroup: ReferenceGroup,
+    ): Promise<string[]> {
+        try {
+            const uri = referenceGroup.references[0].uri;
+            const range = new vscode.Range(
+                referenceGroup.startLine, 0,
+                referenceGroup.endLine, 0
+            );
+            const document = await vscode.workspace.openTextDocument(uri);
             const codeBlock = createMarkdownCodeBlock(document, range);
-            return [`Showing source lines from ${startLine + 1} - ${endLine + 1}:`, ...codeBlock];
+            return [`Showing source lines from ${range.start.line + 1} - ${range.end.line + 1}:`, ...codeBlock];
         } catch (error: any) {
             return [`Error reading source: ${error.message}`];
         }
