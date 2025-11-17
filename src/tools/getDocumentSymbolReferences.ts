@@ -205,7 +205,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
         markdownParts.push('');
         markdownParts.push('## Original Symbol Location');
         markdownParts.push('');
-        markdownParts.push(`- **URI**: ${uri}`);
+        markdownParts.push(`- **URI**: ${decodeURIComponent(uri)}`);
         markdownParts.push(`- **Line**: ${position.line + 1}`);
         markdownParts.push(`- **Character**: ${position.character + 1}`);
         markdownParts.push(`- **Source Line**: \`${sourceLine}\``);
@@ -223,7 +223,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
 
                 markdownParts.push(`## References ${i + 1}`);
                 markdownParts.push('');
-                markdownParts.push(`- **URI**: ${uri}`);
+                markdownParts.push(`- **URI**: ${decodeURIComponent(uri)}`);
                 markdownParts.push(`- **Locations** (${ref.references.length} references): ${positionStrings}`);
                 markdownParts.push('');
                 markdownParts.push('**Source Context:**');

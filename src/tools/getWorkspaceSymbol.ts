@@ -148,7 +148,7 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
 
         lines.push('### Location');
         lines.push('');
-        lines.push(`- **URI**: ${symbolInfo.location.uri.toString()}`);
+        lines.push(`- **URI**: ${decodeURIComponent(symbolInfo.location.uri.toString())}`);
         lines.push(`- **Line**: ${symbolInfo.location.range.start.line + 1}`);
         lines.push(`- **Character**: ${symbolInfo.location.range.start.character + 1}`);
         lines.push('');
