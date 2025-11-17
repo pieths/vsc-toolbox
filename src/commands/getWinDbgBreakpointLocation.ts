@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import * as vscode from 'vscode';
+import { buildQualifiedName } from '../common/documentUtils';
 
 /**
  * Get WinDbg Breakpoint Location Command - Creates WinDbg breakpoint strings
@@ -81,7 +82,7 @@ export class GetWinDbgBreakpointLocationCommand {
             }
 
             // Build the fully qualified method name
-            const qualifiedName = this.buildQualifiedName(symbols, methodSymbol, position);
+            const qualifiedName = buildQualifiedName(symbols, methodSymbol, position);
 
             return `${moduleName}!${qualifiedName}`;
         } catch (error) {
@@ -124,55 +125,5 @@ export class GetWinDbgBreakpointLocationCommand {
             }
         }
         return undefined;
-    }
-
-    private buildQualifiedName(
-        symbols: vscode.DocumentSymbol[],
-        targetSymbol: vscode.DocumentSymbol,
-        position: vscode.Position
-    ): string {
-        const parts: string[] = [];
-
-        // Build the hierarchy by finding parent symbols
-        this.buildNameHierarchy(symbols, targetSymbol, position, parts);
-
-        return parts.join('::');
-    }
-
-    private buildNameHierarchy(
-        symbols: vscode.DocumentSymbol[],
-        targetSymbol: vscode.DocumentSymbol,
-        position: vscode.Position,
-        parts: string[]
-    ): boolean {
-        for (const symbol of symbols) {
-            if (symbol === targetSymbol) {
-                parts.push(symbol.name);
-                return true;
-            }
-
-            if (symbol.range.contains(position) && symbol.children && symbol.children.length > 0) {
-                // This symbol might be a parent (namespace, class, etc.)
-                if (symbol.kind === vscode.SymbolKind.Namespace ||
-                    symbol.kind === vscode.SymbolKind.Class ||
-                    symbol.kind === vscode.SymbolKind.Struct ||
-                    symbol.kind === vscode.SymbolKind.Module) {
-                    parts.push(symbol.name);
-                }
-
-                if (this.buildNameHierarchy(symbol.children, targetSymbol, position, parts)) {
-                    return true;
-                }
-
-                // If we didn't find it in children, remove this symbol's name
-                if (symbol.kind === vscode.SymbolKind.Namespace ||
-                    symbol.kind === vscode.SymbolKind.Class ||
-                    symbol.kind === vscode.SymbolKind.Struct ||
-                    symbol.kind === vscode.SymbolKind.Module) {
-                    parts.pop();
-                }
-            }
-        }
-        return false;
     }
 }
