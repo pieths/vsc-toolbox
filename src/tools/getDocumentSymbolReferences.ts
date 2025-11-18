@@ -263,39 +263,57 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
         symbolName: string,
         sourceLine: string
     ): Promise<vscode.Position> {
-        // Search for the matching line within a reasonable range (±5 lines)
-        const searchRange = 5;
-        const startLine = Math.max(0, position.line - searchRange);
-        const endLine = Math.min(document.lineCount - 1, position.line + searchRange);
+        // Search for the matching line, checking position.line first.
+        // offsets = [0, -1, 1, -2, 2, -3, 3, ...]
+        const range = 5;
+        const offsets = [0, ...Array.from({ length: range }, (_, i) => [-(i + 1), i + 1]).flat()];
 
-        for (let lineNum = startLine; lineNum <= endLine; lineNum++) {
+        for (const offset of offsets) {
+            const lineNum = position.line + offset;
+
+            // Skip if line is out of bounds
+            if (lineNum < 0 || lineNum >= document.lineCount) {
+                continue;
+            }
+
             const line = document.lineAt(lineNum);
 
             // Check if this line matches the source line
             if (line.text.trim() === sourceLine.trim()) {
-                // TODO: handle the case where multiple instances
-                // of the symbol exist on the same line.
-
-                // Found the matching line, now find the symbol within it
-                const symbolIndex = line.text.indexOf(symbolName);
-
-                if (symbolIndex !== -1) {
-                    // Return the position at the start of the symbol
-                    return new vscode.Position(lineNum, symbolIndex);
+                // Find all instances of the symbol on this line
+                const symbolIndices: number[] = [];
+                let searchIndex = 0;
+                while (true) {
+                    const foundIndex = line.text.indexOf(symbolName, searchIndex);
+                    if (foundIndex === -1) break;
+                    symbolIndices.push(foundIndex);
+                    searchIndex = foundIndex + 1;
                 }
 
-                // Found matching line but symbol not on it
-                throw new Error(
-                    `Found matching source line at line ${lineNum + 1}, but symbol '${symbolName}' ` +
-                    `was not found on that line. Line content: "${line.text}"`
+                if (symbolIndices.length === 0) {
+                    // Found matching line but symbol not on it
+                    throw new Error(
+                        `Found matching source line at line ${lineNum + 1}, but symbol '${symbolName}' ` +
+                        `was not found on that line. Line content: "${line.text}"`
+                    );
+                }
+
+                // Choose the symbol instance closest to the provided character position
+                const closestIndex = symbolIndices.reduce((closest, current) =>
+                    Math.abs(current - position.character) < Math.abs(closest - position.character)
+                        ? current
+                        : closest
                 );
+
+                // Return the position at the start of the closest symbol
+                return new vscode.Position(lineNum, closestIndex);
             }
         }
 
         // Could not find the matching source line
         throw new Error(
-            `Could not find source line "${sourceLine}" within ±${searchRange} lines of line ${position.line + 1}. ` +
-            `Searched lines ${startLine + 1} to ${endLine + 1}. Please verify the position and source line are correct.`
+            `Could not find source line within ±${range} lines of line ${position.line + 1}. ` +
+            `Please verify the position and source line are correct.`
         );
     }
 
