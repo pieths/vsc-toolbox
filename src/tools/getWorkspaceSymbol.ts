@@ -45,15 +45,40 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
         const { query, filter } = options.input;
 
         try {
-            // Use VS Code's built-in workspace symbol provider
-            const symbols = await vscode.commands.executeCommand<vscode.SymbolInformation[]>(
-                'vscode.executeWorkspaceSymbolProvider',
-                query
-            );
+            // Split query by spaces and search for each part
+            const queryParts = query.trim().split(/\s+/).filter(q => q.length > 0);
 
-            if (!symbols) {
+            let symbols: vscode.SymbolInformation[] = [];
+
+            if (queryParts.length === 0) {
+                throw new Error('No valid query provided.');
+            }
+
+            // Execute workspace symbol provider for each query part
+            for (const queryPart of queryParts) {
+                const partSymbols = await vscode.commands.executeCommand<vscode.SymbolInformation[]>(
+                    'vscode.executeWorkspaceSymbolProvider',
+                    queryPart
+                );
+
+                if (partSymbols) {
+                    symbols.push(...partSymbols);
+                }
+            }
+
+            if (symbols.length === 0) {
                 throw new Error('No symbols returned from workspace symbol provider.');
             }
+
+            // Remove duplicate symbols (same name and location)
+            const uniqueSymbols = new Map<string, vscode.SymbolInformation>();
+            for (const symbol of symbols) {
+                const key = `${symbol.name}|${symbol.location.uri.toString()}|${symbol.location.range.start.line}|${symbol.location.range.start.character}`;
+                if (!uniqueSymbols.has(key)) {
+                    uniqueSymbols.set(key, symbol);
+                }
+            }
+            symbols = Array.from(uniqueSymbols.values());
 
             // Filter out symbols from generated mojom files
             let filteredSymbols = symbols.filter((symbol: vscode.SymbolInformation) => {
