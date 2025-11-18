@@ -212,11 +212,14 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
         markdownParts.push('');
 
         if (references.length > 0) {
-            let cumulativeRefIndex = 1; // Track the reference number across groups
+            // Fetch all source contexts in batches of 20 (I/O bound)
+            const sourceContexts = await this.getSourceContextsInBatches(references, 20);
+
+            let cumulativeRefIndex = 1;
             for (let i = 0; i < references.length; i++) {
                 const ref = references[i];
                 const uri = ref.references[0].uri.toString();
-                const sourceContext = await this.getSourceContext(ref);
+                const sourceContext = sourceContexts[i];
                 const positionStrings =
                     ref.references.map(
                         r => `L${r.range.start.line + 1}:${r.range.start.character + 1}`
@@ -338,6 +341,29 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
         } catch (error: any) {
             return location.range;
         }
+    }
+
+    /**
+     * Get source contexts for all reference groups in batches
+     * @param references Array of reference groups
+     * @param batchSize Number of groups to process in parallel
+     * @returns Array of source context strings in the same order as input
+     */
+    private async getSourceContextsInBatches(
+        references: ReferenceGroup[],
+        batchSize: number
+    ): Promise<string[][]> {
+        const allContexts: string[][] = [];
+
+        for (let i = 0; i < references.length; i += batchSize) {
+            const batch = references.slice(i, i + batchSize);
+            const batchResults = await Promise.all(
+                batch.map(ref => this.getSourceContext(ref))
+            );
+            allContexts.push(...batchResults);
+        }
+
+        return allContexts;
     }
 
     /**
