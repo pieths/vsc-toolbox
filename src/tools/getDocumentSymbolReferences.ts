@@ -212,6 +212,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
         markdownParts.push('');
 
         if (references.length > 0) {
+            let cumulativeRefIndex = 1; // Track the reference number across groups
             for (let i = 0; i < references.length; i++) {
                 const ref = references[i];
                 const uri = ref.references[0].uri.toString();
@@ -221,7 +222,13 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                         r => `L${r.range.start.line + 1}:${r.range.start.character + 1}`
                     ).join(', ');
 
-                markdownParts.push(`## References ${i + 1}`);
+                // Show range if multiple references in this group, otherwise single number
+                const refCount = ref.references.length;
+                const refLabel = refCount === 1
+                    ? `${cumulativeRefIndex}`
+                    : `${cumulativeRefIndex}-${cumulativeRefIndex + refCount - 1}`;
+
+                markdownParts.push(`## References ${refLabel}`);
                 markdownParts.push('');
                 markdownParts.push(`- **URI**: ${decodeURIComponent(uri)}`);
                 markdownParts.push(`- **Locations** (${ref.references.length} references): ${positionStrings}`);
@@ -230,6 +237,8 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                 markdownParts.push('');
                 markdownParts.push(...sourceContext);
                 markdownParts.push('');
+
+                cumulativeRefIndex += refCount;
             }
         }
 
