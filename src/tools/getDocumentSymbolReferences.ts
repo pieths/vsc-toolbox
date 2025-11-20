@@ -3,6 +3,10 @@
 
 import * as vscode from 'vscode';
 import { createMarkdownCodeBlock } from '../common/markdownUtils';
+import {
+    getFunctionSignatureRange,
+    getQualifiedNameFromDocumentSymbol
+} from '../common/documentUtils';
 
 /**
  * Input parameters for finding references
@@ -17,19 +21,24 @@ export interface ITextDocumentReferencesParams {
     sourceLine: string;
 }
 
+interface SourceContext {
+    sourceLines: string[];
+    range: vscode.Range;
+}
+
 /**
- * Group of references within a range of lines.
- * The references contained in a group all fall
- * within the startLine and endLine. This is used
- * to cluster references when displaying them since
- * multiple references may have overlapping source
- * contexts and we want to avoid duplication in the
- * output.
+ * Group of references within a range of lines.  The references contained in a
+ * group all fall within the range start.line and end.line. This is used to
+ * cluster references when displaying them since multiple references may have
+ * overlapping source contexts and we want to avoid duplication in the output.
+ * If the container is set, it indicates the DocumentSymbol that contains all
+ * references in this group.
  */
 interface ReferenceGroup {
     references: vscode.Location[];
-    startLine: number;
-    endLine: number;
+    range: vscode.Range;
+    container?: vscode.DocumentSymbol;
+    containerFullName?: string;
 }
 
 /**
@@ -122,19 +131,17 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
         contextLinesAfter: number
     ): Promise<ReferenceGroup[]> {
         const referenceGroups: ReferenceGroup[] = [];
+        const batchSize = 20;
 
-        // Start by getting the context ranges for each reference
-        for (let i = 0; i < references.length; i++) {
-            const range = await this.getSourceContextRangeFromLocation(
-                references[i],
-                contextLinesBefore,
-                contextLinesAfter
+        for (let i = 0; i < references.length; i += batchSize) {
+            const batch = references.slice(i, i + batchSize);
+            const batchResults = await Promise.all(
+                batch.map(ref => this.getReferenceGroupFromLocation(
+                    ref,
+                    contextLinesBefore,
+                    contextLinesAfter))
             );
-            referenceGroups.push({
-                references: [references[i]],
-                startLine: range.start.line,
-                endLine: range.end.line
-            });
+            referenceGroups.push(...batchResults);
         }
 
         // Now that we have the desired source context ranges
@@ -155,20 +162,30 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
         const consolidated: ReferenceGroup[] = [];
         for (const [uri, groups] of groupsByUri) {
             // Sort groups by startLine
-            groups.sort((a, b) => a.startLine - b.startLine);
+            groups.sort((a, b) => a.range.start.line - b.range.start.line);
 
-            // Merge overlapping or adjacent groups
+            // Merge overlapping or adjacent groups with the same container
             let currentGroup = groups[0];
             for (let i = 1; i < groups.length; i++) {
                 const nextGroup = groups[i];
 
-                // Check if groups overlap or are adjacent
-                if (nextGroup.startLine <= currentGroup.endLine + 1) {
+                // Check if containers match (both undefined, or same container range)
+                // Note: We compare by range because each getReferenceGroupFromLocation call
+                // fetches symbols separately, so === reference equality won't work
+                const containersMatch =
+                    (currentGroup.container === undefined && nextGroup.container === undefined) ||
+                    (currentGroup.container !== undefined &&
+                        nextGroup.container !== undefined &&
+                        currentGroup.container.selectionRange.isEqual(nextGroup.container.selectionRange));
+
+                // Check if groups have the same container and overlap or are adjacent
+                if (containersMatch &&
+                    nextGroup.range.start.line <= currentGroup.range.end.line + 1) {
                     // Merge: extend the current group and add references
-                    currentGroup.endLine = Math.max(currentGroup.endLine, nextGroup.endLine);
+                    currentGroup.range = currentGroup.range.union(nextGroup.range);
                     currentGroup.references.push(...nextGroup.references);
                 } else {
-                    // No overlap, push current and start a new one
+                    // No overlap or different container, push current and start a new one
                     consolidated.push(currentGroup);
                     currentGroup = nextGroup;
                 }
@@ -213,7 +230,8 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
 
         if (references.length > 0) {
             // Fetch all source contexts in batches of 20 (I/O bound)
-            const sourceContexts = await this.getSourceContextsInBatches(references, 20);
+            const containerSourceContexts = await this.getContainerSourceContexts(references, 20);
+            const sourceContexts = await this.getSourceContexts(references, 20);
 
             let cumulativeRefIndex = 1;
             for (let i = 0; i < references.length; i++) {
@@ -237,8 +255,38 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                 markdownParts.push(`- **Locations** (${ref.references.length} references): ${positionStrings}`);
                 markdownParts.push('');
                 markdownParts.push('**Source Context:**');
+
+                // If there is only one location contained in this reference group,
+                // and it matches the container symbol (aka. location and container
+                // both reference the same method name), then adjust output accordingly.
+                const locationMatchesContainer = ref.container &&
+                    ref.references.length == 1 &&
+                    ref.container.selectionRange.isEqual(ref.references[0].range);
+
+                if (ref.containerFullName) {
+                    const containerKind = vscode.SymbolKind[ref.container!.kind];
+                    markdownParts.push('');
+
+                    if (locationMatchesContainer) {
+                        markdownParts.push(`${containerKind} full name: \`${ref.containerFullName}\``);
+                    } else {
+                        markdownParts.push(`References contained in ${containerKind}: \`${ref.containerFullName}\``);
+                    }
+                }
+
+                if (containerSourceContexts[i] && !locationMatchesContainer) {
+                    const context = containerSourceContexts[i];
+                    const startLineNum = context.range.start.line + 1;
+                    const endLineNum = context.range.end.line + 1;
+                    const containerKind = vscode.SymbolKind[ref.container!.kind];
+                    markdownParts.push('');
+                    markdownParts.push(`${containerKind} signature (showing source lines ${startLineNum} - ${endLineNum}): `);
+                    markdownParts.push(...context.sourceLines);
+                }
+
                 markdownParts.push('');
-                markdownParts.push(...sourceContext);
+                markdownParts.push(`Showing references in source lines from ${sourceContext.range.start.line + 1} - ${sourceContext.range.end.line + 1}: `);
+                markdownParts.push(...sourceContext.sourceLines);
                 markdownParts.push('');
 
                 cumulativeRefIndex += refCount;
@@ -294,7 +342,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                     // Found matching line but symbol not on it
                     throw new Error(
                         `Found matching source line at line ${lineNum + 1}, but symbol '${symbolName}' ` +
-                        `was not found on that line. Line content: "${line.text}"`
+                        `was not found on that line.Line content: "${line.text}"`
                     );
                 }
 
@@ -312,23 +360,16 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
 
         // Could not find the matching source line
         throw new Error(
-            `Could not find source line within ±${range} lines of line ${position.line + 1}. ` +
+            `Could not find source line within ±${range} lines of line ${position.line + 1}.` +
             `Please verify the position and source line are correct.`
         );
     }
 
-    /**
-     * Get the source context range from a location
-     * @param location The location to get context from
-     * @param numLinesBefore Number of lines before the location to include
-     * @param numLinesAfter Number of lines after the location to include
-     * @returns The range of source context, constrained by method boundaries if found
-     */
-    private async getSourceContextRangeFromLocation(
+    private async getReferenceGroupFromLocation(
         location: vscode.Location,
         numLinesBefore: number,
         numLinesAfter: number
-    ): Promise<vscode.Range> {
+    ): Promise<ReferenceGroup> {
         try {
             const document = await vscode.workspace.openTextDocument(location.uri);
 
@@ -338,45 +379,189 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                 location.uri
             );
 
-            // Find the containing method/function
-            let methodRange: vscode.Range | undefined;
+            // Find the container corresponding to the location
+            let container: vscode.DocumentSymbol | undefined;
             if (symbols) {
-                methodRange = this.findContainingMethod(symbols, location.range.start);
+                container = this.findContainer(symbols, location.range);
             }
 
             // Calculate start and end lines, constrained by method boundaries if found
             let startLine = Math.max(0, location.range.start.line - numLinesBefore);
-            let endLine = Math.min(document.lineCount - 1, location.range.start.line + numLinesAfter);
+            let endLine = Math.min(document.lineCount - 1, location.range.end.line + numLinesAfter);
 
-            if (methodRange) {
-                // Constrain to method boundaries
-                startLine = Math.max(startLine, methodRange.start.line);
-                endLine = Math.min(endLine, methodRange.end.line);
+            let containerFullName: string | undefined;
+            if (container) {
+                // Constrain to container boundaries
+                startLine = Math.max(startLine, container.range.start.line);
+                endLine = Math.min(endLine, container.range.end.line);
+
+                containerFullName = getQualifiedNameFromDocumentSymbol(
+                    symbols,
+                    container,
+                    container.selectionRange.start
+                );
             }
 
-            const range = new vscode.Range(startLine, 0, endLine, document.lineAt(endLine).text.length);
-            return range;
+            const endLineLength = document.lineAt(endLine).text.length;
+            const range = new vscode.Range(
+                new vscode.Position(startLine, 0),
+                new vscode.Position(endLine, endLineLength)
+            );
+
+            return {
+                references: [location],
+                range,
+                container,
+                containerFullName
+            };
         } catch (error: any) {
-            return location.range;
+            return {
+                references: [location],
+                range: location.range
+            };
         }
+    }
+
+    private findContainer(
+        symbols: vscode.DocumentSymbol[],
+        range: vscode.Range
+    ): vscode.DocumentSymbol | undefined {
+        const containerKinds = [
+            vscode.SymbolKind.Module,
+            vscode.SymbolKind.Namespace,
+            vscode.SymbolKind.Package,
+            vscode.SymbolKind.Class,
+            vscode.SymbolKind.Interface,
+            vscode.SymbolKind.Enum,
+            vscode.SymbolKind.Struct,
+            vscode.SymbolKind.Method,
+            vscode.SymbolKind.Function,
+            vscode.SymbolKind.Constructor
+        ];
+
+        for (const symbol of symbols) {
+            // Check if this symbol contains the range
+            if (symbol.range.contains(range)) {
+                // Check if this is a container type
+                if (containerKinds.includes(symbol.kind)) {
+                    // Recursively search children to find the most specific container
+                    if (symbol.children && symbol.children.length > 0) {
+                        const childResult = this.findContainer(symbol.children, range);
+                        if (childResult) {
+                            return childResult;
+                        }
+                    }
+                    // No child container found, this is the most specific container
+                    return symbol;
+                }
+
+                // Not a container type, but might have children that are containers
+                if (symbol.children && symbol.children.length > 0) {
+                    const childResult = this.findContainer(symbol.children, range);
+                    if (childResult) {
+                        return childResult;
+                    }
+                }
+            }
+        }
+
+        return undefined;
+    }
+
+    /**
+     * Get container signature source contexts for all reference groups
+     * @param references Array of reference groups
+     * @param batchSize Number of groups to process in parallel
+     * @returns Array of source contexts in the same order as input
+     */
+    private async getContainerSourceContexts(
+        references: ReferenceGroup[],
+        batchSize: number
+    ): Promise<SourceContext[]> {
+        const containerSignatureSourceContexts: SourceContext[] = [];
+        const containerSignatureRanges: (vscode.Range | undefined)[] = [];
+
+        // First, get all container signature ranges in batches
+        for (let i = 0; i < references.length; i += batchSize) {
+            const batch = references.slice(i, i + batchSize);
+            const batchResults = await Promise.all(
+                batch.map(async ref => {
+                    // Only get signature range for callable containers
+                    if (!ref.container) {
+                        return undefined;
+                    }
+
+                    const callableKinds = [
+                        vscode.SymbolKind.Function,
+                        vscode.SymbolKind.Method,
+                        vscode.SymbolKind.Constructor
+                    ];
+
+                    if (!callableKinds.includes(ref.container.kind)) {
+                        return undefined;
+                    }
+
+                    const document = await vscode.workspace.openTextDocument(ref.references[0].uri);
+                    return getFunctionSignatureRange(document, ref.container.selectionRange);
+                })
+            );
+            containerSignatureRanges.push(...batchResults);
+        }
+
+        // For each reference group, check if the container signature
+        // overlaps with the reference context window. If it does,
+        // mark it as undefined to avoid showing it separately and
+        // update the source context to include the container signature.
+        for (let i = 0; i < references.length; i++) {
+            const ref = references[i];
+            const containerSignatureRange = containerSignatureRanges[i];
+
+            // Check if signature overlaps with reference context
+            // or is close (within 5 lines after)
+            if (containerSignatureRange) {
+                const delta = ref.range.start.line - containerSignatureRange.end.line;
+                if (containerSignatureRange.intersection(ref.range) ||
+                    (delta >= 0 && delta <= 5)) {
+                    // Combine the signature with the source context so
+                    // that only the source context is needed in the output
+                    ref.range = ref.range.union(containerSignatureRange);
+                    containerSignatureRanges[i] = undefined;
+                }
+            }
+        }
+
+        // Convert valid ranges to source contexts
+        for (let i = 0; i < containerSignatureRanges.length; i++) {
+            const range = containerSignatureRanges[i];
+            if (range) {
+                const ref = references[i];
+                const context = await this.getSourceContext(ref.references[0].uri, range);
+                containerSignatureSourceContexts.push(context);
+            } else {
+                // Push undefined placeholder to maintain array alignment
+                containerSignatureSourceContexts.push(undefined as any);
+            }
+        }
+
+        return containerSignatureSourceContexts;
     }
 
     /**
      * Get source contexts for all reference groups in batches
      * @param references Array of reference groups
      * @param batchSize Number of groups to process in parallel
-     * @returns Array of source context strings in the same order as input
+     * @returns Array of source contexts in the same order as input
      */
-    private async getSourceContextsInBatches(
+    private async getSourceContexts(
         references: ReferenceGroup[],
         batchSize: number
-    ): Promise<string[][]> {
-        const allContexts: string[][] = [];
+    ): Promise<SourceContext[]> {
+        const allContexts: SourceContext[] = [];
 
         for (let i = 0; i < references.length; i += batchSize) {
             const batch = references.slice(i, i + batchSize);
             const batchResults = await Promise.all(
-                batch.map(ref => this.getSourceContext(ref))
+                batch.map(ref => this.getSourceContext(ref.references[0].uri, ref.range))
             );
             allContexts.push(...batchResults);
         }
@@ -387,62 +572,24 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
     /**
      * Get source context from a reference group
      * @param referenceGroup The reference group containing locations and line range
-     * @returns Array of markdown lines including code block
+     * @returns Source context with lines and range
      */
     private async getSourceContext(
-        referenceGroup: ReferenceGroup,
-    ): Promise<string[]> {
+        uri: vscode.Uri,
+        range: vscode.Range
+    ): Promise<SourceContext> {
         try {
-            const uri = referenceGroup.references[0].uri;
-            const range = new vscode.Range(
-                referenceGroup.startLine, 0,
-                referenceGroup.endLine, 0
-            );
             const document = await vscode.workspace.openTextDocument(uri);
             const codeBlock = createMarkdownCodeBlock(document, range);
-            return [`Showing source lines from ${range.start.line + 1} - ${range.end.line + 1}:`, ...codeBlock];
+            return {
+                sourceLines: codeBlock,
+                range
+            };
         } catch (error: any) {
-            return [`Error reading source: ${error.message}`];
+            return {
+                sourceLines: [`Error reading source: ${error.message} `],
+                range: range
+            };
         }
-    }
-
-    /**
-     * Find the containing method/function for a position
-     * @param symbols Document symbols to search
-     * @param position Position to find container for
-     * @returns Range of the containing method/function, or undefined if not found
-     */
-    private findContainingMethod(
-        symbols: vscode.DocumentSymbol[],
-        position: vscode.Position
-    ): vscode.Range | undefined {
-        for (const symbol of symbols) {
-            // Check if this symbol contains the position
-            if (symbol.range.contains(position)) {
-                // Check if this is a method or function
-                if (
-                    symbol.kind === vscode.SymbolKind.Method ||
-                    symbol.kind === vscode.SymbolKind.Function ||
-                    symbol.kind === vscode.SymbolKind.Constructor
-                ) {
-                    return symbol.range;
-                }
-
-                // Recursively search children
-                if (symbol.children && symbol.children.length > 0) {
-                    const childResult = this.findContainingMethod(symbol.children, position);
-                    if (childResult) {
-                        return childResult;
-                    }
-                }
-
-                // If we're in a class/namespace/etc but not in a method, check children
-                if (symbol.children && symbol.children.length > 0) {
-                    continue;
-                }
-            }
-        }
-
-        return undefined;
     }
 }

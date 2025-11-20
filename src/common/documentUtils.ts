@@ -131,3 +131,49 @@ function findDocumentSymbol(
 
     return undefined;
 }
+
+/**
+ * Get the range for a function signature.
+ * Currently only implemented for C++.
+ * @param document The text document
+ * @param functionNameRange The range of the function name
+ * @returns Range covering the complete function signature
+ */
+export function getFunctionSignatureRange(
+    document: vscode.TextDocument,
+    functionNameRange: vscode.Range
+): vscode.Range {
+    const startLine = functionNameRange.start.line;
+    const startChar = functionNameRange.start.character;
+
+    // Check if this is a C++ file
+    const languageId = document.languageId;
+    const isCpp = languageId === 'cpp' || languageId === 'c';
+
+    // TODO: check to see if using document symbols would work better for
+    // handling more complex signatures (i.e. return type on line above).
+    // For C++, search forward until we find ';' or '{'
+    if (isCpp) {
+        for (let lineNum = startLine; lineNum < document.lineCount; lineNum++) {
+            const lineText = document.lineAt(lineNum).text;
+            const searchFrom = (lineNum === startLine) ? startChar : 0;
+
+            // Look for ';' or '{' in this line
+            for (let charIndex = searchFrom; charIndex < lineText.length; charIndex++) {
+                const char = lineText[charIndex];
+                if (char === ';' || char === '{') {
+                    // Found the end - return range from start to this position (inclusive)
+                    return new vscode.Range(
+                        startLine,
+                        startChar,
+                        lineNum,
+                        charIndex + 1
+                    );
+                }
+            }
+        }
+    }
+
+    // For non-C++ languages or if we didn't find ';' or '{', return the original range
+    return functionNameRange;
+}
