@@ -391,9 +391,39 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
 
             let containerFullName: string | undefined;
             if (container) {
-                // Constrain to container boundaries
-                startLine = Math.max(startLine, container.range.start.line);
-                endLine = Math.min(endLine, container.range.end.line);
+                // First, constrain to container boundaries
+                const containerStart = container.range.start.line;
+                const containerEnd = container.range.end.line;
+
+                startLine = Math.max(startLine, containerStart);
+                endLine = Math.min(endLine, containerEnd);
+
+                // Now maximize the range within container boundaries
+                // Calculate how much context we wanted vs what we got
+                const maxContextLines = numLinesBefore + numLinesAfter + (location.range.end.line - location.range.start.line);
+                const currentContextLines = endLine - startLine;
+                const missingLines = maxContextLines - currentContextLines;
+
+                if (missingLines > 0) {
+                    // Try to expand the range to use the full context budget
+                    // First try expanding upwards
+                    const availableAbove = startLine - containerStart;
+                    const expandAbove = Math.min(availableAbove, missingLines);
+                    startLine -= expandAbove;
+
+                    let remaining = missingLines - expandAbove;
+                    if (remaining > 0) {
+                        // Then try expanding downwards
+                        const availableBelow = containerEnd - endLine;
+                        const expandBelow = Math.min(availableBelow, remaining);
+                        endLine += expandBelow;
+                    }
+                }
+
+                // At this point, the range is maximized within container boundaries
+                // while still being within the constraints of the maximum context
+                // window size and the following should hold true:
+                // containerStart ≤ startLine ≤ endLine ≤ containerEnd
 
                 containerFullName = getQualifiedNameFromDocumentSymbol(
                     symbols,
