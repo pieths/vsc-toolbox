@@ -36,6 +36,8 @@ VSC Toolbox is a collection of productivity tools for VS Code that includes:
   methods or source lines
 - **Get GN Targets For File** - Find which GN build targets (executables,
   libraries, etc.) a source file belongs to
+- **Filter Lines By Pattern** - Filter lines in the current file using glob
+  patterns and open matching lines in a new editor tab
 - **Test Language Model Tool** - Test any registered Language Model Tool directly
   from the Command Palette without needing an AI agent
 
@@ -245,6 +247,31 @@ Find which GN build targets a source file belongs to by querying the GN build sy
 - GN build system must be available in your PATH
 - An `out/` directory with at least one build configuration
 - The file must be part of the GN build graph
+
+### Filter Lines By Pattern
+
+**Command:** `VSC Toolbox: Filter Lines By Pattern`
+
+Filter lines in the current file using glob patterns and display matching lines
+in a new editor tab.
+
+**Features:**
+- Multi-select from previously used patterns
+- Add new patterns via the `+` button or by typing and pressing Enter
+- Delete patterns from history via the trash button on each item
+- Patterns are stored per workspace
+- Supports glob wildcards: `*` (any characters) and `?` (single character)
+- Non-destructive: opens filtered results in a new untitled tab
+- Preserves original line order
+- Case insensitive matching
+- Keyboard-friendly: use arrows, Space to select/deselect, Enter to apply
+
+**Usage:**
+1. Open any file
+2. Run the command
+3. Type a pattern (e.g., `error`, `media*service`) and/or select from history
+4. Press Enter to apply
+5. View matching lines in the new editor tab
 
 ### Test Language Model Tool
 

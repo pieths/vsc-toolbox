@@ -6,6 +6,7 @@ import { SearchRemoteCodeCommand } from './searchRemoteCode';
 import { GetWinDbgBreakpointLocationCommand } from './getWinDbgBreakpointLocation';
 import { GetGnTargetsForFileCommand } from './getGnTargetsForFile';
 import { TestLanguageModelToolCommand } from './testLanguageModelTool';
+import { FilterLinesByPatternCommand } from './filterLinesByPattern';
 
 /**
  * Command registry - add new commands here to automatically register them
@@ -16,4 +17,5 @@ export const COMMAND_REGISTRY = [
     GetWinDbgBreakpointLocationCommand,
     GetGnTargetsForFileCommand,
     TestLanguageModelToolCommand,
+    FilterLinesByPatternCommand,
 ] as const;

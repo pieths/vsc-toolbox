@@ -44,6 +44,11 @@
         "command": "vscToolbox.testLanguageModelTool",
         "title": "Test Language Model Tool",
         "category": "VSC Toolbox"
+      },
+      {
+        "command": "vscToolbox.filterLinesByPattern",
+        "title": "Filter Lines By Pattern",
+        "category": "VSC Toolbox"
       }
     ],
     "configuration": {
