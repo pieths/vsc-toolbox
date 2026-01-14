@@ -80,9 +80,12 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
             }
             symbols = Array.from(uniqueSymbols.values());
 
-            // Filter out symbols from generated mojom files
+            // Filter out symbols from generated or unwanted files
+            // TODO: make this list configurable
+            const excludePatterns = [/mojom/, /\.md$/, /depot_tools\/win_toolchain/];
             let filteredSymbols = symbols.filter((symbol: vscode.SymbolInformation) => {
-                return !symbol.location.uri.toString().includes('mojom');
+                const uri = symbol.location.uri.toString();
+                return !excludePatterns.some(pattern => pattern.test(uri));
             });
 
             // Apply optional filtering
