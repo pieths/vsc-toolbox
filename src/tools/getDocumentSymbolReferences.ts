@@ -103,8 +103,10 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                 vscodePosition
             ) || [];
 
+            const verifiedReferences = await this.verifyReferences(references, symbolName);
+
             const consolidatedReferences = await this.consolidateReferences(
-                references,
+                verifiedReferences,
                 this.contextLinesBefore,
                 this.contextLinesAfter
             );
@@ -123,6 +125,73 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
         } catch (error: any) {
             throw new Error(`Failed to find references: ${error.message}. Verify the file URI and position are correct.`);
         }
+    }
+
+    /**
+     * Verify that references actually contain the symbol at the specified location.
+     * This filters out stale references that may occur due to language server bugs
+     * (e.g., clangd retaining old locations when lines are removed from a file).
+     * See: https://github.com/clangd/clangd/issues/2548
+     * @param references Array of reference locations to verify
+     * @param symbolName The name of the symbol to look for
+     * @returns Filtered array containing only valid references
+     */
+    private async verifyReferences(
+        references: vscode.Location[],
+        symbolName: string
+    ): Promise<vscode.Location[]> {
+        const verifiedReferences: vscode.Location[] = [];
+
+        // Escape special regex characters in the symbol name
+        const escapedSymbol = symbolName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const symbolRegex = new RegExp(`\\b${escapedSymbol}\\b`, 'g');
+
+        // Group references by URI to minimize document opens
+        const refsByUri = new Map<string, vscode.Location[]>();
+        for (const ref of references) {
+            const uriStr = ref.uri.toString();
+            if (!refsByUri.has(uriStr)) {
+                refsByUri.set(uriStr, []);
+            }
+            refsByUri.get(uriStr)!.push(ref);
+        }
+
+        // Verify references for each document
+        for (const [uriStr, refs] of refsByUri) {
+            try {
+                const uri = vscode.Uri.parse(uriStr);
+                const document = await vscode.workspace.openTextDocument(uri);
+
+                for (const ref of refs) {
+                    const line = ref.range.start.line;
+
+                    // Check if line is within document bounds
+                    if (line < 0 || line >= document.lineCount) {
+                        continue;
+                    }
+
+                    const lineText = document.lineAt(line).text;
+
+                    // Skip if character position is past end of line
+                    if (ref.range.start.character >= lineText.length) {
+                        continue;
+                    }
+
+                    // Verify the symbol exists at the exact position specified
+                    // by the reference. If not, the reference is stale.
+                    symbolRegex.lastIndex = ref.range.start.character;
+                    const match = symbolRegex.exec(lineText);
+                    if (match && match.index === ref.range.start.character) {
+                        verifiedReferences.push(ref);
+                    }
+                }
+            } catch (error) {
+                // If we can't open the document, skip these references
+                continue;
+            }
+        }
+
+        return verifiedReferences;
     }
 
     private async consolidateReferences(
