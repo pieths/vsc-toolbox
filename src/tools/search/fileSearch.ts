@@ -148,6 +148,7 @@ export class FileSearchTool implements vscode.LanguageModelTool<FileSearchParams
         options: vscode.LanguageModelToolInvocationOptions<FileSearchParams>,
         token: vscode.CancellationToken
     ): Promise<vscode.LanguageModelToolResult> {
+        const startTime = Date.now();
         const { query } = options.input;
 
         // Validate query
@@ -235,6 +236,9 @@ export class FileSearchTool implements vscode.LanguageModelTool<FileSearchParams
             if (errors.length > 0) {
                 warn(`File search: ${errors.length} files had errors`);
             }
+
+            const elapsed = Date.now() - startTime;
+            log(`File search: Query "${query}" completed in ${elapsed}ms (${results.length} matches in ${searchInputs.length} files)`);
 
             // Format and return results
             const markdown = formatResults(results, query);
