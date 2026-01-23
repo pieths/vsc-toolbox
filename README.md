@@ -553,7 +553,7 @@ vsc-toolbox/
 │   │       ├── contentIndex.ts    # Main singleton interface
 │   │       ├── cacheManager.ts    # File content cache management
 │   │       ├── threadPool.ts      # Worker thread pool
-│   │       ├── searchWorker.ts    # Worker thread script
+│   │       ├── workerThread.ts    # Worker thread script
 │   │       ├── fileWatcher.ts     # File system monitoring
 │   │       ├── fileIndex.ts       # Per-file content index
 │   │       ├── queryParser.ts     # Glob to regex conversion

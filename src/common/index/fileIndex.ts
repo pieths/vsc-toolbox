@@ -6,7 +6,7 @@
  * It does NOT cache file content—only the byte positions of line starts.
  * This enables O(log n) line number lookup while minimizing memory usage.
  *
- * Note: All indexing is done through the thread pool (searchWorker.ts).
+ * Note: All indexing is done through the thread pool (workerThread.ts).
  * This class is a pure data holder.
  */
 export class FileIndex {

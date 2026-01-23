@@ -56,7 +56,7 @@ export class ThreadPoolManager {
     private createWorker(): Worker {
         // Get the path to the compiled worker script
         // In development, this is relative to the compiled output
-        const workerPath = path.join(__dirname, 'searchWorker.js');
+        const workerPath = path.join(__dirname, 'workerThread.js');
 
         const worker = new Worker(workerPath);
 
