@@ -94,6 +94,32 @@
           "type": "string",
           "default": "chrome",
           "description": "Module name to use as prefix for WinDbg breakpoint locations"
+        },
+        "vscToolbox.fileSearch.workerThreads": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Number of worker threads for file search. 0 = auto-detect (use all logical cores)."
+        },
+        "vscToolbox.fileSearch.includePaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "List of directory paths to include in search. Only files in these directories (and subdirectories) will be indexed. Empty = search all workspace files."
+        },
+        "vscToolbox.fileSearch.fileExtensions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            ".cc",
+            ".h",
+            ".md"
+          ],
+          "description": "List of file extensions to include in search (e.g., '.cc', '.h', '.cpp', '.hpp'). Include the leading dot."
         }
       }
     },
@@ -171,6 +197,26 @@
             "position",
             "symbolName",
             "sourceLine"
+          ]
+        }
+      },
+      {
+        "name": "fileSearch",
+        "displayName": "File Search",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "file-search",
+        "userDescription": "Search for patterns across files",
+        "modelDescription": "Search for patterns across files. Supports glob patterns (* and ?) and OR operations (space-separated terms). Returns matching lines grouped by file with line numbers. Use this for fast full-text search across large codebases.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Search query. Space-separated terms are OR'd together. Supports * (zero or more characters) and ? (single char) wildcards."
+            }
+          },
+          "required": [
+            "query"
           ]
         }
       }

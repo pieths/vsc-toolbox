@@ -47,6 +47,8 @@ VSC Toolbox is a collection of productivity tools for VS Code that includes:
   across your entire codebase with fuzzy matching
 - **getDocumentSymbolReferences** - Find all references to a symbol at a
   specific location
+- **fileSearch** - File content search across workspace files
+  using worker threads, with glob pattern support
 
 ## Prerequisites
 
@@ -384,6 +386,46 @@ Find all references to a symbol at a specific location.
 }
 ```
 
+#### fileSearch
+
+File content search.
+
+**Request Format:**
+```json
+{
+  "tool": "fileSearch",
+  "arguments": {
+    "query": "HttpRequest GetHeaders"
+  }
+}
+```
+
+**Parameters:**
+- `query` (string, required): Search query. Space-separated terms are OR'd
+  together. Supports `*` (match any) and `?` (match single char) wildcards.
+
+**Response Format (Markdown):**
+```text
+## Search Results for `HttpRequest GetHeaders`
+
+Found **42** matches in **8** files.
+
+### src/net/http/http_request.cc
+
+- 156: `void HttpRequest::GetHeaders() {`
+- 203: `// GetHeaders implementation`
+
+### src/net/http/http_client.cc
+
+- 89: `request.GetHeaders();`
+```
+
+**Features:**
+- Parallel searching using worker threads (configurable count)
+- Line-index caching for fast line number lookup
+- File system watcher for automatic cache invalidation
+- Configurable include paths and file extensions
+
 ## Configuration
 
 VSC Toolbox can be configured through VS Code settings. Access settings via `File > Preferences > Settings` or by editing `.vscode/settings.json` in your workspace.
@@ -432,6 +474,22 @@ Set the module name prefix for WinDbg breakpoints:
 ```
 
 Change to match your module (`"myapp"`, etc.).
+
+#### File Search Settings
+
+Configure the file search tool:
+
+```json
+{
+  "vscToolbox.fileSearch.workerThreads": 0,
+  "vscToolbox.fileSearch.includePaths": ["/path/to/src"],
+  "vscToolbox.fileSearch.fileExtensions": [".cc", ".h"]
+}
+```
+
+- `workerThreads`: Number of worker threads (0 = auto-detect based on CPU cores)
+- `includePaths`: Directories to index (empty = all workspace folders)
+- `fileExtensions`: File extensions to include in search
 
 ## Development
 
@@ -491,7 +549,16 @@ vsc-toolbox/
 │   └── tools/               # Language Model Tools (for AI)
 │       ├── index.ts         # Tool registry
 │       ├── getWorkspaceSymbol.ts      # Workspace symbol tool
-│       └── getDocumentSymbolReferences.ts  # References tool
+│       ├── getDocumentSymbolReferences.ts  # References tool
+│       └── search/          # File search tool
+│           ├── fileSearch.ts      # Main tool entry point
+│           ├── cacheManager.ts    # Line-index cache management
+│           ├── threadPool.ts      # Worker thread pool
+│           ├── searchWorker.ts    # Worker thread script
+│           ├── fileWatcher.ts     # File system monitoring
+│           ├── fileIndex.ts       # Per-file line index
+│           ├── queryParser.ts     # Glob to regex conversion
+│           └── types.ts           # Shared interfaces
 ├── out/                     # Compiled JavaScript (generated)
 ├── node_modules/            # Dependencies (generated)
 ├── package.json             # Extension manifest and dependencies

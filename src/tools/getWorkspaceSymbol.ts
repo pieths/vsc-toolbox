@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Piet Hein Schouten
+// Copyright (c) 2026 Piet Hein Schouten
 // SPDX-License-Identifier: MIT
 
 import * as vscode from 'vscode';
@@ -18,7 +18,7 @@ export interface IWorkspaceSymbolParams {
  * Uses VS Code's built-in workspace symbol provider
  */
 export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspaceSymbolParams> {
-    constructor() { }
+    constructor(_context: vscode.ExtensionContext) { }
 
     async prepareInvocation(
         options: vscode.LanguageModelToolInvocationPrepareOptions<IWorkspaceSymbolParams>,

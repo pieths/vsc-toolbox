@@ -1,8 +1,9 @@
-// Copyright (c) 2025 Piet Hein Schouten
+// Copyright (c) 2026 Piet Hein Schouten
 // SPDX-License-Identifier: MIT
 
 import * as vscode from 'vscode';
 import { TOOL_REGISTRY } from '../tools/index';
+import { getFileSearchToolInstance } from '../tools/search';
 
 /**
  * Generic test command for all language model tools
@@ -30,20 +31,33 @@ export class TestLanguageModelToolCommand {
         }
 
         // Get input parameters based on the tool
-        const input = await this.getInputForTool(selectedTool.toolEntry.name);
+        const input = await this.getInputForTool(selectedTool.label);
         if (!input) {
             return;
         }
 
         // Create tool instance and invoke it
-        const ToolClass = selectedTool.toolEntry.class;
-        const tool = new ToolClass() as vscode.LanguageModelTool<any>;
+        let tool: vscode.LanguageModelTool<any>;
+
+        if (selectedTool.label === 'fileSearch') {
+            // fileSearch is a special case - use the existing instance
+            // to avoid costly re-initialization
+            const fileSearchTool = getFileSearchToolInstance();
+            if (!fileSearchTool) {
+                vscode.window.showErrorMessage('File search tool is not initialized yet');
+                return;
+            }
+            tool = fileSearchTool;
+        } else {
+            const ToolClass = selectedTool.toolEntry.class;
+            tool = new ToolClass(this.context);
+        }
 
         try {
             await vscode.window.withProgress(
                 {
                     location: vscode.ProgressLocation.Notification,
-                    title: `Executing ${selectedTool.toolEntry.name}...`,
+                    title: `Executing ${selectedTool.label}...`,
                     cancellable: true,
                 },
                 async (progress, token) => {
@@ -86,6 +100,9 @@ export class TestLanguageModelToolCommand {
 
             case 'getDocumentSymbolReferences':
                 return this.getTextDocumentReferencesInput();
+
+            case 'fileSearch':
+                return this.getFileSearchInput();
 
             default:
                 vscode.window.showErrorMessage(`No input handler for tool: ${toolName}`);
@@ -155,5 +172,21 @@ export class TestLanguageModelToolCommand {
             symbolName,
             sourceLine,
         };
+    }
+
+    /**
+     * Get input for fileSearch tool
+     */
+    private async getFileSearchInput(): Promise<any | undefined> {
+        const query = await vscode.window.showInputBox({
+            prompt: 'Enter search query (space-separated terms are OR\'d, supports * and ? globs)',
+            placeHolder: 'e.g., options*input partSymbols, get?Name',
+        });
+
+        if (!query) {
+            return undefined;
+        }
+
+        return { query };
     }
 }

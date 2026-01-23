@@ -1,9 +1,10 @@
-// Copyright (c) 2025 Piet Hein Schouten
+// Copyright (c) 2026 Piet Hein Schouten
 // SPDX-License-Identifier: MIT
 
 import * as vscode from 'vscode';
 import { TOOL_REGISTRY } from './tools/index';
 import { COMMAND_REGISTRY } from './commands/index';
+import { initLogger, log } from './common/logger';
 
 /**
  * Extension activation
@@ -11,22 +12,24 @@ import { COMMAND_REGISTRY } from './commands/index';
 export async function activate(
   context: vscode.ExtensionContext
 ): Promise<void> {
-  console.log('VSC Toolbox extension is activating...');
+  // Initialize the shared logger first
+  initLogger(context);
+  log('VSC Toolbox extension is activating...');
 
   // Check if enabled
   const config = vscode.workspace.getConfiguration('vscToolbox');
   if (!config.get<boolean>('enable', true)) {
-    console.log('VSC Toolbox is disabled in settings');
+    log('VSC Toolbox is disabled in settings');
     return;
   }
 
   try {
     // Register all language model tools from the registry
     for (const { name, class: ToolClass } of TOOL_REGISTRY) {
-      const tool = new ToolClass() as vscode.LanguageModelTool<any>;
+      const tool = new ToolClass(context);
       const disposable = vscode.lm.registerTool(name, tool);
       context.subscriptions.push(disposable);
-      console.log(`Registered tool: ${name}`);
+      log(`Registered tool: ${name}`);
     }
 
     // Register all commands from the registry
@@ -37,15 +40,15 @@ export async function activate(
         () => command.execute()
       );
       context.subscriptions.push(disposable);
-      console.log(`Registered command: ${command.id}`);
+      log(`Registered command: ${command.id}`);
     }
 
-    console.log('VSC Toolbox registered successfully');
+    log('VSC Toolbox registered successfully');
   } catch (error) {
     vscode.window.showErrorMessage(
       `VSC Toolbox failed to activate: ${error}`
     );
-    console.error('Activation error:', error);
+    log(`Activation error: ${error}`);
   }
 }
 
@@ -53,5 +56,5 @@ export async function activate(
  * Extension deactivation
  */
 export function deactivate(): void {
-  console.log('VSC Toolbox extension is deactivating...');
+  log('VSC Toolbox extension is deactivating...');
 }

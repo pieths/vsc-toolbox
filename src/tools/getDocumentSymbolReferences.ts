@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Piet Hein Schouten
+// Copyright (c) 2026 Piet Hein Schouten
 // SPDX-License-Identifier: MIT
 
 import * as vscode from 'vscode';
@@ -49,7 +49,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
     private contextLinesBefore: number = 10;
     private contextLinesAfter: number = 10;
 
-    constructor() { }
+    constructor(_context: vscode.ExtensionContext) { }
 
     async prepareInvocation(
         options: vscode.LanguageModelToolInvocationPrepareOptions<ITextDocumentReferencesParams>,
