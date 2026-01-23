@@ -79,7 +79,10 @@ export class CacheManager {
             for (const includePath of this.includePaths) {
                 try {
                     const files = await this.findFilesInDirectory(includePath);
-                    filePaths.push(...files);
+                    // Use concat instead of spread to avoid stack overflow with large arrays
+                    for (const file of files) {
+                        filePaths.push(file);
+                    }
                     log(`File search: Found ${files.length} files in ${includePath}`);
                 } catch (err) {
                     warn(`File search: Failed to scan directory ${includePath}: ${err}`);
