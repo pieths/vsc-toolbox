@@ -95,21 +95,21 @@
           "default": "chrome",
           "description": "Module name to use as prefix for WinDbg breakpoint locations"
         },
-        "vscToolbox.fileSearch.workerThreads": {
+        "vscToolbox.contentIndex.workerThreads": {
           "type": "number",
           "default": 0,
           "minimum": 0,
-          "description": "Number of worker threads for file search. 0 = auto-detect (use all logical cores)."
+          "description": "Number of worker threads. 0 = auto-detect (use all logical cores)."
         },
-        "vscToolbox.fileSearch.includePaths": {
+        "vscToolbox.contentIndex.includePaths": {
           "type": "array",
           "items": {
             "type": "string"
           },
           "default": [],
-          "description": "List of directory paths to include in search. Only files in these directories (and subdirectories) will be indexed. Empty = search all workspace files."
+          "description": "List of directory paths to include in the index. Only files in these directories (and subdirectories) will be indexed. Empty = index all workspace files."
         },
-        "vscToolbox.fileSearch.fileExtensions": {
+        "vscToolbox.contentIndex.fileExtensions": {
           "type": "array",
           "items": {
             "type": "string"
@@ -119,7 +119,7 @@
             ".h",
             ".md"
           ],
-          "description": "List of file extensions to include in search (e.g., '.cc', '.h', '.cpp', '.hpp'). Include the leading dot."
+          "description": "List of file extensions to include in the index (e.g., '.cc', '.h', '.cpp', '.hpp'). Include the leading dot."
         }
       }
     },
@@ -201,12 +201,12 @@
         }
       },
       {
-        "name": "fileSearch",
-        "displayName": "File Search",
+        "name": "contentSearch",
+        "displayName": "Content Search",
         "canBeReferencedInPrompt": true,
-        "toolReferenceName": "file-search",
-        "userDescription": "Search for patterns across files",
-        "modelDescription": "Search for patterns across files. Supports glob patterns (* and ?) and OR operations (space-separated terms). Returns matching lines grouped by file with line numbers. Use this for fast full-text search across large codebases.",
+        "toolReferenceName": "content-search",
+        "userDescription": "Search for patterns across indexed content",
+        "modelDescription": "Search for patterns across indexed content. Supports glob patterns (* and ?) and OR operations (space-separated terms). Returns matching lines grouped by file with line numbers. Use this for fast full-text search across large codebases.",
         "inputSchema": {
           "type": "object",
           "properties": {

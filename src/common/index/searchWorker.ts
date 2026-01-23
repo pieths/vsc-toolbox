@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 /**
- * Worker thread script for parallel file search and indexing.
+ * Worker thread script for parallel content search and indexing.
  * This file runs in a separate worker thread and performs file operations.
  *
  * IMPORTANT: This module must be standalone with no runtime imports from other

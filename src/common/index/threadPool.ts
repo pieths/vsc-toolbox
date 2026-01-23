@@ -28,7 +28,7 @@ interface QueuedIndexTask {
 type QueuedTask = QueuedSearchTask | QueuedIndexTask;
 
 /**
- * ThreadPoolManager manages a pool of worker threads for parallel file searching.
+ * ThreadPoolManager manages a pool of worker threads for parallel content searching.
  * It handles task distribution, worker lifecycle, and error recovery.
  */
 export class ThreadPoolManager {

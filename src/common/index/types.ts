@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 /**
- * Shared interfaces and types for the file search tool
+ * Shared interfaces and types for the content index functionality
  */
 
 /**
@@ -66,9 +66,9 @@ export interface IndexOutput {
 }
 
 /**
- * Configuration for the file search tool
+ * Configuration for the content index functionality
  */
-export interface FileSearchConfig {
+export interface ContentIndexConfig {
     /** Number of worker threads (0 = auto-detect using os.cpus().length) */
     workerThreads: number;
     /** List of directory paths to include in search (empty = all workspace files) */
@@ -80,7 +80,7 @@ export interface FileSearchConfig {
 /**
  * Input parameters for the language model tool
  */
-export interface FileSearchParams {
+export interface ContentSearchParams {
     /** Search query with space-separated OR terms and glob wildcards */
     query: string;
 }

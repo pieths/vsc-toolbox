@@ -3,7 +3,6 @@
 
 import * as vscode from 'vscode';
 import { TOOL_REGISTRY } from '../tools/index';
-import { getFileSearchToolInstance } from '../tools/search';
 
 /**
  * Generic test command for all language model tools
@@ -37,21 +36,8 @@ export class TestLanguageModelToolCommand {
         }
 
         // Create tool instance and invoke it
-        let tool: vscode.LanguageModelTool<any>;
-
-        if (selectedTool.label === 'fileSearch') {
-            // fileSearch is a special case - use the existing instance
-            // to avoid costly re-initialization
-            const fileSearchTool = getFileSearchToolInstance();
-            if (!fileSearchTool) {
-                vscode.window.showErrorMessage('File search tool is not initialized yet');
-                return;
-            }
-            tool = fileSearchTool;
-        } else {
-            const ToolClass = selectedTool.toolEntry.class;
-            tool = new ToolClass(this.context);
-        }
+        const ToolClass = selectedTool.toolEntry.class;
+        const tool: vscode.LanguageModelTool<any> = new ToolClass(this.context);
 
         try {
             await vscode.window.withProgress(
@@ -101,8 +87,8 @@ export class TestLanguageModelToolCommand {
             case 'getDocumentSymbolReferences':
                 return this.getTextDocumentReferencesInput();
 
-            case 'fileSearch':
-                return this.getFileSearchInput();
+            case 'contentSearch':
+                return this.getContentSearchInput();
 
             default:
                 vscode.window.showErrorMessage(`No input handler for tool: ${toolName}`);
@@ -175,9 +161,9 @@ export class TestLanguageModelToolCommand {
     }
 
     /**
-     * Get input for fileSearch tool
+     * Get input for contentSearch tool
      */
-    private async getFileSearchInput(): Promise<any | undefined> {
+    private async getContentSearchInput(): Promise<any | undefined> {
         const query = await vscode.window.showInputBox({
             prompt: 'Enter search query (space-separated terms are OR\'d, supports * and ? globs)',
             placeHolder: 'e.g., options*input partSymbols, get?Name',

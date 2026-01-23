@@ -5,7 +5,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { CacheManager } from './cacheManager';
 import { ThreadPoolManager } from './threadPool';
-import { log, warn } from '../../common/logger';
+import { log, warn } from '../logger';
 
 /**
  * FileWatcher monitors file system changes and updates the cache accordingly.

@@ -6,7 +6,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { FileIndex } from './fileIndex';
 import { ThreadPoolManager } from './threadPool';
-import { log, warn, error } from '../../common/logger';
+import { log, warn, error } from '../logger';
 
 /**
  * CacheManager manages the collection of FileIndex instances and coordinates
@@ -44,8 +44,8 @@ export class CacheManager {
         this.threadPool = threadPool;
         this.indexingComplete = false;
 
-        log(`File search: includePaths =\n${JSON.stringify(includePaths, null, 2)}`);
-        log(`File search: fileExtensions =\n${JSON.stringify(this.fileExtensions, null, 2)}`);
+        log(`Content index: includePaths =\n${JSON.stringify(includePaths, null, 2)}`);
+        log(`Content index: fileExtensions =\n${JSON.stringify(this.fileExtensions, null, 2)}`);
 
         this.indexingPromise = this.buildInitialIndex();
         await this.indexingPromise;
@@ -72,7 +72,7 @@ export class CacheManager {
                         this.includePaths.push(folder.uri.fsPath);
                     }
                 }
-                log('File search: No includePaths configured, using workspace folders');
+                log('Content index: No includePaths configured, using workspace folders');
             }
 
             // Scan each includePath directory for .cc and .h files
@@ -83,13 +83,13 @@ export class CacheManager {
                     for (const file of files) {
                         filePaths.push(file);
                     }
-                    log(`File search: Found ${files.length} files in ${includePath}`);
+                    log(`Content index: Found ${files.length} files in ${includePath}`);
                 } catch (err) {
-                    warn(`File search: Failed to scan directory ${includePath}: ${err}`);
+                    warn(`Content index: Failed to scan directory ${includePath}: ${err}`);
                 }
             }
 
-            log(`File search: Total files to index: ${filePaths.length}`);
+            log(`Content index: Total files to index: ${filePaths.length}`);
 
             // Process files in batches using worker threads
             // Larger batches since workers handle the actual I/O and CPU work
@@ -124,7 +124,7 @@ export class CacheManager {
             }
 
             this.indexingComplete = true;
-            log(`File search: Indexed ${this.cache.size} files`);
+            log(`Content index: Indexed ${this.cache.size} files`);
         } catch (err) {
             error(`Failed to initialize file cache: ${err}`);
             this.indexingComplete = true; // Mark complete even on error to unblock searches
@@ -144,11 +144,11 @@ export class CacheManager {
         try {
             const stats = await fs.promises.stat(dirPath);
             if (!stats.isDirectory()) {
-                warn(`File search: ${dirPath} is not a directory`);
+                warn(`Content index: ${dirPath} is not a directory`);
                 return results;
             }
         } catch {
-            warn(`File search: Directory does not exist: ${dirPath}`);
+            warn(`Content index: Directory does not exist: ${dirPath}`);
             return results;
         }
 
@@ -220,7 +220,7 @@ export class CacheManager {
                 this.threadPool.submitIndex({ type: 'index', filePath }).then(result => {
                     if (result.lineStarts) {
                         fileIndex.setLineStarts(result.lineStarts);
-                        log(`File search: Indexed new file ${filePath}`);
+                        log(`Content index: Indexed new file ${filePath}`);
                     } else if (result.error) {
                         warn(`Failed to index new file ${filePath}: ${result.error}`);
                     }

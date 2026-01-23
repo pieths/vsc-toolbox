@@ -47,7 +47,7 @@ VSC Toolbox is a collection of productivity tools for VS Code that includes:
   across your entire codebase with fuzzy matching
 - **getDocumentSymbolReferences** - Find all references to a symbol at a
   specific location
-- **fileSearch** - File content search across workspace files
+- **contentSearch** - Content search across indexed files
   using worker threads, with glob pattern support
 
 ## Prerequisites
@@ -386,14 +386,14 @@ Find all references to a symbol at a specific location.
 }
 ```
 
-#### fileSearch
+#### contentSearch
 
-File content search.
+Content search.
 
 **Request Format:**
 ```json
 {
-  "tool": "fileSearch",
+  "tool": "contentSearch",
   "arguments": {
     "query": "HttpRequest GetHeaders"
   }
@@ -475,15 +475,13 @@ Set the module name prefix for WinDbg breakpoints:
 
 Change to match your module (`"myapp"`, etc.).
 
-#### File Search Settings
-
-Configure the file search tool:
+#### Content Index Settings
 
 ```json
 {
-  "vscToolbox.fileSearch.workerThreads": 0,
-  "vscToolbox.fileSearch.includePaths": ["/path/to/src"],
-  "vscToolbox.fileSearch.fileExtensions": [".cc", ".h"]
+  "vscToolbox.contentIndex.workerThreads": 0,
+  "vscToolbox.contentIndex.includePaths": ["/path/to/src"],
+  "vscToolbox.contentIndex.fileExtensions": [".cc", ".h"]
 }
 ```
 
@@ -546,19 +544,25 @@ vsc-toolbox/
 │   │   ├── getFileName.ts   # Copy file name command
 │   │   ├── searchRemoteCode.ts  # Code search command
 │   │   └── getWinDbgBreakpointLocation.ts  # WinDbg breakpoint command
+│   ├── common/              # Shared utilities and infrastructure
+│   │   ├── documentUtils.ts # Document/editor helper functions
+│   │   ├── logger.ts        # Shared logging utility
+│   │   ├── markdownUtils.ts # Markdown formatting helpers
+│   │   └── index/           # Content indexing infrastructure
+│   │       ├── index.ts           # Barrel export (public API)
+│   │       ├── contentIndex.ts    # Main singleton interface
+│   │       ├── cacheManager.ts    # File content cache management
+│   │       ├── threadPool.ts      # Worker thread pool
+│   │       ├── searchWorker.ts    # Worker thread script
+│   │       ├── fileWatcher.ts     # File system monitoring
+│   │       ├── fileIndex.ts       # Per-file content index
+│   │       ├── queryParser.ts     # Glob to regex conversion
+│   │       └── types.ts           # Shared interfaces
 │   └── tools/               # Language Model Tools (for AI)
 │       ├── index.ts         # Tool registry
 │       ├── getWorkspaceSymbol.ts      # Workspace symbol tool
 │       ├── getDocumentSymbolReferences.ts  # References tool
-│       └── search/          # File search tool
-│           ├── fileSearch.ts      # Main tool entry point
-│           ├── cacheManager.ts    # Line-index cache management
-│           ├── threadPool.ts      # Worker thread pool
-│           ├── searchWorker.ts    # Worker thread script
-│           ├── fileWatcher.ts     # File system monitoring
-│           ├── fileIndex.ts       # Per-file line index
-│           ├── queryParser.ts     # Glob to regex conversion
-│           └── types.ts           # Shared interfaces
+│       └── contentSearch.ts   # Content search tool
 ├── out/                     # Compiled JavaScript (generated)
 ├── node_modules/            # Dependencies (generated)
 ├── package.json             # Extension manifest and dependencies

@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 import { TOOL_REGISTRY } from './tools/index';
 import { COMMAND_REGISTRY } from './commands/index';
 import { initLogger, log } from './common/logger';
+import { ContentIndex } from './common/index';
 
 /**
  * Extension activation
@@ -24,6 +25,9 @@ export async function activate(
   }
 
   try {
+    ContentIndex.getInstance().initialize(context);
+    log('ContentIndex initialized');
+
     // Register all language model tools from the registry
     for (const { name, class: ToolClass } of TOOL_REGISTRY) {
       const tool = new ToolClass(context);

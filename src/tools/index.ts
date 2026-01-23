@@ -4,7 +4,7 @@
 import * as vscode from 'vscode';
 import { GetWorkspaceSymbolTool } from './getWorkspaceSymbol';
 import { GetDocumentSymbolReferencesTool } from './getDocumentSymbolReferences';
-import { FileSearchTool } from './search';
+import { ContentSearchTool } from './contentSearch';
 
 /**
  * Tool class constructor type that accepts an ExtensionContext
@@ -22,5 +22,5 @@ export interface ToolRegistryEntry {
 export const TOOL_REGISTRY: ToolRegistryEntry[] = [
     { name: 'getWorkspaceSymbol', class: GetWorkspaceSymbolTool },
     { name: 'getDocumentSymbolReferences', class: GetDocumentSymbolReferencesTool },
-    { name: 'fileSearch', class: FileSearchTool },
+    { name: 'contentSearch', class: ContentSearchTool },
 ];
