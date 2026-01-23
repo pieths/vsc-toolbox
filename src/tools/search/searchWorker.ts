@@ -22,52 +22,25 @@ process.on('unhandledRejection', (reason) => {
 });
 
 /**
- * Get line number from byte position using binary search.
- *
- * @param lineStarts - Array of byte positions where each line starts
- * @param position - Byte position in file
- * @returns 1-based line number
- */
-function getLineNumber(lineStarts: number[], position: number): number {
-    let low = 0;
-    let high = lineStarts.length - 1;
-
-    while (low < high) {
-        const mid = (low + high + 1) >> 1;
-        if (lineStarts[mid] <= position) {
-            low = mid;
-        } else {
-            high = mid - 1;
-        }
-    }
-
-    return low + 1; // Convert to 1-based
-}
-
-/**
- * Extract the full line text given a line number.
+ * Extract the full line text containing a match position.
+ * Uses indexOf/lastIndexOf for efficiency.
  *
  * @param content - Full file content
- * @param lineStarts - Array of byte positions where each line starts
- * @param lineNumber - 1-based line number
+ * @param matchIndex - Position of the match in the content
  * @returns Line text without trailing newline
  */
-function getLineText(content: string, lineStarts: number[], lineNumber: number): string {
-    const lineIndex = lineNumber - 1; // Convert to 0-based
+function getLineText(content: string, matchIndex: number): string {
+    // Find line start (character after previous newline, or 0)
+    const lineStart = content.lastIndexOf('\n', matchIndex - 1) + 1;
 
-    const startPos = lineStarts[lineIndex];
-    let endPos: number;
-
-    if (lineIndex + 1 < lineStarts.length) {
-        // Next line exists, end before its start (excluding the newline)
-        endPos = lineStarts[lineIndex + 1] - 1;
-    } else {
-        // Last line, go to end of content
-        endPos = content.length;
+    // Find line end (next newline, or end of content)
+    let lineEnd = content.indexOf('\n', matchIndex);
+    if (lineEnd === -1) {
+        lineEnd = content.length;
     }
 
-    // Handle Windows line endings (\r\n)
-    let text = content.substring(startPos, endPos);
+    // Extract and handle Windows line endings (\r\n)
+    let text = content.substring(lineStart, lineEnd);
     if (text.endsWith('\r')) {
         text = text.slice(0, -1);
     }
@@ -77,8 +50,9 @@ function getLineText(content: string, lineStarts: number[], lineNumber: number):
 
 /**
  * Search a file for matches using the provided regex pattern.
+ * Uses progressive line counting - only computes line numbers for matches.
  *
- * @param input - Search input containing file path, regex pattern, and line starts
+ * @param input - Search input containing file path and regex pattern
  * @returns Search output with results or error
  */
 async function searchFile(input: SearchInput): Promise<SearchOutput> {
@@ -89,14 +63,28 @@ async function searchFile(input: SearchInput): Promise<SearchOutput> {
         const results: { line: number; text: string }[] = [];
         const seenLines = new Set<number>(); // Avoid duplicate lines
 
+        // Progressive line counting - only computed when matches found
+        let lastPos = 0;
+        let currentLine = 1;
+
         let match: RegExpExecArray | null;
         while ((match = regex.exec(content)) !== null) {
-            const lineNumber = getLineNumber(input.lineStarts, match.index);
+            // Count newlines from lastPos to match position using indexOf
+            let pos = lastPos;
+            while (pos < match.index) {
+                const nextNewline = content.indexOf('\n', pos);
+                if (nextNewline === -1 || nextNewline >= match.index) {
+                    break;
+                }
+                currentLine++;
+                pos = nextNewline + 1;
+            }
+            lastPos = pos;
 
-            if (!seenLines.has(lineNumber)) {
-                seenLines.add(lineNumber);
-                const text = getLineText(content, input.lineStarts, lineNumber);
-                results.push({ line: lineNumber, text });
+            if (!seenLines.has(currentLine)) {
+                seenLines.add(currentLine);
+                const text = getLineText(content, match.index);
+                results.push({ line: currentLine, text });
             }
         }
 

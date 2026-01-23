@@ -27,8 +27,6 @@ export interface SearchInput {
     filePath: string;
     /** Regex pattern string to search for */
     regexPattern: string;
-    /** Array of byte positions where each line starts */
-    lineStarts: number[];
 }
 
 /**

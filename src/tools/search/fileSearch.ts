@@ -186,15 +186,11 @@ export class FileSearchTool implements vscode.LanguageModelTool<FileSearchParams
             // Prepare search inputs
             const searchInputs: SearchInput[] = [];
             for (const fileIndex of allFiles) {
-                const lineStarts = fileIndex.getLineStarts();
-                if (lineStarts) {
-                    searchInputs.push({
-                        type: 'search',
-                        filePath: fileIndex.getFilePath(),
-                        regexPattern,
-                        lineStarts
-                    });
-                }
+                searchInputs.push({
+                    type: 'search',
+                    filePath: fileIndex.getFilePath(),
+                    regexPattern
+                });
             }
 
             // Check for cancellation
