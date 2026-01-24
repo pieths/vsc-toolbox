@@ -6,8 +6,8 @@ import * as os from 'os';
 import { CacheManager } from './cacheManager';
 import { ThreadPoolManager } from './threadPool';
 import { FileWatcher } from './fileWatcher';
-import { parseQuery } from './queryParser';
-import { SearchResult, ContentIndexConfig, SearchInput } from './types';
+import { parseQuery, validateQuery } from './queryParser';
+import { SearchResult, SearchResults, ContentIndexConfig, SearchInput } from './types';
 import { log, warn, error } from '../logger';
 
 /**
@@ -33,7 +33,7 @@ function getConfig(): ContentIndexConfig {
  *
  * Usage:
  *   const index = ContentIndex.getInstance();
- *   const results = await index.findPattern('myFunction*');
+ *   const results = await index.findGlobPattern('myFunction*');
  */
 export class ContentIndex {
     private static instance: ContentIndex | null = null;
@@ -170,13 +170,37 @@ export class ContentIndex {
     }
 
     /**
-     * Search for files matching a regex pattern.
+     * Search for content matching a glob pattern query.
+     * Validates the query, converts glob wildcards to regex, and performs the search.
+     *
+     * @param query - User search query with glob patterns (* and ?) and space-separated OR terms
+     * @param token - Optional cancellation token
+     * @returns SearchResults with results array and optional error
+     */
+    async findGlobPattern(query: string, token?: vscode.CancellationToken): Promise<SearchResults> {
+        // Validate query
+        const validationError = validateQuery(query);
+        if (validationError) {
+            return { results: [], error: validationError };
+        }
+
+        // Parse glob query to regex pattern
+        const regexPattern = parseQuery(query);
+
+        // Perform the search
+        const results = await this.findRegexPattern(regexPattern, token);
+        return { results };
+    }
+
+    /**
+     * Search for content matching a regex pattern.
+     * Internal method - use findGlobPattern for public API.
      *
      * @param regexPattern - Regex pattern string to search for
      * @param token - Optional cancellation token
      * @returns Array of search results
      */
-    async findPattern(regexPattern: string, token?: vscode.CancellationToken): Promise<SearchResult[]> {
+    private async findRegexPattern(regexPattern: string, token?: vscode.CancellationToken): Promise<SearchResult[]> {
         if (!this.initialized || !this.threadPool) {
             warn('ContentIndex: Not initialized');
             return [];
@@ -251,19 +275,6 @@ export class ContentIndex {
             error(`ContentIndex: Search failed - ${err}`);
             return [];
         }
-    }
-
-    /**
-     * Search for files matching a user query string.
-     * Converts the query to a regex pattern using the query parser.
-     *
-     * @param query - User search query with glob wildcards
-     * @param token - Optional cancellation token
-     * @returns Array of search results
-     */
-    async findQuery(query: string, token?: vscode.CancellationToken): Promise<SearchResult[]> {
-        const regexPattern = parseQuery(query);
-        return this.findPattern(regexPattern, token);
     }
 
     /**

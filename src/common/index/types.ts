@@ -18,6 +18,17 @@ export interface SearchResult {
 }
 
 /**
+ * Result of a search operation.
+ * Contains either results array or an error message.
+ */
+export interface SearchResults {
+    /** Array of search results (empty if error or no matches) */
+    results: SearchResult[];
+    /** Error message if the search failed */
+    error?: string;
+}
+
+/**
  * Input data sent to a worker thread for searching
  */
 export interface SearchInput {

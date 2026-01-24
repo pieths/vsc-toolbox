@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import * as vscode from 'vscode';
-import { ContentIndex, SearchResult } from '../common/index';
-import { validateQuery, parseQuery } from '../common/index/queryParser';
+import { ContentIndex, SearchResult, SearchResults } from '../common/index';
 import { log } from '../common/logger';
 
 /**
@@ -73,14 +72,6 @@ export class ContentSearchTool implements vscode.LanguageModelTool<ContentSearch
         const { query } = options.input;
         const contentIndex = ContentIndex.getInstance();
 
-        // Validate query
-        const validationError = validateQuery(query);
-        if (validationError) {
-            return new vscode.LanguageModelToolResult([
-                new vscode.LanguageModelTextPart(`Error: ${validationError}`)
-            ]);
-        }
-
         // Check if index is ready
         if (!contentIndex.isReady()) {
             return new vscode.LanguageModelToolResult([
@@ -93,9 +84,6 @@ export class ContentSearchTool implements vscode.LanguageModelTool<ContentSearch
         }
 
         try {
-            // Parse query to regex pattern
-            const regexPattern = parseQuery(query);
-
             // Check for cancellation
             if (token.isCancellationRequested) {
                 return new vscode.LanguageModelToolResult([
@@ -104,7 +92,16 @@ export class ContentSearchTool implements vscode.LanguageModelTool<ContentSearch
             }
 
             // Perform the search using ContentIndex
-            const results = await contentIndex.findPattern(regexPattern, token);
+            const searchResult = await contentIndex.findGlobPattern(query, token);
+
+            // Check for validation error
+            if (searchResult.error) {
+                return new vscode.LanguageModelToolResult([
+                    new vscode.LanguageModelTextPart(`Error: ${searchResult.error}`)
+                ]);
+            }
+
+            const results = searchResult.results;
 
             // Check for cancellation
             if (token.isCancellationRequested) {

@@ -9,4 +9,4 @@
  */
 
 export { ContentIndex } from './contentIndex';
-export { SearchResult } from './types';
+export { SearchResult, SearchResults } from './types';
