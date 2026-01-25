@@ -357,4 +357,33 @@ export class ContentIndex {
 
         return fileIndex.getContainer(line);
     }
+
+    /**
+     * Get the fully qualified name for a symbol at a specific location.
+     *
+     * @param filePath - Absolute path to the source file
+     * @param name - The symbol name to look up
+     * @param location - The location of the symbol in the source file
+     * @returns The fully qualified name (e.g., "namespace::Class::method") or the original name if not found
+     */
+    async getFullyQualifiedName(filePath: string, name: string, location: vscode.Location): Promise<string> {
+        if (!this.initialized) {
+            warn('ContentIndex: Not initialized');
+            return name;
+        }
+
+        if (!this.cacheManager.isReady()) {
+            warn('ContentIndex: Index not ready');
+            return name;
+        }
+
+        // Get the FileIndex for this file, ensuring it's valid
+        const fileIndexMap = await this.cacheManager.get([filePath], true);
+        const fileIndex = fileIndexMap.get(filePath);
+        if (!fileIndex) {
+            return name;  // File not in index or couldn't be indexed
+        }
+
+        return fileIndex.getFullyQualifiedName(name, location);
+    }
 }
