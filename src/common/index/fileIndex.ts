@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as crypto from 'crypto';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { FunctionDetails } from './types';
+import { FunctionDetails, ContainerDetails } from './types';
 
 /**
  * Represents a single tag entry from a ctags JSON output file.
@@ -97,6 +97,56 @@ const ANON_NAMESPACE_REGEX = /__anon[a-fA-F0-9]+/g;
  */
 function normalizeScope(scope: string): string {
     return scope.replace(ANON_NAMESPACE_REGEX, '(anonymous namespace)');
+}
+
+/**
+ * Convert a ctags kind to the equivalent vscode.SymbolKind.
+ * @param ctagsKind - The ctags kind string (e.g., "function", "class")
+ * @returns The vscode.SymbolKind value, or undefined if no mapping exists
+ */
+function ctagsKindToSymbolKind(ctagsKind: string): vscode.SymbolKind | undefined {
+    switch (ctagsKind) {
+        case 'function':
+            return vscode.SymbolKind.Function;
+        case 'method':
+            return vscode.SymbolKind.Method;
+        case 'class':
+            return vscode.SymbolKind.Class;
+        case 'struct':
+            return vscode.SymbolKind.Struct;
+        case 'enum':
+            return vscode.SymbolKind.Enum;
+        case 'enumerator':
+            return vscode.SymbolKind.EnumMember;
+        case 'namespace':
+            return vscode.SymbolKind.Namespace;
+        case 'module':
+            return vscode.SymbolKind.Module;
+        case 'interface':
+            return vscode.SymbolKind.Interface;
+        case 'property':
+            return vscode.SymbolKind.Property;
+        case 'field':
+        case 'member':
+            return vscode.SymbolKind.Field;
+        case 'variable':
+            return vscode.SymbolKind.Variable;
+        case 'constant':
+            return vscode.SymbolKind.Constant;
+        case 'typedef':
+        case 'alias':
+            return vscode.SymbolKind.TypeParameter;
+        case 'constructor':
+            return vscode.SymbolKind.Constructor;
+        case 'package':
+            return vscode.SymbolKind.Package;
+        case 'macro':
+            return vscode.SymbolKind.Constant;  // No direct mapping
+        case 'prototype':
+            return vscode.SymbolKind.Function;  // Forward declaration
+        default:
+            return undefined;
+    }
 }
 
 /**
@@ -317,6 +367,50 @@ export class FileIndex {
             signature,
             startLine: tag.line,
             endLine: tag.end ?? tag.line
+        };
+    }
+
+    /**
+     * Get the innermost container (function, class, namespace, etc.) that contains a given line.
+     * @param line - The 1-based line number to find the container for
+     * @returns ContainerDetails object, or null if no container found
+     */
+    async getContainer(line: number): Promise<ContainerDetails | null> {
+        const tags = await this.getTags();
+        if (tags === null) {
+            return null;  // Unable to get tags
+        }
+
+        // Find all tags that contain the given line (have both start and end)
+        // A tag contains the line if: tag.line <= line <= tag.end
+        const containingTags = tags.filter(t =>
+            t.end !== undefined && t.line <= line && line <= t.end
+        );
+
+        if (containingTags.length === 0) {
+            return null;  // No container found
+        }
+
+        // Find the innermost container (smallest range)
+        // This is the one with the largest start line that still contains the target
+        let innermost = containingTags[0];
+        for (const tag of containingTags) {
+            // Prefer the tag with the smallest range (end - line)
+            // If ranges are equal, prefer the one that starts later
+            const currentRange = innermost.end! - innermost.line;
+            const candidateRange = tag.end! - tag.line;
+            if (candidateRange < currentRange ||
+                (candidateRange === currentRange && tag.line > innermost.line)) {
+                innermost = tag;
+            }
+        }
+
+        return {
+            name: innermost.name,
+            type: ctagsKindToSymbolKind(innermost.kind),
+            ctagsType: innermost.kind,
+            startLine: innermost.line,
+            endLine: innermost.end!
         };
     }
 }

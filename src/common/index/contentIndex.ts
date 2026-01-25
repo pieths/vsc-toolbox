@@ -7,7 +7,7 @@ import { CacheManager } from './cacheManager';
 import { ThreadPool } from './threadPool';
 import { FileWatcher } from './fileWatcher';
 import { parseQuery, validateQuery } from './queryParser';
-import { SearchResult, SearchResults, ContentIndexConfig, SearchInput, FunctionDetails } from './types';
+import { SearchResult, SearchResults, ContentIndexConfig, SearchInput, FunctionDetails, ContainerDetails } from './types';
 import { log, warn, error } from '../logger';
 
 /**
@@ -303,7 +303,7 @@ export class ContentIndex {
 
     /**
      * Get detailed information about a function at a specific location.
-     * 
+     *
      * @param filePath - Absolute path to the source file
      * @param functionName - Name of the function to look up
      * @param line - 1-based line number where the function is defined
@@ -328,5 +328,33 @@ export class ContentIndex {
         }
 
         return fileIndex.getFunctionDetails(functionName, line);
+    }
+
+    /**
+     * Get the innermost container (function, class, namespace, etc.) at a specific line.
+     *
+     * @param filePath - Absolute path to the source file
+     * @param line - 1-based line number to find the container for
+     * @returns ContainerDetails object, or null if not found or file not indexed
+     */
+    async getContainer(filePath: string, line: number): Promise<ContainerDetails | null> {
+        if (!this.initialized) {
+            warn('ContentIndex: Not initialized');
+            return null;
+        }
+
+        if (!this.cacheManager.isReady()) {
+            warn('ContentIndex: Index not ready');
+            return null;
+        }
+
+        // Get the FileIndex for this file, ensuring it's valid
+        const fileIndexMap = await this.cacheManager.get([filePath], true);
+        const fileIndex = fileIndexMap.get(filePath);
+        if (!fileIndex) {
+            return null;  // File not in index or couldn't be indexed
+        }
+
+        return fileIndex.getContainer(line);
     }
 }

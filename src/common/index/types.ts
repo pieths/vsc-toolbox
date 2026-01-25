@@ -22,6 +22,22 @@ export interface FunctionDetails {
 }
 
 /**
+ * Details about a container (function, class, namespace, etc.) extracted from ctags.
+ */
+export interface ContainerDetails {
+    /** Name of the container */
+    name: string;
+    /** VS Code SymbolKind equivalent, or undefined if no mapping exists */
+    type: number | undefined;  // vscode.SymbolKind value
+    /** ctags kind (e.g., "function", "class", "namespace") */
+    ctagsType: string;
+    /** 1-based start line of the container */
+    startLine: number;
+    /** 1-based end line of the container */
+    endLine: number;
+}
+
+/**
  * Represents a single search result
  */
 export interface SearchResult {
