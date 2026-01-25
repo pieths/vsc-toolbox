@@ -6,6 +6,22 @@
  */
 
 /**
+ * Details about a function extracted from ctags.
+ */
+export interface FunctionDetails {
+    /** Fully qualified function name (e.g., "namespace::Class::method") */
+    fullyQualifiedName: string;
+    /** Scope/containing context (e.g., "namespace::Class") or undefined if global */
+    scope: string | undefined;
+    /** Function signature including return type and name (e.g., "int add(int a, int b)") */
+    signature: string;
+    /** 1-based start line of the function */
+    startLine: number;
+    /** 1-based end line of the function, or undefined if not available */
+    endLine: number | undefined;
+}
+
+/**
  * Represents a single search result
  */
 export interface SearchResult {

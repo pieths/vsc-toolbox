@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import * as vscode from 'vscode';
-import { ContentIndex, SearchResult, SearchResults } from '../common/index';
+import { ContentIndex, SearchResult } from '../common/index';
 import { log } from '../common/logger';
 
 /**

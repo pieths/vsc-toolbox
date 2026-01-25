@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 /**
- * File Index module - provides file indexing and search functionality.
+ * Content Index module - provides file indexing and search functionality.
  *
  * This module exports only the public interface. Implementation details
  * (CacheManager, ThreadPool, FileWatcher, etc.) are hidden.
  */
 
 export { ContentIndex } from './contentIndex';
-export { SearchResult, SearchResults } from './types';
+export { SearchResult, SearchResults, FunctionDetails } from './types';

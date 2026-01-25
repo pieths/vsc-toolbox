@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as crypto from 'crypto';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { FunctionDetails } from './types';
 
 /**
  * Represents a single tag entry from a ctags JSON output file.
@@ -86,6 +87,17 @@ class TagsCache {
 
 // Module-level LRU cache shared by all FileIndex instances
 const tagsCache = new TagsCache(300);
+
+// Regex for replacing anonymous namespace markers (compiled once)
+const ANON_NAMESPACE_REGEX = /__anon[a-fA-F0-9]+/g;
+
+/**
+ * Replace anonymous namespace markers (e.g., __anon1234abcd) with "(anonymous namespace)".
+ * ctags uses these markers for unnamed namespaces in C++.
+ */
+function normalizeScope(scope: string): string {
+    return scope.replace(ANON_NAMESPACE_REGEX, '(anonymous namespace)');
+}
 
 /**
  * FileIndex manages metadata for a single file in the index.
@@ -242,10 +254,69 @@ export class FileIndex {
         }
 
         if (tag.scope) {
-            // Replace anonymous namespace markers like __anonXXXX with (anonymous namespace)
-            const scope = tag.scope.replace(/__anon[a-fA-F0-9]+/g, '(anonymous namespace)');
+            const scope = normalizeScope(tag.scope);
             return `${scope}::${tag.name}`;
         }
         return tag.name;
+    }
+
+    /**
+     * Get detailed information about a function at a given line.
+     * @param name - The function name to look up
+     * @param line - The 1-based line number where the function is defined
+     * @returns FunctionDetails object, or null if not found or not a function/method
+     */
+    async getFunctionDetails(name: string, line: number): Promise<FunctionDetails | null> {
+        const tags = await this.getTags();
+        if (tags === null) {
+            return null;  // Unable to get tags
+        }
+
+        // Find a tag matching the name and line
+        const tag = tags.find(t => t.name === name && t.line === line);
+        if (!tag) {
+            return null;  // Tag not found
+        }
+
+        // Verify it's a function or method (not a variable, class, etc.)
+        // ctags kinds: "function", "method", "prototype" (declaration)
+        if (tag.kind !== 'function' && tag.kind !== 'method' && tag.kind !== 'prototype') {
+            return null;  // Not a function, method, or prototype
+        }
+
+        // Build the fully qualified name
+        let fullyQualifiedName = tag.name;
+        let scope = tag.scope;
+        if (scope) {
+            scope = normalizeScope(scope);
+            fullyQualifiedName = `${scope}::${tag.name}`;
+        }
+
+        // Build the signature: "returnType name(params)"
+        // typeref is typically "typename:ReturnType" or similar
+        let returnType = '';
+        if (tag.typeref) {
+            // Extract the type after the colon (e.g., "typename:int" -> "int")
+            const colonIndex = tag.typeref.indexOf(':');
+            if (colonIndex !== -1) {
+                returnType = tag.typeref.substring(colonIndex + 1);
+            } else {
+                returnType = tag.typeref;
+            }
+        }
+
+        // Combine return type, name, and signature (params)
+        const params = tag.signature || '';
+        const signature = returnType
+            ? `${returnType} ${tag.name}${params}`
+            : `${tag.name}${params}`;
+
+        return {
+            fullyQualifiedName,
+            scope,
+            signature,
+            startLine: tag.line,
+            endLine: tag.end ?? tag.line
+        };
     }
 }
