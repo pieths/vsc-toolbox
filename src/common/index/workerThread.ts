@@ -11,7 +11,11 @@
 
 import { parentPort } from 'worker_threads';
 import * as fs from 'fs';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import type { SearchInput, SearchOutput, IndexInput, IndexOutput } from './types';
+
+const execFileAsync = promisify(execFile);
 
 // Global error handlers to prevent worker crashes
 process.on('uncaughtException', (error) => {
@@ -99,29 +103,32 @@ async function searchFile(input: SearchInput): Promise<SearchOutput> {
 }
 
 /**
- * Build line index for a file.
+ * Index a file using ctags.
+ * Runs ctags to generate a JSON tags file for the input file.
  *
- * @param input - Index input containing file path
- * @returns Index output with lineStarts array or error
+ * @param input - Index input containing file path, ctags path, and output tags path
+ * @returns Index output with tags path or error
  */
 async function indexFile(input: IndexInput): Promise<IndexOutput> {
     try {
-        const content = await fs.promises.readFile(input.filePath, 'utf8');
+        // Run ctags with JSON output format
+        // --fields=+neZKS: line number, end line, scope with kind, kind full name, signature
+        // --kinds-all='*': include all symbol kinds
+        // --output-format=json: structured JSON output
+        await execFileAsync(input.ctagsPath, [
+            '--output-format=json',
+            '--fields=+neZKS',
+            '--kinds-all=*',
+            '-o', input.tagsPath,
+            input.filePath
+        ]);
 
-        const lineStarts: number[] = [0]; // Line 1 starts at position 0
-
-        let pos = 0;
-        while ((pos = content.indexOf('\n', pos)) !== -1) {
-            lineStarts.push(pos + 1);
-            pos++;
-        }
-
-        return { type: 'index', filePath: input.filePath, lineStarts };
+        return { type: 'index', filePath: input.filePath, tagsPath: input.tagsPath };
     } catch (error) {
         return {
             type: 'index',
             filePath: input.filePath,
-            lineStarts: null,
+            tagsPath: null,
             error: error instanceof Error ? error.message : String(error)
         };
     }

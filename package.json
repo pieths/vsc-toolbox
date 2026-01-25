@@ -120,6 +120,11 @@
             ".md"
           ],
           "description": "List of file extensions to include in the index (e.g., '.cc', '.h', '.cpp', '.hpp'). Include the leading dot."
+        },
+        "vscToolbox.contentIndex.ctagsPath": {
+          "type": "string",
+          "default": "ctags",
+          "description": "Path to the ctags executable. Can be just 'ctags' if it's in your PATH, or an absolute path."
         }
       }
     },

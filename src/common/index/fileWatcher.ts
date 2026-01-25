@@ -4,7 +4,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { CacheManager } from './cacheManager';
-import { ThreadPoolManager } from './threadPool';
 import { log, warn } from '../logger';
 
 /**
@@ -13,7 +12,6 @@ import { log, warn } from '../logger';
  */
 export class FileWatcher implements vscode.Disposable {
     private cacheManager: CacheManager;
-    private threadPool: ThreadPoolManager;
     private includePaths: string[];
     private fileExtensions: string[];
     private disposables: vscode.Disposable[] = [];
@@ -23,18 +21,15 @@ export class FileWatcher implements vscode.Disposable {
      * Create a new file watcher.
      *
      * @param cacheManager - Cache manager to update on file changes
-     * @param threadPool - Thread pool for indexing operations
      * @param includePaths - List of directory paths to include
      * @param fileExtensions - List of file extensions to include
      */
     constructor(
         cacheManager: CacheManager,
-        threadPool: ThreadPoolManager,
         includePaths: string[],
         fileExtensions: string[]) {
 
         this.cacheManager = cacheManager;
-        this.threadPool = threadPool;
         this.includePaths = includePaths;
         this.fileExtensions = fileExtensions.map(ext => ext.toLowerCase());
 
@@ -159,7 +154,7 @@ export class FileWatcher implements vscode.Disposable {
 
     /**
      * Handle file change event.
-     * Invalidates the cache entry and rebuilds the index in the background.
+     * Invalidates the cache entry for the changed file.
      *
      * @param uri - URI of the changed file
      */
@@ -173,9 +168,8 @@ export class FileWatcher implements vscode.Disposable {
 
         log(`FileWatcher: Changed: ${filePath}`);
 
-        // Invalidate cache and rebuild index in background
+        // Invalidate cache entry
         this.cacheManager.invalidate(filePath);
-        this.rebuildIndexInBackground(filePath);
     }
 
     /**
@@ -194,7 +188,6 @@ export class FileWatcher implements vscode.Disposable {
 
         log(`FileWatcher: Created: ${filePath}`);
 
-        // Add to cache (this will also build the index)
         this.cacheManager.add(filePath);
     }
 
@@ -211,28 +204,6 @@ export class FileWatcher implements vscode.Disposable {
 
         // Remove from cache (no need to check include paths)
         this.cacheManager.remove(filePath);
-    }
-
-    /**
-     * Rebuild the index for a file in the background.
-     *
-     * @param filePath - Absolute file path to rebuild
-     */
-    private async rebuildIndexInBackground(filePath: string): Promise<void> {
-        try {
-            const fileIndex = this.cacheManager.get(filePath);
-            if (fileIndex) {
-                const result = await this.threadPool.submitIndex({ type: 'index', filePath });
-                if (result.lineStarts) {
-                    fileIndex.setLineStarts(result.lineStarts);
-                    log(`FileWatcher: Re-Indexed: ${filePath}`);
-                } else if (result.error) {
-                    warn(`FileWatcher: Failed to rebuild index for ${filePath}: ${result.error}`);
-                }
-            }
-        } catch (error) {
-            warn(`FileWatcher: Failed to rebuild index for ${filePath}: ${error}`);
-        }
     }
 
     /**

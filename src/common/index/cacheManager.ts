@@ -5,7 +5,8 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { FileIndex } from './fileIndex';
-import { ThreadPoolManager } from './threadPool';
+import { ThreadPool } from './threadPool';
+import { IndexInput } from './types';
 import { log, warn, error } from '../logger';
 
 /**
@@ -18,7 +19,9 @@ export class CacheManager {
     private indexingPromise: Promise<void> | null = null;
     private includePaths: string[] = [];
     private fileExtensions: string[] = ['.cc', '.h'];
-    private threadPool: ThreadPoolManager | null = null;
+    private ctagsPath: string = 'ctags';
+    private cacheDir: string = '';
+    private threadPool: ThreadPool | null = null;
 
     /**
      * Normalize a file path for use as a cache key.
@@ -36,31 +39,45 @@ export class CacheManager {
      *
      * @param includePaths - List of directory paths to include (empty = all files)
      * @param fileExtensions - List of file extensions to include (e.g., '.cc', '.h')
-     * @param threadPool - Thread pool to use for parallel indexing
+     * @param ctagsPath - Path to the ctags executable
+     * @param threadPool - Thread pool manager for indexing operations
      */
-    async initialize(includePaths: string[], fileExtensions: string[], threadPool: ThreadPoolManager): Promise<void> {
+    async initialize(
+        includePaths: string[],
+        fileExtensions: string[],
+        ctagsPath: string,
+        threadPool: ThreadPool
+    ): Promise<void> {
         this.includePaths = includePaths;
         this.fileExtensions = fileExtensions.map(ext => ext.toLowerCase());
+        this.ctagsPath = ctagsPath;
         this.threadPool = threadPool;
         this.indexingComplete = false;
 
+        // Compute cache directory once from first workspace folder
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        this.cacheDir = workspaceFolder
+            ? path.join(workspaceFolder.uri.fsPath, '.cache', 'vsctoolbox', 'index')
+            : '';
+
+        // Ensure cache directory exists
+        if (this.cacheDir) {
+            await fs.promises.mkdir(this.cacheDir, { recursive: true });
+        }
+
         log(`Content index: includePaths =\n${JSON.stringify(includePaths, null, 2)}`);
         log(`Content index: fileExtensions =\n${JSON.stringify(this.fileExtensions, null, 2)}`);
+        log(`Content index: ctagsPath = ${ctagsPath}`);
+        log(`Content index: cacheDir = ${this.cacheDir}`);
 
         this.indexingPromise = this.buildInitialIndex();
         await this.indexingPromise;
     }
 
     /**
-     * Build the initial index for all matching files using worker threads.
+     * Build the initial cache by discovering all matching files.
      */
     private async buildInitialIndex(): Promise<void> {
-        if (!this.threadPool) {
-            error('CacheManager: Thread pool not initialized');
-            this.indexingComplete = true;
-            return;
-        }
-
         try {
             const filePaths: string[] = [];
 
@@ -75,7 +92,7 @@ export class CacheManager {
                 log('Content index: No includePaths configured, using workspace folders');
             }
 
-            // Scan each includePath directory for .cc and .h files
+            // Scan each includePath directory for matching files
             for (const includePath of this.includePaths) {
                 try {
                     const files = await this.findFilesInDirectory(includePath);
@@ -89,30 +106,20 @@ export class CacheManager {
                 }
             }
 
-            log(`Content index: Total files to index: ${filePaths.length}`);
+            log(`Content index: Total files to add: ${filePaths.length}`);
 
-            // Process files in batches using worker threads
-            // Larger batches since workers handle the actual I/O and CPU work
+            // Process files in batches to stay responsive
             const batchSize = 500;
             let lastYield = Date.now();
 
             for (let i = 0; i < filePaths.length; i += batchSize) {
                 const batch = filePaths.slice(i, i + batchSize);
 
-                // Send batch to worker threads for parallel indexing
-                const results = await this.threadPool.indexAll(batch);
-
-                // Process results and store in cache
-                for (const result of results) {
-                    const fileIndex = new FileIndex(result.filePath);
-
-                    if (result.lineStarts) {
-                        fileIndex.setLineStarts(result.lineStarts);
-                    } else if (result.error) {
-                        warn(`Failed to index file ${result.filePath}: ${result.error}`);
-                    }
-
-                    this.cache.set(this.normalizePath(result.filePath), fileIndex);
+                // Create FileIndex instances for each file
+                // isValid() handles cache restoration automatically via mtime comparison
+                for (const filePath of batch) {
+                    const fileIndex = new FileIndex(filePath, this.cacheDir);
+                    this.cache.set(this.normalizePath(filePath), fileIndex);
                 }
 
                 // Yield to event loop every 50ms to stay responsive
@@ -124,9 +131,9 @@ export class CacheManager {
             }
 
             this.indexingComplete = true;
-            log(`Content index: Indexed ${this.cache.size} files`);
+            log(`Content index: Added ${this.cache.size} files to cache`);
         } catch (err) {
-            error(`Failed to initialize file cache: ${err}`);
+            error(`Content index: Failed to initialize cache: ${err}`);
             this.indexingComplete = true; // Mark complete even on error to unblock searches
         }
     }
@@ -193,64 +200,76 @@ export class CacheManager {
     }
 
     /**
-     * Get a FileIndex for a path.
+     * Get FileIndex instances for multiple paths.
      *
-     * @param filePath - Absolute file path
-     * @returns FileIndex instance or undefined if not in cache
+     * @param filePaths - Array of absolute file paths
+     * @param ensureValid - If true, indexes any files that don't have valid tags
+     * @returns Map of file path to FileIndex (only includes paths that are in cache)
      */
-    get(filePath: string): FileIndex | undefined {
-        return this.cache.get(this.normalizePath(filePath));
-    }
+    async get(filePaths: string[], ensureValid: boolean = false): Promise<Map<string, FileIndex>> {
+        const result = new Map<string, FileIndex>();
+        const toIndex: FileIndex[] = [];
 
-    /**
-     * Add a new file to cache.
-     *
-     * @param filePath - Absolute file path to add
-     */
-    add(filePath: string): void {
-        // Only add files with matching extensions
-        const ext = path.extname(filePath).toLowerCase();
-        const normalizedPath = this.normalizePath(filePath);
-        if (!this.cache.has(normalizedPath) && this.fileExtensions.includes(ext)) {
-            const fileIndex = new FileIndex(filePath);
-            this.cache.set(normalizedPath, fileIndex);
-
-            // Build index in background using thread pool
-            if (this.threadPool) {
-                this.threadPool.submitIndex({ type: 'index', filePath }).then(result => {
-                    if (result.lineStarts) {
-                        fileIndex.setLineStarts(result.lineStarts);
-                        log(`Content index: Indexed new file ${filePath}`);
-                    } else if (result.error) {
-                        warn(`Failed to index new file ${filePath}: ${result.error}`);
-                    }
-                }).catch(err => {
-                    warn(`Failed to index new file ${filePath}: ${err}`);
-                });
+        // Look up all FileIndex instances and collect those needing indexing
+        for (const filePath of filePaths) {
+            const fileIndex = this.cache.get(this.normalizePath(filePath));
+            if (fileIndex) {
+                result.set(filePath, fileIndex);
+                if (ensureValid && !fileIndex.isValid()) {
+                    toIndex.push(fileIndex);
+                }
             }
         }
-    }
 
-    /**
-     * Invalidate cache for a specific file.
-     * The index will be rebuilt on next access.
-     *
-     * @param filePath - Absolute file path to invalidate
-     */
-    invalidate(filePath: string): void {
-        const fileIndex = this.cache.get(this.normalizePath(filePath));
-        if (fileIndex) {
-            fileIndex.invalidate();
+        // Batch index all invalid files
+        if (toIndex.length > 0) {
+            if (!this.threadPool) {
+                warn('Content index: Cannot ensure valid - thread pool not set');
+                return result;
+            }
+
+            const inputs: IndexInput[] = toIndex.map(fi => ({
+                type: 'index' as const,
+                filePath: fi.getFilePath(),
+                ctagsPath: this.ctagsPath,
+                tagsPath: fi.getTagsPath()  // Now always available
+            }));
+
+            const startTime = Date.now();
+            const outputs = await this.threadPool.indexAll(inputs);
+            const elapsed = Date.now() - startTime;
+
+            let successCount = 0;
+            for (let i = 0; i < outputs.length; i++) {
+                const output = outputs[i];
+                const fi = toIndex[i];
+
+                if (output.tagsPath && !output.error) {
+                    log(`Content index: Indexed ${fi.getFilePath()}`);
+                    successCount++;
+                } else if (output.error) {
+                    error(`Content index: Failed to index ${fi.getFilePath()}: ${output.error}`);
+                }
+            }
+
+            if (successCount > 0) {
+                log(`Content index: Indexed ${successCount} files in ${elapsed}ms`);
+            }
         }
+
+        return result;
     }
 
     /**
-     * Remove a file from cache.
+     * Get all FileIndex instances in the cache.
      *
-     * @param filePath - Absolute file path to remove
+     * @param ensureValid - If true, indexes any files that don't have valid tags
+     * @returns Array of FileIndex instances
      */
-    remove(filePath: string): void {
-        this.cache.delete(this.normalizePath(filePath));
+    async getAll(ensureValid: boolean = false): Promise<FileIndex[]> {
+        const filePaths = Array.from(this.cache.values()).map(fi => fi.getFilePath());
+        const result = await this.get(filePaths, ensureValid);
+        return Array.from(result.values());
     }
 
     /**
@@ -263,59 +282,47 @@ export class CacheManager {
     }
 
     /**
-     * Get a FileIndex, ensuring it's indexed.
-     * If not indexed, builds the index first.
+     * Add a new file to cache.
      *
-     * @param filePath - Absolute file path
-     * @returns FileIndex instance or undefined if not in cache
+     * @param filePath - Absolute file path to add
      */
-    async getIndexed(filePath: string): Promise<FileIndex | undefined> {
-        const fileIndex = this.cache.get(this.normalizePath(filePath));
-        if (fileIndex && !fileIndex.isIndexed() && this.threadPool) {
-            try {
-                const result = await this.threadPool.submitIndex({ type: 'index', filePath });
-                if (result.lineStarts) {
-                    fileIndex.setLineStarts(result.lineStarts);
-                } else if (result.error) {
-                    warn(`Failed to build index for ${filePath}: ${result.error}`);
-                    return undefined;
-                }
-            } catch (err) {
-                warn(`Failed to build index for ${filePath}: ${err}`);
-                return undefined;
-            }
+    add(filePath: string): void {
+        // Only add files with matching extensions
+        const ext = path.extname(filePath).toLowerCase();
+        const normalizedPath = this.normalizePath(filePath);
+        if (!this.cache.has(normalizedPath) && this.fileExtensions.includes(ext)) {
+            const fileIndex = new FileIndex(filePath, this.cacheDir);
+            this.cache.set(normalizedPath, fileIndex);
+            log(`Content index: Added new file ${filePath}`);
         }
-        return fileIndex;
     }
 
     /**
-     * Get all FileIndex instances that are indexed and ready for search.
+     * Invalidate cache for a specific file.
+     * Cleans up any associated tags file.
      *
-     * @returns Array of indexed FileIndex instances
+     * @param filePath - Absolute file path to invalidate
      */
-    // TODO: this can be optimized.
-    async getAllIndexed(): Promise<FileIndex[]> {
-        const indexed: FileIndex[] = [];
-
-        for (const fileIndex of this.cache.values()) {
-            if (!fileIndex.isIndexed() && this.threadPool) {
-                try {
-                    const result = await this.threadPool.submitIndex({ type: 'index', filePath: fileIndex.getFilePath() });
-                    if (result.lineStarts) {
-                        fileIndex.setLineStarts(result.lineStarts);
-                    } else if (result.error) {
-                        warn(`Failed to build index for ${fileIndex.getFilePath()}: ${result.error}`);
-                        continue;
-                    }
-                } catch (err) {
-                    warn(`Failed to build index for ${fileIndex.getFilePath()}: ${err}`);
-                    continue;
-                }
-            }
-            indexed.push(fileIndex);
+    invalidate(filePath: string): void {
+        const fileIndex = this.cache.get(this.normalizePath(filePath));
+        if (fileIndex) {
+            fileIndex.invalidate();
         }
+    }
 
-        return indexed;
+    /**
+     * Remove a file from cache.
+     * Cleans up any associated tags file.
+     *
+     * @param filePath - Absolute file path to remove
+     */
+    remove(filePath: string): void {
+        const normalizedPath = this.normalizePath(filePath);
+        const fileIndex = this.cache.get(normalizedPath);
+        if (fileIndex) {
+            fileIndex.invalidate();
+            this.cache.delete(normalizedPath);
+        }
     }
 
     /**
@@ -326,7 +333,7 @@ export class CacheManager {
     }
 
     /**
-     * Clear cache and rebuild the index.
+     * Clear cache and rebuild.
      * Called when configuration changes after initialization.
      */
     private rebuild(): void {
@@ -336,7 +343,7 @@ export class CacheManager {
     }
 
     /**
-     * Update configuration and rebuild the index.
+     * Update configuration and rebuild the cache.
      * Triggers a full rebuild if already initialized.
      *
      * @param includePaths - New list of directory paths to include
@@ -345,9 +352,7 @@ export class CacheManager {
     updateConfig(includePaths: string[], fileExtensions: string[]): void {
         this.includePaths = includePaths;
         this.fileExtensions = fileExtensions.map(ext => ext.toLowerCase());
-        if (this.threadPool) {
-            this.rebuild();
-        }
+        this.rebuild();
     }
 
     /**

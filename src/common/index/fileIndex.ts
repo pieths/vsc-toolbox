@@ -1,50 +1,118 @@
 // Copyright (c) 2026 Piet Hein Schouten
 // SPDX-License-Identifier: MIT
 
+import * as fs from 'fs';
+import * as crypto from 'crypto';
+import * as path from 'path';
+import * as vscode from 'vscode';
+
 /**
- * FileIndex manages the line-index cache for a single file.
- * It does NOT cache file content—only the byte positions of line starts.
- * This enables O(log n) line number lookup while minimizing memory usage.
- *
- * Note: All indexing is done through the thread pool (workerThread.ts).
- * This class is a pure data holder.
+ * Represents a single tag entry from a ctags JSON output file.
+ * Only includes fields we care about - path and pattern are ignored
+ * since we already know the file path and have line numbers.
+ */
+interface Tag {
+    name: string;
+    line: number;
+    end?: number;
+    kind: string;
+    scope?: string;
+    scopeKind?: string;
+    signature?: string;
+    typeref?: string;
+}
+
+/**
+ * Cached tags entry with mtime for staleness detection.
+ */
+interface CachedTags {
+    tags: Tag[];
+    mtime: number;  // mtime of tags file when parsed
+}
+
+/**
+ * Simple LRU cache for parsed tags arrays.
+ * Keys are tags file paths, values are parsed Tag arrays with their mtime.
+ */
+class TagsCache {
+    private cache = new Map<string, CachedTags>();
+    private maxSize: number;
+
+    constructor(maxSize: number = 100) {
+        this.maxSize = maxSize;
+    }
+
+    /**
+     * Get cached tags if the mtime matches.
+     * Returns undefined if not cached or mtime doesn't match.
+     */
+    get(key: string, currentMtime: number): Tag[] | undefined {
+        const entry = this.cache.get(key);
+        if (entry !== undefined) {
+            if (entry.mtime === currentMtime) {
+                // Move to end (most recently used)
+                this.cache.delete(key);
+                this.cache.set(key, entry);
+                return entry.tags;
+            } else {
+                // Stale entry - remove it
+                this.cache.delete(key);
+            }
+        }
+        return undefined;
+    }
+
+    set(key: string, tags: Tag[], mtime: number): void {
+        this.cache.delete(key);
+
+        if (this.cache.size >= this.maxSize) {
+            const oldestKey = this.cache.keys().next().value;
+            if (oldestKey !== undefined) {
+                this.cache.delete(oldestKey);
+            }
+        }
+
+        this.cache.set(key, { tags, mtime });
+    }
+
+    delete(key: string): void {
+        this.cache.delete(key);
+    }
+
+    clear(): void {
+        this.cache.clear();
+    }
+}
+
+// Module-level LRU cache shared by all FileIndex instances
+const tagsCache = new TagsCache(300);
+
+/**
+ * FileIndex manages metadata for a single file in the index.
+ * It stores the file path and the path to its ctags file.
+ * Validity is determined by comparing filesystem mtimes.
  */
 export class FileIndex {
     private filePath: string;
-    private lineStarts: number[] | null = null;
+    private tagsPath: string;
 
-    constructor(filePath: string) {
+    constructor(filePath: string, cacheDir: string) {
         this.filePath = filePath;
+        this.tagsPath = this.computeTagsPath(cacheDir);
     }
 
     /**
-     * Set pre-built line starts (from worker thread).
-     * @param lineStarts - Array of byte positions where each line starts
+     * Compute the deterministic tags file path for this source file.
+     * Uses MD5 hash of the full path to avoid conflicts.
      */
-    setLineStarts(lineStarts: number[]): void {
-        this.lineStarts = lineStarts;
-    }
-
-    /**
-     * Clear the cached line index (called when file is modified).
-     */
-    invalidate(): void {
-        this.lineStarts = null;
-    }
-
-    /**
-     * Check if the line index is built.
-     */
-    isIndexed(): boolean {
-        return this.lineStarts !== null;
-    }
-
-    /**
-     * Get the line starts array for worker threads to use.
-     * Returns null if not indexed.
-     */
-    getLineStarts(): number[] | null {
-        return this.lineStarts;
+    private computeTagsPath(cacheDir: string): string {
+        const hash = crypto.createHash('md5')
+            .update(this.filePath)
+            .digest('hex')
+            .substring(0, 16)
+            .toUpperCase();
+        const fileName = path.basename(this.filePath);
+        return path.join(cacheDir, `${fileName}.${hash}.tags`);
     }
 
     /**
@@ -52,5 +120,132 @@ export class FileIndex {
      */
     getFilePath(): string {
         return this.filePath;
+    }
+
+    /**
+     * Get the path to the tags file.
+     * Always returns the computed path - use isValid() to check if it exists.
+     */
+    getTagsPath(): string {
+        return this.tagsPath;
+    }
+
+    /**
+     * Check if the tags file exists and is newer than the source file.
+     * Uses synchronous stat calls for simplicity - stat is fast (~0.05ms).
+     */
+    isValid(): boolean {
+        try {
+            const sourceMtime = fs.statSync(this.filePath).mtimeMs;
+            const tagsMtime = fs.statSync(this.tagsPath).mtimeMs;
+            return tagsMtime >= sourceMtime;
+        } catch {
+            return false;  // Tags file doesn't exist or other error
+        }
+    }
+
+    /**
+     * Clear cached tags for this file.
+     * File deletion is fire-and-forget since worker overwrites anyway.
+     */
+    invalidate(): void {
+        tagsCache.delete(this.tagsPath);
+        fs.promises.unlink(this.tagsPath).catch(() => { });
+    }
+
+    /**
+     * Load and parse tags from the tags file.
+     * Checks mtime before returning to ensure freshness.
+     * @returns Array of Tag objects, or null if not valid or parsing fails
+     */
+    private async getTags(): Promise<Tag[] | null> {
+        // Get mtimes - also serves as existence/validity check
+        let sourceMtime: number;
+        let tagsMtime: number;
+        try {
+            sourceMtime = fs.statSync(this.filePath).mtimeMs;
+            tagsMtime = fs.statSync(this.tagsPath).mtimeMs;
+            if (tagsMtime < sourceMtime) {
+                return null;  // Tags file is stale
+            }
+        } catch {
+            return null;  // File doesn't exist or other error
+        }
+
+        // Check LRU cache - pass tagsMtime for staleness check
+        const cached = tagsCache.get(this.tagsPath, tagsMtime);
+        if (cached !== undefined) {
+            return cached;
+        }
+
+        // Read and parse the tags file
+        try {
+            const content = await fs.promises.readFile(this.tagsPath, 'utf8');
+            const tags: Tag[] = [];
+
+            for (const line of content.split('\n')) {
+                if (!line.trim()) continue;
+
+                // Skip pseudo-tags (metadata) - fast string check before JSON.parse
+                if (line.startsWith('{"_type": "ptag"')) continue;
+
+                const entry = JSON.parse(line);
+
+                // Safety fallback for any non-tag entries
+                if (entry._type !== 'tag') continue;
+
+                tags.push({
+                    name: entry.name,
+                    line: entry.line,
+                    end: entry.end,
+                    kind: entry.kind,
+                    scope: entry.scope,
+                    scopeKind: entry.scopeKind,
+                    signature: entry.signature,
+                    typeref: entry.typeref
+                });
+            }
+
+            // Cache with the original mtime to avoid marking the
+            // cached entry as newer than it could be. It is possible
+            // that we are returning slightly stale data if the file changed
+            // again after the mtime check above, but that's acceptable.
+            // The tagsCache will store the older mtime and re-validate
+            // on next get().
+            tagsCache.set(this.tagsPath, tags, tagsMtime);
+            return tags;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Get the fully qualified name for a symbol at a given location.
+     * Only works for code files (not markdown, etc.).
+     * @param name - The symbol name to look up
+     * @param location - The location of the symbol in the source file
+     * @returns The fully qualified name (e.g., "namespace::Class::method") or the original name if not found
+     */
+    async getFullyQualifiedName(name: string, location: vscode.Location): Promise<string> {
+        const tags = await this.getTags();
+        if (tags === null) {
+            return name;  // Unable to get tags - return simple name
+        }
+
+        // Convert from 0-based VS Code line to 1-based ctags line
+        const line = location.range.start.line + 1;
+
+        // Find a tag matching the name and line
+        const tag = tags.find(t => t.name === name && t.line === line);
+        if (!tag) {
+            return name;  // Tag not found - return simple name
+        }
+
+        if (tag.scope) {
+            // Replace anonymous namespace markers like __anonXXXX with (anonymous namespace)
+            const scope = tag.scope.replace(/__anon[a-fA-F0-9]+/g, '(anonymous namespace)');
+            return `${scope}::${tag.name}`;
+        }
+        return tag.name;
     }
 }

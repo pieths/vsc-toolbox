@@ -5,7 +5,7 @@
  * File Index module - provides file indexing and search functionality.
  *
  * This module exports only the public interface. Implementation details
- * (CacheManager, ThreadPoolManager, FileWatcher, etc.) are hidden.
+ * (CacheManager, ThreadPool, FileWatcher, etc.) are hidden.
  */
 
 export { ContentIndex } from './contentIndex';

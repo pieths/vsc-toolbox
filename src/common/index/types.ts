@@ -60,6 +60,10 @@ export interface IndexInput {
     type: 'index';
     /** Absolute file path to index */
     filePath: string;
+    /** Path to the ctags executable */
+    ctagsPath: string;
+    /** Output path for the tags file */
+    tagsPath: string;
 }
 
 /**
@@ -70,8 +74,8 @@ export interface IndexOutput {
     type: 'index';
     /** Absolute file path that was indexed */
     filePath: string;
-    /** Array of byte positions where each line starts, or null on error */
-    lineStarts: number[] | null;
+    /** Path to the generated tags file, or null on error */
+    tagsPath: string | null;
     /** Error message if indexing failed */
     error?: string;
 }
@@ -86,6 +90,8 @@ export interface ContentIndexConfig {
     includePaths: string[];
     /** List of file extensions to include (e.g., '.cc', '.h') */
     fileExtensions: string[];
+    /** Path to the ctags executable */
+    ctagsPath: string;
 }
 
 /**

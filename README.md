@@ -56,6 +56,8 @@ VSC Toolbox is a collection of productivity tools for VS Code that includes:
 
 ✅ **Node.js** (version 24.x or higher) - [Download here](https://nodejs.org/)
 
+✅ **ctags** See "Content Index Settings" below for more details.
+
 > **Note:** Node.js is only required to build the extension. End users
 > installing a packaged `.vsix` file do not need Node.js.
 
@@ -481,13 +483,39 @@ Change to match your module (`"myapp"`, etc.).
 {
   "vscToolbox.contentIndex.workerThreads": 0,
   "vscToolbox.contentIndex.includePaths": ["/path/to/src"],
-  "vscToolbox.contentIndex.fileExtensions": [".cc", ".h"]
+  "vscToolbox.contentIndex.fileExtensions": [".cc", ".h"],
+  "vscToolbox.contentIndex.ctagsPath": "ctags"
 }
 ```
 
 - `workerThreads`: Number of worker threads (0 = auto-detect based on CPU cores)
 - `includePaths`: Directories to index (empty = all workspace folders)
 - `fileExtensions`: File extensions to include in search
+- `ctagsPath`: Path to the ctags executable (default: `"ctags"`)
+
+##### Installing Universal Ctags (Windows)
+
+The content index uses [Universal Ctags](https://github.com/universal-ctags/ctags)
+for symbol extraction. Install it using one of these methods:
+
+**Option 1: GitHub Releases** (recommended)
+- Download from https://github.com/universal-ctags/ctags-win32/releases
+- Extract the `ctags-*-x64.zip` and add to PATH, or set `ctagsPath` to the full path
+
+**Option 2: Package managers**
+
+```powershell
+# WinGet
+winget install UniversalCtags.Ctags
+```
+
+Note: WinGet packages may lag behind official releases.
+
+**Verify installation:**
+```powershell
+ctags --version
+# Should show: Universal Ctags 6.x.x
+```
 
 ## Development
 

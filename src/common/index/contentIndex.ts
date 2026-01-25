@@ -4,7 +4,7 @@
 import * as vscode from 'vscode';
 import * as os from 'os';
 import { CacheManager } from './cacheManager';
-import { ThreadPoolManager } from './threadPool';
+import { ThreadPool } from './threadPool';
 import { FileWatcher } from './fileWatcher';
 import { parseQuery, validateQuery } from './queryParser';
 import { SearchResult, SearchResults, ContentIndexConfig, SearchInput } from './types';
@@ -23,8 +23,9 @@ function getConfig(): ContentIndexConfig {
 
     const includePaths = config.get<string[]>('includePaths', []);
     const fileExtensions = config.get<string[]>('fileExtensions', ['.cc', '.h']);
+    const ctagsPath = config.get<string>('ctagsPath', 'ctags');
 
-    return { workerThreads, includePaths, fileExtensions };
+    return { workerThreads, includePaths, fileExtensions, ctagsPath };
 }
 
 /**
@@ -39,7 +40,7 @@ export class ContentIndex {
     private static instance: ContentIndex | null = null;
 
     private cacheManager: CacheManager;
-    private threadPool: ThreadPoolManager | null = null;
+    private threadPool: ThreadPool | null = null;
     private fileWatcher: FileWatcher | null = null;
     private statusBarItem: vscode.StatusBarItem | null = null;
     private initialized: boolean = false;
@@ -96,7 +97,7 @@ export class ContentIndex {
         this.initialized = true; // Mark as initialized immediately to prevent re-entry
 
         const config = getConfig();
-        const { workerThreads, includePaths, fileExtensions } = config;
+        const { workerThreads, includePaths, fileExtensions, ctagsPath } = config;
 
         // Create status bar item for indexing progress
         this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -105,8 +106,8 @@ export class ContentIndex {
         this.statusBarItem.show();
 
         // Create components
-        this.threadPool = new ThreadPoolManager(workerThreads);
-        this.fileWatcher = new FileWatcher(this.cacheManager, this.threadPool, includePaths, fileExtensions);
+        this.threadPool = new ThreadPool(workerThreads);
+        this.fileWatcher = new FileWatcher(this.cacheManager, includePaths, fileExtensions);
 
         // Register for cleanup
         context.subscriptions.push({
@@ -123,7 +124,7 @@ export class ContentIndex {
         );
 
         // Start background indexing (fire-and-forget, non-blocking)
-        this.cacheManager.initialize(includePaths, fileExtensions, this.threadPool).then(() => {
+        this.cacheManager.initialize(includePaths, fileExtensions, ctagsPath, this.threadPool).then(() => {
             const fileCount = this.cacheManager.getFileCount();
             // Hide status bar and show temporary notification
             this.statusBarItem?.dispose();
@@ -217,8 +218,8 @@ export class ContentIndex {
         }
 
         try {
-            // Get all indexed files
-            const allFiles = await this.cacheManager.getAllIndexed();
+            // Get all files from cache
+            const allFiles = await this.cacheManager.getAll();
 
             if (allFiles.length === 0) {
                 return [];

@@ -28,10 +28,11 @@ interface QueuedIndexTask {
 type QueuedTask = QueuedSearchTask | QueuedIndexTask;
 
 /**
- * ThreadPoolManager manages a pool of worker threads for parallel content searching.
- * It handles task distribution, worker lifecycle, and error recovery.
+ * ThreadPool manages a pool of worker threads for parallel content
+ * searching and indexing. It handles task distribution, worker
+ * lifecycle, and error recovery.
  */
-export class ThreadPoolManager {
+export class ThreadPool {
     private workers: Worker[] = [];
     private availableWorkers: Worker[] = [];
     private taskQueue: QueuedTask[] = [];
@@ -94,7 +95,7 @@ export class ThreadPoolManager {
                     task.resolve({
                         type: 'index',
                         filePath: task.input.filePath,
-                        lineStarts: null,
+                        tagsPath: null,
                         error: error.message
                     });
                 } else {
@@ -180,7 +181,7 @@ export class ThreadPoolManager {
      * @param input - Search input containing file path, regex pattern, and line starts
      * @returns Promise that resolves with the search results
      */
-    submit(input: SearchInput): Promise<SearchOutput> {
+    private submit(input: SearchInput): Promise<SearchOutput> {
         if (this.disposed) {
             return Promise.resolve({
                 filePath: input.filePath,
@@ -201,12 +202,12 @@ export class ThreadPoolManager {
      * @param input - Index input containing file path
      * @returns Promise that resolves with the index results
      */
-    submitIndex(input: IndexInput): Promise<IndexOutput> {
+    private submitIndex(input: IndexInput): Promise<IndexOutput> {
         if (this.disposed) {
             return Promise.resolve({
                 type: 'index',
                 filePath: input.filePath,
-                lineStarts: null,
+                tagsPath: null,
                 error: 'Thread pool has been disposed'
             });
         }
@@ -220,23 +221,18 @@ export class ThreadPoolManager {
     /**
      * Index multiple files in parallel.
      *
-     * @param filePaths - Array of file paths to index
+     * @param inputs - Array of index inputs to process
      * @returns Promise that resolves with all index results
      */
-    async indexAll(filePaths: string[]): Promise<IndexOutput[]> {
+    async indexAll(inputs: IndexInput[]): Promise<IndexOutput[]> {
         if (this.disposed) {
-            return filePaths.map(filePath => ({
+            return inputs.map(input => ({
                 type: 'index' as const,
-                filePath,
-                lineStarts: null,
+                filePath: input.filePath,
+                tagsPath: null,
                 error: 'Thread pool has been disposed'
             }));
         }
-
-        const inputs: IndexInput[] = filePaths.map(filePath => ({
-            type: 'index' as const,
-            filePath
-        }));
 
         return Promise.all(inputs.map(input => this.submitIndex(input)));
     }
@@ -303,7 +299,7 @@ export class ThreadPoolManager {
                 task.resolve({
                     type: 'index',
                     filePath: task.input.filePath,
-                    lineStarts: null,
+                    tagsPath: null,
                     error: 'Thread pool disposed'
                 });
             } else {
