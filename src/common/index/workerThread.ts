@@ -111,6 +111,15 @@ async function searchFile(input: SearchInput): Promise<SearchOutput> {
  */
 async function indexFile(input: IndexInput): Promise<IndexOutput> {
     try {
+        // Delete existing tags file if present - ctags refuses to overwrite
+        // JSON-format tags files because they don't look like traditional tags
+        // TODO: remove this when using ctags version that supports force overwrites.
+        try {
+            fs.unlinkSync(input.tagsPath);
+        } catch {
+            // File doesn't exist - that's fine
+        }
+
         // Run ctags with JSON output format
         // --fields=+neZKS: line number, end line, scope with kind, kind full name, signature
         // --kinds-all='*': include all symbol kinds
