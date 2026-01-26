@@ -405,8 +405,16 @@ export class FileIndex {
             }
         }
 
+        // Build the fully qualified name
+        let fullyQualifiedName = innermost.name;
+        if (innermost.scope) {
+            const scope = normalizeScope(innermost.scope);
+            fullyQualifiedName = `${scope}::${innermost.name}`;
+        }
+
         return {
             name: innermost.name,
+            fullyQualifiedName: fullyQualifiedName,
             type: ctagsKindToSymbolKind(innermost.kind),
             ctagsType: innermost.kind,
             startLine: innermost.line,

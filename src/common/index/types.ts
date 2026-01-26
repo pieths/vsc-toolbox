@@ -27,6 +27,8 @@ export interface FunctionDetails {
 export interface ContainerDetails {
     /** Name of the container */
     name: string;
+    /** Fully qualified name (e.g., "namespace::Class::method") */
+    fullyQualifiedName: string;
     /** VS Code SymbolKind equivalent, or undefined if no mapping exists */
     type: number | undefined;  // vscode.SymbolKind value
     /** ctags kind (e.g., "function", "class", "namespace") */
