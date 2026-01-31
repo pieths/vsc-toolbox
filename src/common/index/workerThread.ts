@@ -126,7 +126,7 @@ async function indexFile(input: IndexInput): Promise<IndexOutput> {
         // --output-format=json: structured JSON output
         await execFileAsync(input.ctagsPath, [
             '--output-format=json',
-            '--fields=+neZKS',
+            '--fields=+cneNZKS',
             '--kinds-all=*',
             '-o', input.tagsPath,
             input.filePath

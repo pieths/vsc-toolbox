@@ -15,6 +15,7 @@ import { FunctionDetails, ContainerDetails } from './types';
 interface Tag {
     name: string;
     line: number;
+    column?: number;
     end?: number;
     kind: string;
     scope?: string;
@@ -259,6 +260,7 @@ export class FileIndex {
                 tags.push({
                     name: entry.name,
                     line: entry.line,
+                    column: entry.column,
                     end: entry.end,
                     kind: entry.kind,
                     scope: entry.scope,
@@ -366,6 +368,7 @@ export class FileIndex {
             scope,
             signature,
             startLine: tag.line,
+            startColumn: tag.column,
             endLine: tag.end ?? tag.line
         };
     }
@@ -418,6 +421,7 @@ export class FileIndex {
             type: ctagsKindToSymbolKind(innermost.kind),
             ctagsType: innermost.kind,
             startLine: innermost.line,
+            startColumn: innermost.column,
             endLine: innermost.end!
         };
     }

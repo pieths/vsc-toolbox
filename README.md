@@ -495,21 +495,13 @@ Change to match your module (`"myapp"`, etc.).
 
 ##### Installing Universal Ctags (Windows)
 
-The content index uses [Universal Ctags](https://github.com/universal-ctags/ctags)
-for symbol extraction. Install it using one of these methods:
+The content index uses a custom version of
+[Universal Ctags](https://github.com/universal-ctags/ctags)
+for symbol extraction.
 
-**Option 1: GitHub Releases** (recommended)
-- Download from https://github.com/universal-ctags/ctags-win32/releases
-- Extract the `ctags-*-x64.zip` and add to PATH, or set `ctagsPath` to the full path
-
-**Option 2: Package managers**
-
-```powershell
-# WinGet
-winget install UniversalCtags.Ctags
-```
-
-Note: WinGet packages may lag behind official releases.
+- Download from https://github.com/pieths/ctags/releases/tag/v6.2.0-custom
+- Extract the `ctags_v6.2.0-custom.zip` and add to PATH,
+  or set `ctagsPath` in the VSCode settings to the full path.
 
 **Verify installation:**
 ```powershell
