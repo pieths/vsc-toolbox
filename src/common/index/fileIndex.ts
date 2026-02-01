@@ -92,6 +92,13 @@ const tagsCache = new TagsCache(300);
 // Regex for replacing anonymous namespace markers (compiled once)
 const ANON_NAMESPACE_REGEX = /__anon[a-fA-F0-9]+/g;
 
+// ctags kinds that represent containers (can contain other code)
+// Excludes local variables, members, parameters, etc.
+const CONTAINER_KINDS = new Set([
+    'class', 'struct', 'union', 'namespace', 'function',
+    'method', 'enum', 'module', 'interface'
+]);
+
 /**
  * Replace anonymous namespace markers (e.g., __anon1234abcd) with "(anonymous namespace)".
  * ctags uses these markers for unnamed namespaces in C++.
@@ -386,8 +393,12 @@ export class FileIndex {
 
         // Find all tags that contain the given line (have both start and end)
         // A tag contains the line if: tag.line <= line <= tag.end
+        // Only include tags that are valid containers (class, function, etc.)
         const containingTags = tags.filter(t =>
-            t.end !== undefined && t.line <= line && line <= t.end
+            t.end !== undefined &&
+            t.line <= line &&
+            line <= t.end &&
+            CONTAINER_KINDS.has(t.kind)
         );
 
         if (containingTags.length === 0) {
