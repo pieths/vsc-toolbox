@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { createMarkdownCodeBlock } from '../common/markdownUtils';
-import {
-    getFunctionSignatureRange,
-    getQualifiedNameFromDocumentSymbol
-} from '../common/documentUtils';
+import { getFunctionSignatureRange } from '../common/documentUtils';
+import { ContentIndex, ContainerDetails } from '../common/index';
+import { ScopedFileCache } from '../common/scopedFileCache';
 
 /**
  * Input parameters for finding references
@@ -31,13 +31,13 @@ interface SourceContext {
  * group all fall within the range start.line and end.line. This is used to
  * cluster references when displaying them since multiple references may have
  * overlapping source contexts and we want to avoid duplication in the output.
- * If the container is set, it indicates the DocumentSymbol that contains all
+ * If the container is set, it indicates the container that contains all
  * references in this group.
  */
 interface ReferenceGroup {
     references: vscode.Location[];
     range: vscode.Range;
-    container?: vscode.DocumentSymbol;
+    container?: ContainerDetails;
     containerFullName?: string;
 }
 
@@ -78,18 +78,21 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
     ): Promise<vscode.LanguageModelToolResult> {
         const { uri, position, symbolName, sourceLine } = options.input;
 
+        // Create a file cache for this invocation to avoid repeated file reads
+        const fileCache = new ScopedFileCache();
+
         try {
             // Parse the URI
             const parsedUri = vscode.Uri.parse(uri);
 
-            // Open the document (VS Code will handle this internally)
-            const document = await vscode.workspace.openTextDocument(parsedUri);
+            // Read file contents via cache
+            const lines = await fileCache.getLines(parsedUri.fsPath);
 
             // Get the exact position by verifying the source line and symbol
             // This helps in cases where the agent might have been off by one
             // or more lines when providing the position.
             const vscodePosition = await this.resolveExactPosition(
-                document,
+                lines,
                 position,
                 symbolName,
                 sourceLine
@@ -99,16 +102,17 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
             // This works even for files that aren't open because VS Code manages it
             const references = await vscode.commands.executeCommand<vscode.Location[]>(
                 'vscode.executeReferenceProvider',
-                document.uri,
+                parsedUri,
                 vscodePosition
             ) || [];
 
-            const verifiedReferences = await this.verifyReferences(references, symbolName);
+            const verifiedReferences = await this.verifyReferences(references, symbolName, fileCache);
 
             const consolidatedReferences = await this.consolidateReferences(
                 verifiedReferences,
                 this.contextLinesBefore,
-                this.contextLinesAfter
+                this.contextLinesAfter,
+                fileCache
             );
 
             const markdown = await this.getMarkdownFromReferences(
@@ -116,7 +120,8 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                 uri,
                 vscodePosition,
                 sourceLine,
-                consolidatedReferences
+                consolidatedReferences,
+                fileCache
             );
 
             return new vscode.LanguageModelToolResult([
@@ -124,6 +129,9 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
             ]);
         } catch (error: any) {
             throw new Error(`Failed to find references: ${error.message}. Verify the file URI and position are correct.`);
+        } finally {
+            // Clear cache at the end of the invocation
+            fileCache.clear();
         }
     }
 
@@ -134,11 +142,13 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
      * See: https://github.com/clangd/clangd/issues/2548
      * @param references Array of reference locations to verify
      * @param symbolName The name of the symbol to look for
+     * @param fileCache Cache for file contents
      * @returns Filtered array containing only valid references
      */
     private async verifyReferences(
         references: vscode.Location[],
-        symbolName: string
+        symbolName: string,
+        fileCache: ScopedFileCache
     ): Promise<vscode.Location[]> {
         const verifiedReferences: vscode.Location[] = [];
 
@@ -146,7 +156,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
         const escapedSymbol = symbolName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const symbolRegex = new RegExp(`\\b${escapedSymbol}\\b`, 'g');
 
-        // Group references by URI to minimize document opens
+        // Group references by URI to minimize file reads
         const refsByUri = new Map<string, vscode.Location[]>();
         for (const ref of references) {
             const uriStr = ref.uri.toString();
@@ -156,21 +166,21 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
             refsByUri.get(uriStr)!.push(ref);
         }
 
-        // Verify references for each document
+        // Verify references for each file
         for (const [uriStr, refs] of refsByUri) {
             try {
                 const uri = vscode.Uri.parse(uriStr);
-                const document = await vscode.workspace.openTextDocument(uri);
+                const lines = await fileCache.getLines(uri.fsPath);
 
                 for (const ref of refs) {
                     const line = ref.range.start.line;
 
-                    // Check if line is within document bounds
-                    if (line < 0 || line >= document.lineCount) {
+                    // Check if line is within file bounds
+                    if (line < 0 || line >= lines.length) {
                         continue;
                     }
 
-                    const lineText = document.lineAt(line).text;
+                    const lineText = lines[line];
 
                     // Skip if character position is past end of line
                     if (ref.range.start.character >= lineText.length) {
@@ -186,7 +196,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                     }
                 }
             } catch (error) {
-                // If we can't open the document, skip these references
+                // If we can't read the file, skip these references
                 continue;
             }
         }
@@ -197,7 +207,8 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
     private async consolidateReferences(
         references: vscode.Location[],
         contextLinesBefore: number,
-        contextLinesAfter: number
+        contextLinesAfter: number,
+        fileCache: ScopedFileCache
     ): Promise<ReferenceGroup[]> {
         const referenceGroups: ReferenceGroup[] = [];
         const batchSize = 20;
@@ -208,7 +219,8 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                 batch.map(ref => this.getReferenceGroupFromLocation(
                     ref,
                     contextLinesBefore,
-                    contextLinesAfter))
+                    contextLinesAfter,
+                    fileCache))
             );
             referenceGroups.push(...batchResults);
         }
@@ -238,14 +250,13 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
             for (let i = 1; i < groups.length; i++) {
                 const nextGroup = groups[i];
 
-                // Check if containers match (both undefined, or same container range)
-                // Note: We compare by range because each getReferenceGroupFromLocation call
-                // fetches symbols separately, so === reference equality won't work
+                // Check if containers match (both undefined, or same container by startLine and name)
                 const containersMatch =
                     (currentGroup.container === undefined && nextGroup.container === undefined) ||
                     (currentGroup.container !== undefined &&
                         nextGroup.container !== undefined &&
-                        currentGroup.container.selectionRange.isEqual(nextGroup.container.selectionRange));
+                        currentGroup.container.startLine === nextGroup.container.startLine &&
+                        currentGroup.container.name === nextGroup.container.name);
 
                 // Check if groups have the same container and overlap or are adjacent
                 if (containersMatch &&
@@ -273,6 +284,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
      * @param position The resolved position
      * @param sourceLine The source line text
      * @param references Array of reference locations
+     * @param fileCache Cache for file contents
      * @returns Formatted markdown string
      */
     private async getMarkdownFromReferences(
@@ -280,7 +292,8 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
         uri: string,
         position: vscode.Position,
         sourceLine: string,
-        references: ReferenceGroup[]
+        references: ReferenceGroup[],
+        fileCache: ScopedFileCache
     ): Promise<string> {
         const totalReferences = references.reduce((sum, group) => sum + group.references.length, 0);
 
@@ -299,8 +312,8 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
 
         if (references.length > 0) {
             // Fetch all source contexts in batches of 20 (I/O bound)
-            const containerSourceContexts = await this.getContainerSourceContexts(references, 20);
-            const sourceContexts = await this.getSourceContexts(references, 20);
+            const containerSourceContexts = await this.getContainerSourceContexts(references, 20, fileCache);
+            const sourceContexts = await this.getSourceContexts(references, 20, fileCache);
 
             let cumulativeRefIndex = 1;
             for (let i = 0; i < references.length; i++) {
@@ -328,12 +341,17 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                 // If there is only one location contained in this reference group,
                 // and it matches the container symbol (aka. location and container
                 // both reference the same method name), then adjust output accordingly.
+                // ContainerDetails uses 1-based line numbers, VS Code uses 0-based
                 const locationMatchesContainer = ref.container &&
                     ref.references.length == 1 &&
-                    ref.container.selectionRange.isEqual(ref.references[0].range);
+                    ref.container.startLine === ref.references[0].range.start.line + 1;
+                // ^ TODO: update this to add name check
 
                 if (ref.containerFullName) {
-                    const containerKind = vscode.SymbolKind[ref.container!.kind];
+                    // Use container type or ctagsType for display
+                    const containerKind = ref.container!.type !== undefined
+                        ? vscode.SymbolKind[ref.container!.type]
+                        : ref.container!.ctagsType;
                     markdownParts.push('');
 
                     if (locationMatchesContainer) {
@@ -347,14 +365,17 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                     const context = containerSourceContexts[i];
                     const startLineNum = context.range.start.line + 1;
                     const endLineNum = context.range.end.line + 1;
-                    const containerKind = vscode.SymbolKind[ref.container!.kind];
+                    // Use container type or ctagsType for display
+                    const containerKind = ref.container!.type !== undefined
+                        ? vscode.SymbolKind[ref.container!.type]
+                        : ref.container!.ctagsType;
                     markdownParts.push('');
                     markdownParts.push(`${containerKind} signature (showing source lines ${startLineNum} - ${endLineNum}): `);
                     markdownParts.push(...context.sourceLines);
                 }
 
                 markdownParts.push('');
-                markdownParts.push(`Showing references in source lines from ${sourceContext.range.start.line + 1} - ${sourceContext.range.end.line + 1}: `);
+                markdownParts.push(`Showing references in source lines ${sourceContext.range.start.line + 1} - ${sourceContext.range.end.line + 1}: `);
                 markdownParts.push(...sourceContext.sourceLines);
                 markdownParts.push('');
 
@@ -367,7 +388,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
 
     /**
      * Resolve the exact position by matching the source line and finding the symbol
-     * @param document The document to search in
+     * @param lines The lines of the file to search in
      * @param position The approximate position
      * @param symbolName The name of the symbol to find
      * @param sourceLine The exact source line content
@@ -375,7 +396,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
      * @throws Error if the source line or symbol cannot be found
      */
     private async resolveExactPosition(
-        document: vscode.TextDocument,
+        lines: string[],
         position: { line: number; character: number },
         symbolName: string,
         sourceLine: string
@@ -394,19 +415,19 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
             const lineNum = position.line + offset;
 
             // Skip if line is out of bounds
-            if (lineNum < 0 || lineNum >= document.lineCount) {
+            if (lineNum < 0 || lineNum >= lines.length) {
                 continue;
             }
 
-            const line = document.lineAt(lineNum);
+            const lineText = lines[lineNum];
 
             // Check if this line matches the source line
-            if (line.text.trim() === sourceLine.trim()) {
+            if (lineText.trim() === sourceLine.trim()) {
                 // Find all whole-word instances of the symbol on this line
                 const symbolIndices: number[] = [];
                 symbolRegex.lastIndex = 0; // Reset regex state
                 let match;
-                while ((match = symbolRegex.exec(line.text)) !== null) {
+                while ((match = symbolRegex.exec(lineText)) !== null) {
                     symbolIndices.push(match.index);
                 }
 
@@ -414,7 +435,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                     // Found matching line but symbol not on it
                     throw new Error(
                         `Found matching source line at line ${lineNum + 1}, but symbol '${symbolName}' ` +
-                        `was not found on that line. Line content: "${line.text}"`
+                        `was not found on that line. Line content: "${lineText}"`
                     );
                 }
 
@@ -450,32 +471,28 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
     private async getReferenceGroupFromLocation(
         location: vscode.Location,
         numLinesBefore: number,
-        numLinesAfter: number
+        numLinesAfter: number,
+        fileCache: ScopedFileCache
     ): Promise<ReferenceGroup> {
         try {
-            const document = await vscode.workspace.openTextDocument(location.uri);
+            const filePath = location.uri.fsPath;
+            const lines = await fileCache.getLines(filePath);
 
-            // Get document symbols to find containing method/function
-            const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
-                'vscode.executeDocumentSymbolProvider',
-                location.uri
+            // Get container from ContentIndex (uses 1-based line numbers)
+            const container = await ContentIndex.getInstance().getContainer(
+                filePath,
+                location.range.start.line + 1  // Convert to 1-based
             );
-
-            // Find the container corresponding to the location
-            let container: vscode.DocumentSymbol | undefined;
-            if (symbols) {
-                container = this.findContainer(symbols, location.range);
-            }
 
             // Calculate start and end lines, constrained by method boundaries if found
             let startLine = Math.max(0, location.range.start.line - numLinesBefore);
-            let endLine = Math.min(document.lineCount - 1, location.range.end.line + numLinesAfter);
+            let endLine = Math.min(lines.length - 1, location.range.end.line + numLinesAfter);
 
             let containerFullName: string | undefined;
             if (container) {
-                // First, constrain to container boundaries
-                const containerStart = container.range.start.line;
-                const containerEnd = container.range.end.line;
+                // First, constrain to container boundaries (convert from 1-based to 0-based)
+                const containerStart = container.startLine - 1;
+                const containerEnd = container.endLine - 1;
 
                 startLine = Math.max(startLine, containerStart);
                 endLine = Math.min(endLine, containerEnd);
@@ -507,14 +524,10 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                 // window size and the following should hold true:
                 // containerStart ≤ startLine ≤ endLine ≤ containerEnd
 
-                containerFullName = getQualifiedNameFromDocumentSymbol(
-                    symbols,
-                    container,
-                    container.selectionRange.start
-                );
+                containerFullName = container.fullyQualifiedName;
             }
 
-            const endLineLength = document.lineAt(endLine).text.length;
+            const endLineLength = lines[endLine].length;
             const range = new vscode.Range(
                 new vscode.Position(startLine, 0),
                 new vscode.Position(endLine, endLineLength)
@@ -523,7 +536,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
             return {
                 references: [location],
                 range,
-                container,
+                container: container ?? undefined,
                 containerFullName
             };
         } catch (error: any) {
@@ -534,64 +547,28 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
         }
     }
 
-    private findContainer(
-        symbols: vscode.DocumentSymbol[],
-        range: vscode.Range
-    ): vscode.DocumentSymbol | undefined {
-        const containerKinds = [
-            vscode.SymbolKind.Module,
-            vscode.SymbolKind.Namespace,
-            vscode.SymbolKind.Package,
-            vscode.SymbolKind.Class,
-            vscode.SymbolKind.Interface,
-            vscode.SymbolKind.Enum,
-            vscode.SymbolKind.Struct,
-            vscode.SymbolKind.Method,
-            vscode.SymbolKind.Function,
-            vscode.SymbolKind.Constructor
-        ];
-
-        for (const symbol of symbols) {
-            // Check if this symbol contains the range
-            if (symbol.range.contains(range)) {
-                // Check if this is a container type
-                if (containerKinds.includes(symbol.kind)) {
-                    // Recursively search children to find the most specific container
-                    if (symbol.children && symbol.children.length > 0) {
-                        const childResult = this.findContainer(symbol.children, range);
-                        if (childResult) {
-                            return childResult;
-                        }
-                    }
-                    // No child container found, this is the most specific container
-                    return symbol;
-                }
-
-                // Not a container type, but might have children that are containers
-                if (symbol.children && symbol.children.length > 0) {
-                    const childResult = this.findContainer(symbol.children, range);
-                    if (childResult) {
-                        return childResult;
-                    }
-                }
-            }
-        }
-
-        return undefined;
-    }
-
     /**
      * Get container signature source contexts for all reference groups
      * @param references Array of reference groups
      * @param batchSize Number of groups to process in parallel
+     * @param fileCache Cache for file contents
      * @returns Array of source contexts in the same order as input
      */
     private async getContainerSourceContexts(
         references: ReferenceGroup[],
-        batchSize: number
+        batchSize: number,
+        fileCache: ScopedFileCache
     ): Promise<SourceContext[]> {
         const containerSignatureSourceContexts: SourceContext[] = [];
         const containerSignatureRanges: (vscode.Range | undefined)[] = [];
+
+        // Callable ctags types for checking container kind
+        const callableCtagsTypes = ['function', 'method', 'member'];
+        const callableKinds = [
+            vscode.SymbolKind.Function,
+            vscode.SymbolKind.Method,
+            vscode.SymbolKind.Constructor
+        ];
 
         // First, get all container signature ranges in batches
         for (let i = 0; i < references.length; i += batchSize) {
@@ -603,18 +580,18 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                         return undefined;
                     }
 
-                    const callableKinds = [
-                        vscode.SymbolKind.Function,
-                        vscode.SymbolKind.Method,
-                        vscode.SymbolKind.Constructor
-                    ];
+                    // Check if it's a callable type (by SymbolKind or ctags type)
+                    const isCallable = (ref.container.type !== undefined && callableKinds.includes(ref.container.type)) ||
+                        callableCtagsTypes.includes(ref.container.ctagsType);
 
-                    if (!callableKinds.includes(ref.container.kind)) {
+                    if (!isCallable) {
                         return undefined;
                     }
 
-                    const document = await vscode.workspace.openTextDocument(ref.references[0].uri);
-                    return getFunctionSignatureRange(document, ref.container.selectionRange);
+                    const lines = await fileCache.getLines(ref.references[0].uri.fsPath);
+                    // Convert 1-based startLine to 0-based
+                    const startLine = ref.container.startLine - 1;
+                    return getFunctionSignatureRange(lines, startLine);
                 })
             );
             containerSignatureRanges.push(...batchResults);
@@ -647,7 +624,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
             const range = containerSignatureRanges[i];
             if (range) {
                 const ref = references[i];
-                const context = await this.getSourceContext(ref.references[0].uri, range);
+                const context = await this.getSourceContext(ref.references[0].uri, range, fileCache);
                 containerSignatureSourceContexts.push(context);
             } else {
                 // Push undefined placeholder to maintain array alignment
@@ -662,18 +639,20 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
      * Get source contexts for all reference groups in batches
      * @param references Array of reference groups
      * @param batchSize Number of groups to process in parallel
+     * @param fileCache Cache for file contents
      * @returns Array of source contexts in the same order as input
      */
     private async getSourceContexts(
         references: ReferenceGroup[],
-        batchSize: number
+        batchSize: number,
+        fileCache: ScopedFileCache
     ): Promise<SourceContext[]> {
         const allContexts: SourceContext[] = [];
 
         for (let i = 0; i < references.length; i += batchSize) {
             const batch = references.slice(i, i + batchSize);
             const batchResults = await Promise.all(
-                batch.map(ref => this.getSourceContext(ref.references[0].uri, ref.range))
+                batch.map(ref => this.getSourceContext(ref.references[0].uri, ref.range, fileCache))
             );
             allContexts.push(...batchResults);
         }
@@ -683,16 +662,21 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
 
     /**
      * Get source context from a reference group
-     * @param referenceGroup The reference group containing locations and line range
+     * @param uri The URI of the file
+     * @param range The range of lines to get context for
+     * @param fileCache Cache for file contents
      * @returns Source context with lines and range
      */
     private async getSourceContext(
         uri: vscode.Uri,
-        range: vscode.Range
+        range: vscode.Range,
+        fileCache: ScopedFileCache
     ): Promise<SourceContext> {
         try {
-            const document = await vscode.workspace.openTextDocument(uri);
-            const codeBlock = createMarkdownCodeBlock(document, range);
+            const lines = await fileCache.getLines(uri.fsPath);
+            // Get file extension for language detection
+            const fileExtension = path.extname(uri.fsPath).slice(1).toLowerCase();
+            const codeBlock = createMarkdownCodeBlock(lines, range, fileExtension);
             return {
                 sourceLines: codeBlock,
                 range

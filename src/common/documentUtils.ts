@@ -142,20 +142,57 @@ function findDocumentSymbol(
 export function getFunctionSignatureRange(
     document: vscode.TextDocument,
     functionNameRange: vscode.Range
-): vscode.Range {
-    const startLine = functionNameRange.start.line;
-    const startChar = functionNameRange.start.character;
+): vscode.Range;
 
-    // Check if this is a C++ file
-    const languageId = document.languageId;
-    const isCpp = languageId === 'cpp' || languageId === 'c';
+/**
+ * Get the range for a function signature.
+ * Currently only implemented for C++.
+ * @param lines The lines of the file
+ * @param startLine The 0-based line number where the function starts
+ * @returns Range covering the complete function signature
+ */
+export function getFunctionSignatureRange(
+    lines: string[],
+    startLine: number
+): vscode.Range;
+
+export function getFunctionSignatureRange(
+    documentOrLines: vscode.TextDocument | string[],
+    functionNameRangeOrStartLine: vscode.Range | number
+): vscode.Range {
+    let startLine: number;
+    let startChar: number;
+    let isCpp: boolean;
+    let getLineText: (lineNum: number) => string;
+    let lineCount: number;
+
+    if (Array.isArray(documentOrLines)) {
+        // Lines-based version
+        const lines = documentOrLines;
+        startLine = functionNameRangeOrStartLine as number;
+        startChar = 0;
+        lineCount = lines.length;
+        getLineText = (lineNum: number) => lines[lineNum];
+        // For lines-based version, assume C++ (caller is responsible for context)
+        isCpp = true;
+    } else {
+        // Document-based version
+        const document = documentOrLines;
+        const functionNameRange = functionNameRangeOrStartLine as vscode.Range;
+        startLine = functionNameRange.start.line;
+        startChar = functionNameRange.start.character;
+        lineCount = document.lineCount;
+        getLineText = (lineNum: number) => document.lineAt(lineNum).text;
+        const languageId = document.languageId;
+        isCpp = languageId === 'cpp' || languageId === 'c';
+    }
 
     // TODO: check to see if using document symbols would work better for
     // handling more complex signatures (i.e. return type on line above).
     // For C++, search forward until we find ';' or '{'
     if (isCpp) {
-        for (let lineNum = startLine; lineNum < document.lineCount; lineNum++) {
-            const lineText = document.lineAt(lineNum).text;
+        for (let lineNum = startLine; lineNum < lineCount; lineNum++) {
+            const lineText = getLineText(lineNum);
             const searchFrom = (lineNum === startLine) ? startChar : 0;
 
             // Look for ';' or '{' in this line
@@ -174,6 +211,10 @@ export function getFunctionSignatureRange(
         }
     }
 
-    // For non-C++ languages or if we didn't find ';' or '{', return the original range
-    return functionNameRange;
+    // For non-C++ languages or if we didn't find ';' or '{', return a single-line range
+    if (Array.isArray(documentOrLines)) {
+        return new vscode.Range(startLine, 0, startLine, documentOrLines[startLine].length);
+    } else {
+        return functionNameRangeOrStartLine as vscode.Range;
+    }
 }
