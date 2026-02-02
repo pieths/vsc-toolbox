@@ -420,10 +420,11 @@ export class FileIndex {
         }
 
         // Build the fully qualified name
-        let fullyQualifiedName = innermost.name;
+        // Normalize both the name and scope to handle anonymous namespaces
+        let fullyQualifiedName = normalizeScope(innermost.name);
         if (innermost.scope) {
             const scope = normalizeScope(innermost.scope);
-            fullyQualifiedName = `${scope}::${innermost.name}`;
+            fullyQualifiedName = `${scope}::${fullyQualifiedName}`;
         }
 
         return {
