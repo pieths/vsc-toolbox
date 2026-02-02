@@ -133,27 +133,46 @@ function findDocumentSymbol(
 }
 
 /**
+ * TODO: look into updating ctags to provide signature ranges directly.
  * Get the range for a function signature by searching forward until ';' or '{'.
- * Currently assumes C++ syntax.
+ * Currently assumes C++ syntax. Tracks brace depth to handle brace-initialized
+ * default parameters like `void foo(std::vector<int> v = {1, 2, 3});`
  * @param lines The lines of the file
  * @param startLine The 0-based line number where the function starts
+ * @param startColumn The 0-based column number where the symbol name starts (optional, defaults to 0)
  * @returns Range covering the complete function signature
  */
 export function getFunctionSignatureRange(
     lines: string[],
-    startLine: number
+    startLine: number,
+    startColumn: number = 0
 ): vscode.Range {
-    // TODO: check to see if using document symbols would work better for
-    // handling more complex signatures (i.e. return type on line above).
-    // Search forward until we find ';' or '{'
+    // Search forward until we find ';' or '{' at brace depth 0
+    let braceDepth = 0;
+
     for (let lineNum = startLine; lineNum < lines.length; lineNum++) {
         const lineText = lines[lineNum];
+        // Start from startColumn on the first line, 0 on subsequent lines
+        const startChar = lineNum === startLine ? startColumn : 0;
 
-        // Look for ';' or '{' in this line
-        for (let charIndex = 0; charIndex < lineText.length; charIndex++) {
+        for (let charIndex = startChar; charIndex < lineText.length; charIndex++) {
             const char = lineText[charIndex];
-            if (char === ';' || char === '{') {
-                // Found the end - return range from start to this position (inclusive)
+
+            if (char === '{') {
+                if (braceDepth === 0) {
+                    // Found the function body opening brace at depth 0
+                    return new vscode.Range(
+                        startLine,
+                        0,
+                        lineNum,
+                        charIndex + 1
+                    );
+                }
+                braceDepth++;
+            } else if (char === '}') {
+                braceDepth--;
+            } else if (char === ';' && braceDepth === 0) {
+                // Found the end of a declaration at depth 0
                 return new vscode.Range(
                     startLine,
                     0,

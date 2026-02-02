@@ -588,9 +588,10 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                     }
 
                     const lines = await fileCache.getLines(ref.references[0].uri.fsPath);
-                    // Convert 1-based startLine to 0-based
+                    // Convert 1-based startLine/startColumn to 0-based
                     const startLine = ref.container.startLine - 1;
-                    return getFunctionSignatureRange(lines, startLine);
+                    const startColumn = ref.container.startColumn !== undefined ? ref.container.startColumn - 1 : 0;
+                    return getFunctionSignatureRange(lines, startLine, startColumn);
                 })
             );
             containerSignatureRanges.push(...batchResults);

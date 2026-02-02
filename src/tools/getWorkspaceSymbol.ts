@@ -188,7 +188,7 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
         if (isFunctionLike) {
             markdownLines.push('### Signature');
             markdownLines.push('');
-            const signatureRange = getFunctionSignatureRange(fileLines, symbolInfo.location.range.start.line);
+            const signatureRange = getFunctionSignatureRange(fileLines, symbolInfo.location.range.start.line, symbolInfo.location.range.start.character);
             markdownLines.push(...createMarkdownCodeBlock(fileLines, signatureRange, filePath));
             markdownLines.push('');
         }
