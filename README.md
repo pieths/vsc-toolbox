@@ -568,6 +568,7 @@ vsc-toolbox/
 │   │   ├── documentUtils.ts # Document/editor helper functions
 │   │   ├── logger.ts        # Shared logging utility
 │   │   ├── markdownUtils.ts # Markdown formatting helpers
+│   │   ├── queryParser.ts   # Glob to regex conversion
 │   │   └── index/           # Content indexing infrastructure
 │   │       ├── index.ts           # Barrel export (public API)
 │   │       ├── contentIndex.ts    # Main singleton interface
@@ -576,7 +577,6 @@ vsc-toolbox/
 │   │       ├── workerThread.ts    # Worker thread script
 │   │       ├── fileWatcher.ts     # File system monitoring
 │   │       ├── fileIndex.ts       # Per-file content index
-│   │       ├── queryParser.ts     # Glob to regex conversion
 │   │       └── types.ts           # Shared interfaces
 │   └── tools/               # Language Model Tools (for AI)
 │       ├── index.ts         # Tool registry

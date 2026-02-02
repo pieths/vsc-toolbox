@@ -6,7 +6,7 @@ import * as os from 'os';
 import { CacheManager } from './cacheManager';
 import { ThreadPool } from './threadPool';
 import { FileWatcher } from './fileWatcher';
-import { parseQuery, validateQuery } from './queryParser';
+import { parseQuery, validateQuery } from '../queryParser';
 import { SearchResult, SearchResults, ContentIndexConfig, SearchInput, FunctionDetails, ContainerDetails } from './types';
 import { log, warn, error } from '../logger';
 
