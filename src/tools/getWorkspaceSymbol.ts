@@ -3,7 +3,8 @@
 
 import * as vscode from 'vscode';
 import { createMarkdownCodeBlock } from '../common/markdownUtils';
-import { getQualifiedNameFromSymbolInfo } from '../common/documentUtils';
+import { getQualifiedNameFromSymbolInfo, getFunctionSignatureRange } from '../common/documentUtils';
+import { ScopedFileCache } from '../common/scopedFileCache';
 
 /**
  * Input parameters for workspace symbol search
@@ -43,6 +44,9 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
         _token: vscode.CancellationToken
     ): Promise<vscode.LanguageModelToolResult> {
         const { query, filter } = options.input;
+
+        // Create a file cache for this invocation to avoid repeated file reads
+        const fileCache = new ScopedFileCache();
 
         try {
             // Split query by spaces and search for each part
@@ -135,7 +139,7 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
                 // then we await all of them to complete before moving
                 // to the next batch.
                 const batchResults = await Promise.all(
-                    batch.map(s => this.convertSymbolToMarkdown(s))
+                    batch.map(s => this.convertSymbolToMarkdown(s, fileCache))
                 );
                 markdownParts.push(...batchResults);
             }
@@ -147,206 +151,88 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
             ]);
         } catch (error: any) {
             throw new Error(`Failed to search symbols: ${error.message}`);
+        } finally {
+            // Clear cache at the end of the invocation
+            fileCache.clear();
         }
     }
 
     /**
      * Convert a single symbol to markdown format
      * @param symbolInfo The symbol information from workspace symbol provider
+     * @param fileCache Cache for file contents
      * @returns Markdown string for the symbol
      */
     private async convertSymbolToMarkdown(
-        symbolInfo: vscode.SymbolInformation
+        symbolInfo: vscode.SymbolInformation,
+        fileCache: ScopedFileCache
     ): Promise<string> {
-        const document = await vscode.workspace.openTextDocument(symbolInfo.location.uri);
-        const lines: string[] = [];
+        const filePath = symbolInfo.location.uri.fsPath;
+        const fileLines = await fileCache.getLines(filePath);
+        const markdownLines: string[] = [];
 
-        lines.push(`## Symbol: \`${symbolInfo.name}\``);
-        lines.push('');
+        markdownLines.push(`## Symbol: \`${symbolInfo.name}\``);
+        markdownLines.push('');
 
         // Add fully qualified name
         const qualifiedName = await getQualifiedNameFromSymbolInfo(symbolInfo);
-        lines.push('**Full Name**: `' + qualifiedName + '`');
-        lines.push('');
+        markdownLines.push('**Full Name**: `' + qualifiedName + '`');
+        markdownLines.push('');
 
-        lines.push('**Kind**: ' + vscode.SymbolKind[symbolInfo.kind]);
-        lines.push('');
+        markdownLines.push('**Kind**: ' + vscode.SymbolKind[symbolInfo.kind]);
+        markdownLines.push('');
 
         // Add function signature for function-like symbols
         const kind = vscode.SymbolKind[symbolInfo.kind];
         const isFunctionLike = ['Function', 'Method', 'Constructor'].includes(kind);
         if (isFunctionLike) {
-            lines.push('### Signature');
-            lines.push('');
-            const signatureRange = this.getFunctionSignatureRange(document, symbolInfo);
-            lines.push(...createMarkdownCodeBlock(document, signatureRange));
-            lines.push('');
+            markdownLines.push('### Signature');
+            markdownLines.push('');
+            const signatureRange = getFunctionSignatureRange(fileLines, symbolInfo.location.range.start.line);
+            markdownLines.push(...createMarkdownCodeBlock(fileLines, signatureRange, filePath));
+            markdownLines.push('');
         }
 
-        lines.push('### Location');
-        lines.push('');
-        lines.push(`- **URI**: ${decodeURIComponent(symbolInfo.location.uri.toString())}`);
-        lines.push(`- **Line**: ${symbolInfo.location.range.start.line + 1}`);
-        lines.push(`- **Character**: ${symbolInfo.location.range.start.character + 1}`);
-        lines.push('');
-        lines.push('### `sourceLine` To Use For #get-document-symbol-references');
-        lines.push('');
+        markdownLines.push('### Location');
+        markdownLines.push('');
+        markdownLines.push(`- **URI**: ${decodeURIComponent(symbolInfo.location.uri.toString())}`);
+        markdownLines.push(`- **Line**: ${symbolInfo.location.range.start.line + 1}`);
+        markdownLines.push(`- **Character**: ${symbolInfo.location.range.start.character + 1}`);
+        markdownLines.push('');
+        markdownLines.push('### `sourceLine` To Use For #get-document-symbol-references');
+        markdownLines.push('');
 
         // Create a single-line range for the symbol's starting line
+        const startLine = symbolInfo.location.range.start.line;
         const singleLineRange = new vscode.Range(
-            symbolInfo.location.range.start.line,
+            startLine,
             0,
-            symbolInfo.location.range.start.line,
-            document.lineAt(symbolInfo.location.range.start.line).text.length
+            startLine,
+            fileLines[startLine].length
         );
-        lines.push(...createMarkdownCodeBlock(document, singleLineRange));
-        lines.push('');
+        markdownLines.push(...createMarkdownCodeBlock(fileLines, singleLineRange, filePath));
+        markdownLines.push('');
 
         // Add comments section
-        const comments = await this.getComments(document, symbolInfo);
-        if (comments.length > 0) {
-            lines.push('### Comments');
-            lines.push('');
-            lines.push(...comments);
-            lines.push('');
+        const comments = this.getComments(fileLines, symbolInfo.location.range.start.line);
+        if (comments) {
+            markdownLines.push('### Comments');
+            markdownLines.push('');
+            markdownLines.push(...createMarkdownCodeBlock(fileLines, comments, filePath));
+            markdownLines.push('');
         }
 
-        return lines.join('\n');
+        return markdownLines.join('\n');
     }
 
     /**
-     * Get the range for a function signature by reading forward until ';' or '{'
-     * @param document The text document
-     * @param symbolInfo The symbol information
-     * @returns Range covering the complete function signature
-     */
-    private getFunctionSignatureRange(
-        document: vscode.TextDocument,
-        symbolInfo: vscode.SymbolInformation
-    ): vscode.Range {
-        const startLine = symbolInfo.location.range.start.line;
-        const startChar = symbolInfo.location.range.start.character;
-
-        // Check if this is a C++ file
-        const languageId = document.languageId;
-        const isCpp = languageId === 'cpp' || languageId === 'c';
-
-        // TODO: check to see if using document symbols would work better for
-        // handling more complex signatures (i.e. return type on line above).
-        // For C++, search forward until we find ';' or '{'
-        if (isCpp) {
-            for (let lineNum = startLine; lineNum < document.lineCount; lineNum++) {
-                const lineText = document.lineAt(lineNum).text;
-                const searchFrom = (lineNum === startLine) ? startChar : 0;
-
-                // Look for ';' or '{' in this line
-                for (let charIndex = searchFrom; charIndex < lineText.length; charIndex++) {
-                    const char = lineText[charIndex];
-                    if (char === ';' || char === '{') {
-                        // Found the end - return range from start to this position (inclusive)
-                        return new vscode.Range(
-                            startLine,
-                            startChar,
-                            lineNum,
-                            charIndex + 1
-                        );
-                    }
-                }
-            }
-        }
-
-        // For non-C++ languages or if we didn't find ';' or '{', return the original range
-        return symbolInfo.location.range;
-    }
-
-    /**
-     * Get comments immediately above the symbol, checking both current location and declarations
-     * @param document The text document
-     * @param symbolInfo The symbol information
-     * @returns Array of comment lines
-     */
-    private async getComments(
-        document: vscode.TextDocument,
-        symbolInfo: vscode.SymbolInformation
-    ): Promise<string[]> {
-        const allComments: string[] = [];
-
-        // Get comments from current location
-        const currentCommentsRange = this.getCommentRangeBeforeLine(
-            document,
-            symbolInfo.location.range.start.line
-        );
-        if (currentCommentsRange) {
-            allComments.push(...createMarkdownCodeBlock(document, currentCommentsRange));
-        }
-
-        // Try to find declarations in different files or locations
-        try {
-            const declarations = await vscode.commands.executeCommand<vscode.Location[]>(
-                'vscode.executeDeclarationProvider',
-                symbolInfo.location.uri,
-                symbolInfo.location.range.start
-            );
-
-            if (declarations && declarations.length > 0) {
-                for (const declLocation of declarations) {
-                    const declComments = await this.getCommentsFromAlternateLocation(
-                        declLocation,
-                        symbolInfo.location
-                    );
-                    if (declComments.length > 0) {
-                        if (allComments.length > 0) {
-                            allComments.push('');
-                        }
-                        allComments.push(...declComments);
-                    }
-                }
-            }
-        } catch (error) {
-            // Declaration provider might not be available or might fail
-            // Silently continue without declaration comments
-        }
-
-        return allComments;
-    }
-
-    /**
-     * Get comments from a declaration location if it's different from the original location
-     * @param declLocation The declaration location
-     * @param originalLocation The original symbol location
-     * @returns Array of comment markdown lines
-     */
-    private async getCommentsFromAlternateLocation(
-        declLocation: vscode.Location,
-        originalLocation: vscode.Location
-    ): Promise<string[]> {
-        // Only process if it's a different location (different file or different line)
-        if (declLocation.uri.toString() === originalLocation.uri.toString() &&
-            declLocation.range.start.line === originalLocation.range.start.line) {
-            return [];
-        }
-
-        const declDocument = await vscode.workspace.openTextDocument(declLocation.uri);
-        const declCommentsRange = this.getCommentRangeBeforeLine(
-            declDocument,
-            declLocation.range.start.line
-        );
-
-        if (declCommentsRange) {
-            return createMarkdownCodeBlock(declDocument, declCommentsRange);
-        }
-
-        return [];
-    }
-
-    /**
-     * Extract comment range immediately above a given line
-     * @param document The text document
-     * @param lineNumber The line number to check above
+     * Get comments immediately above the symbol
+     * @param lines The lines of the file
+     * @param lineNumber The line number of the symbol (0-based)
      * @returns Range covering the comment lines, or null if no comments found
      */
-    private getCommentRangeBeforeLine(
-        document: vscode.TextDocument,
+    private getComments(
+        lines: string[],
         lineNumber: number
     ): vscode.Range | null {
         let commentStartLine: number | null = null;
@@ -355,7 +241,7 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
 
         // Walk backwards from the line before the symbol
         for (let i = lineNumber - 1; i >= 0; i--) {
-            const lineText = document.lineAt(i).text;
+            const lineText = lines[i];
             const trimmed = lineText.trim();
 
             if (trimmed.length === 0) {
@@ -421,7 +307,7 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
                 commentStartLine,
                 0,
                 commentEndLine,
-                document.lineAt(commentEndLine).text.length
+                lines[commentEndLine].length
             );
         }
 

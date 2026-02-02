@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { createMarkdownCodeBlock } from '../common/markdownUtils';
 import { getFunctionSignatureRange } from '../common/documentUtils';
 import { ContentIndex, ContainerDetails } from '../common/index';
@@ -673,10 +672,9 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
         fileCache: ScopedFileCache
     ): Promise<SourceContext> {
         try {
-            const lines = await fileCache.getLines(uri.fsPath);
-            // Get file extension for language detection
-            const fileExtension = path.extname(uri.fsPath).slice(1).toLowerCase();
-            const codeBlock = createMarkdownCodeBlock(lines, range, fileExtension);
+            const filePath = uri.fsPath;
+            const lines = await fileCache.getLines(filePath);
+            const codeBlock = createMarkdownCodeBlock(lines, range, filePath);
             return {
                 sourceLines: codeBlock,
                 range

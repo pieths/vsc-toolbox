@@ -133,20 +133,8 @@ function findDocumentSymbol(
 }
 
 /**
- * Get the range for a function signature.
- * Currently only implemented for C++.
- * @param document The text document
- * @param functionNameRange The range of the function name
- * @returns Range covering the complete function signature
- */
-export function getFunctionSignatureRange(
-    document: vscode.TextDocument,
-    functionNameRange: vscode.Range
-): vscode.Range;
-
-/**
- * Get the range for a function signature.
- * Currently only implemented for C++.
+ * Get the range for a function signature by searching forward until ';' or '{'.
+ * Currently assumes C++ syntax.
  * @param lines The lines of the file
  * @param startLine The 0-based line number where the function starts
  * @returns Range covering the complete function signature
@@ -154,67 +142,28 @@ export function getFunctionSignatureRange(
 export function getFunctionSignatureRange(
     lines: string[],
     startLine: number
-): vscode.Range;
-
-export function getFunctionSignatureRange(
-    documentOrLines: vscode.TextDocument | string[],
-    functionNameRangeOrStartLine: vscode.Range | number
 ): vscode.Range {
-    let startLine: number;
-    let startChar: number;
-    let isCpp: boolean;
-    let getLineText: (lineNum: number) => string;
-    let lineCount: number;
-
-    if (Array.isArray(documentOrLines)) {
-        // Lines-based version
-        const lines = documentOrLines;
-        startLine = functionNameRangeOrStartLine as number;
-        startChar = 0;
-        lineCount = lines.length;
-        getLineText = (lineNum: number) => lines[lineNum];
-        // For lines-based version, assume C++ (caller is responsible for context)
-        isCpp = true;
-    } else {
-        // Document-based version
-        const document = documentOrLines;
-        const functionNameRange = functionNameRangeOrStartLine as vscode.Range;
-        startLine = functionNameRange.start.line;
-        startChar = functionNameRange.start.character;
-        lineCount = document.lineCount;
-        getLineText = (lineNum: number) => document.lineAt(lineNum).text;
-        const languageId = document.languageId;
-        isCpp = languageId === 'cpp' || languageId === 'c';
-    }
-
     // TODO: check to see if using document symbols would work better for
     // handling more complex signatures (i.e. return type on line above).
-    // For C++, search forward until we find ';' or '{'
-    if (isCpp) {
-        for (let lineNum = startLine; lineNum < lineCount; lineNum++) {
-            const lineText = getLineText(lineNum);
-            const searchFrom = (lineNum === startLine) ? startChar : 0;
+    // Search forward until we find ';' or '{'
+    for (let lineNum = startLine; lineNum < lines.length; lineNum++) {
+        const lineText = lines[lineNum];
 
-            // Look for ';' or '{' in this line
-            for (let charIndex = searchFrom; charIndex < lineText.length; charIndex++) {
-                const char = lineText[charIndex];
-                if (char === ';' || char === '{') {
-                    // Found the end - return range from start to this position (inclusive)
-                    return new vscode.Range(
-                        startLine,
-                        startChar,
-                        lineNum,
-                        charIndex + 1
-                    );
-                }
+        // Look for ';' or '{' in this line
+        for (let charIndex = 0; charIndex < lineText.length; charIndex++) {
+            const char = lineText[charIndex];
+            if (char === ';' || char === '{') {
+                // Found the end - return range from start to this position (inclusive)
+                return new vscode.Range(
+                    startLine,
+                    0,
+                    lineNum,
+                    charIndex + 1
+                );
             }
         }
     }
 
-    // For non-C++ languages or if we didn't find ';' or '{', return a single-line range
-    if (Array.isArray(documentOrLines)) {
-        return new vscode.Range(startLine, 0, startLine, documentOrLines[startLine].length);
-    } else {
-        return functionNameRangeOrStartLine as vscode.Range;
-    }
+    // If we didn't find ';' or '{', return a single-line range
+    return new vscode.Range(startLine, 0, startLine, lines[startLine].length);
 }
