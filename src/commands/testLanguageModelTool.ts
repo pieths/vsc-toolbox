@@ -153,9 +153,17 @@ export class TestLanguageModelToolCommand {
      * Get input for contentSearch tool
      */
     private async getContentSearchInput(): Promise<any | undefined> {
+        // Use current selection as default query if available
+        const editor = vscode.window.activeTextEditor;
+        const selection = editor?.selection;
+        const selectedText = selection && !selection.isEmpty
+            ? editor.document.getText(selection)
+            : '';
+
         const query = await vscode.window.showInputBox({
             prompt: 'Enter search query (space-separated terms are OR\'d, supports * and ? globs)',
             placeHolder: 'e.g., options*input partSymbols, get?Name',
+            value: selectedText,
         });
 
         if (!query) {
