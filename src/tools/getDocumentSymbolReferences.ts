@@ -6,6 +6,8 @@ import { createMarkdownCodeBlock } from '../common/markdownUtils';
 import { getFunctionSignatureRange } from '../common/documentUtils';
 import { ContentIndex, ContainerDetails } from '../common/index';
 import { ScopedFileCache } from '../common/scopedFileCache';
+import { getModel, sendRequestWithReadFileAccess } from '../common/copilotUtils';
+import { log } from '../common/logger';
 
 /**
  * Input parameters for finding references
@@ -18,6 +20,7 @@ export interface ITextDocumentReferencesParams {
     };
     symbolName: string;
     sourceLine: string;
+    filter?: string;
 }
 
 interface SourceContext {
@@ -54,18 +57,20 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
         options: vscode.LanguageModelToolInvocationPrepareOptions<ITextDocumentReferencesParams>,
         _token: vscode.CancellationToken
     ): Promise<vscode.PreparedToolInvocation> {
-        const { uri, position, symbolName } = options.input;
+        const { uri, position, symbolName, filter } = options.input;
         const fileName = uri.split('/').pop() || uri;
+        const filterInfo = filter ? ` filtered by: ${filter}` : '';
 
         return {
-            invocationMessage: `Finding references to '${symbolName}' at ${fileName}:${position.line + 1}:${position.character + 1}`,
+            invocationMessage: `Finding references to '${symbolName}' at ${fileName}:${position.line + 1}:${position.character + 1}${filterInfo}`,
             confirmationMessages: {
                 title: 'Find References',
                 message: new vscode.MarkdownString(
                     `Find all references to the symbol **${symbolName}** at:\n\n` +
                     `- **File**: \`${fileName}\`\n` +
                     `- **Line**: ${position.line + 1}\n` +
-                    `- **Column**: ${position.character + 1}`
+                    `- **Column**: ${position.character + 1}` +
+                    (filter ? `\n\nFilter: ${filter}` : '')
                 ),
             },
         };
@@ -75,7 +80,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
         options: vscode.LanguageModelToolInvocationOptions<ITextDocumentReferencesParams>,
         _token: vscode.CancellationToken
     ): Promise<vscode.LanguageModelToolResult> {
-        const { uri, position, symbolName, sourceLine } = options.input;
+        const { uri, position, symbolName, sourceLine, filter } = options.input;
 
         // Create a file cache for this invocation to avoid repeated file reads
         const fileCache = new ScopedFileCache();
@@ -99,11 +104,14 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
 
             // Use VS Code's built-in command which handles language server communication
             // This works even for files that aren't open because VS Code manages it
+            const referenceSearchStart = Date.now();
             const references = await vscode.commands.executeCommand<vscode.Location[]>(
                 'vscode.executeReferenceProvider',
                 parsedUri,
                 vscodePosition
             ) || [];
+            const referenceSearchElapsed = Date.now() - referenceSearchStart;
+            log(`Reference search took ${referenceSearchElapsed}ms for: ${symbolName}`);
 
             const verifiedReferences = await this.verifyReferences(references, symbolName, fileCache);
 
@@ -123,8 +131,40 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                 fileCache
             );
 
+            // Filter results using AI if a filter is provided
+            const model = await getModel();
+            let filteredMarkdown = markdown;
+            if (model && filter) {
+                log(`Starting AI filter with criteria: "${filter}"`);
+                const filterStart = Date.now();
+                const filterPrompt = [
+                    'You are a filter.',
+                    'Given the markdown below which contains symbol reference results (starts with line `# References for`),',
+                    'apply the filter criteria from the "Filter" section below to keep or remove references as specified.',
+                    'Return ONLY the filtered markdown with no additional commentary or explanation.',
+                    'Preserve the exact format and content of the remaining text.',
+                    'Do not add any additional text.',
+                    'Only remove complete `## References ...` sections that don\'t satisfy the filter.',
+                    'If removing a references section, remove the entire section including its header.',
+                    // 'Update the **Total References:** count to reflect the filtered number of references.',
+                    'If the filter criteria requires information not currently present in the markdown, use the appropriate tool(s) to get the required information.',
+                    '',
+                    '# Filter',
+                    '',
+                    '```',
+                    filter,
+                    '```',
+                    '',
+                    '',
+                    markdown
+                ].join('\n');
+                filteredMarkdown = await sendRequestWithReadFileAccess(model, filterPrompt, _token, 1000, fileCache);
+                const filterElapsed = Date.now() - filterStart;
+                log(`AI filter completed in ${filterElapsed}ms`);
+            }
+
             return new vscode.LanguageModelToolResult([
-                new vscode.LanguageModelTextPart(markdown),
+                new vscode.LanguageModelTextPart(filteredMarkdown),
             ]);
         } catch (error: any) {
             throw new Error(`Failed to find references: ${error.message}. Verify the file URI and position are correct.`);

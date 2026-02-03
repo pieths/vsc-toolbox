@@ -138,6 +138,11 @@ export class TestLanguageModelToolCommand {
         // Get the source line
         const sourceLine = document.lineAt(position.line).text;
 
+        const filter = await vscode.window.showInputBox({
+            prompt: 'Enter filter criteria (or leave empty for no filter)',
+            placeHolder: 'e.g., only test files, exclude third_party, only call sites',
+        });
+
         return {
             uri: document.uri.toString(),
             position: {
@@ -146,6 +151,7 @@ export class TestLanguageModelToolCommand {
             },
             symbolName,
             sourceLine,
+            filter: filter || undefined,
         };
     }
 

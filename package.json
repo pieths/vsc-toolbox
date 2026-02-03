@@ -192,6 +192,10 @@
             "sourceLine": {
               "type": "string",
               "description": "The complete source line containing the symbol (used to verify the exact location)"
+            },
+            "filter": {
+              "type": "string",
+              "description": "Optional natural language filter to include or exclude references from results. Examples: 'only references in test files', 'exclude third_party', 'only call sites (exclude declarations)', 'references in classes starting with Media'. A common filter is to remove test files and mojom files since these files usually are unnecessary noise."
             }
           },
           "required": [
