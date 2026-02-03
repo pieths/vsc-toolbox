@@ -144,11 +144,8 @@
               "description": "Symbol text to search for. Supports fuzzy matching (e.g., 'MyClass', 'myFunc', 'Vec' will match 'Vector')"
             },
             "filter": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "description": "Optional array of path patterns to filter results (e.g., ['src/core', 'include/'])"
+              "type": "string",
+              "description": "Optional natural language filter to include or exclude symbols from results. Examples: 'only class methods', 'exclude test files', 'exclude mojom related files', 'methods in classes starting with Media', 'functions that take a string parameter'"
             }
           },
           "required": [

@@ -6,13 +6,15 @@ import { createMarkdownCodeBlock } from '../common/markdownUtils';
 import { getFunctionSignatureRange } from '../common/documentUtils';
 import { ScopedFileCache } from '../common/scopedFileCache';
 import { ContentIndex } from '../common/index/contentIndex';
+import { getModel, sendRequestWithReadFileAccess } from '../common/copilotUtils';
+import { log } from '../common/logger';
 
 /**
  * Input parameters for workspace symbol search
  */
 export interface IWorkspaceSymbolParams {
     query: string;
-    filter?: string[];
+    filter?: string;
 }
 
 /**
@@ -27,14 +29,14 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
         _token: vscode.CancellationToken
     ): Promise<vscode.PreparedToolInvocation> {
         const { query, filter } = options.input;
-        const filterInfo = filter && filter.length > 0 ? ` filtered by: ${filter.join(', ')}` : '';
+        const filterInfo = filter ? ` filtered by: ${filter}` : '';
 
         return {
             invocationMessage: `Searching for symbol: "${query}"${filterInfo}`,
             confirmationMessages: {
                 title: 'Search Workspace Symbols',
                 message: new vscode.MarkdownString(
-                    `Search for symbols matching **"${query}"** across the workspace?${filterInfo ? `\n\nFilters: \`${filter!.join('`, `')}\`` : ''}`
+                    `Search for symbols matching **"${query}"** across the workspace?${filterInfo ? `\n\nFilter: ${filter}` : ''}`
                 ),
             },
         };
@@ -60,6 +62,7 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
             }
 
             // Execute workspace symbol provider for each query part
+            const symbolSearchStart = Date.now();
             for (const queryPart of queryParts) {
                 const partSymbols = await vscode.commands.executeCommand<vscode.SymbolInformation[]>(
                     'vscode.executeWorkspaceSymbolProvider',
@@ -70,6 +73,8 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
                     symbols.push(...partSymbols);
                 }
             }
+            const symbolSearchElapsed = Date.now() - symbolSearchStart;
+            log(`Workspace symbol search took ${symbolSearchElapsed}ms for: ${queryParts.join(', ')}`);
 
             if (symbols.length === 0) {
                 throw new Error('No symbols returned from workspace symbol provider.');
@@ -92,15 +97,6 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
                 const uri = symbol.location.uri.toString();
                 return !excludePatterns.some(pattern => pattern.test(uri));
             });
-
-            // Apply optional filtering
-            if (filter && filter.length > 0) {
-                filteredSymbols = filteredSymbols.filter((symbol: vscode.SymbolInformation) => {
-                    return filter.some((pattern: string) =>
-                        symbol.location.uri.toString().includes(pattern)
-                    );
-                });
-            }
 
             // Sort symbols: exact matches first, then substring matches,
             // then fuzzy matches, preserving original order within each group.
@@ -147,8 +143,39 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
 
             const markdown = markdownParts.join('\n');
 
+            // Filter results using AI if a filter is provided
+            const model = await getModel();
+            let filteredMarkdown = markdown;
+            if (model && filter) {
+                log(`Starting AI filter with criteria: "${filter}"`);
+                const filterStart = Date.now();
+                const filterPrompt = [
+                    'You are a filter.',
+                    'Given the markdown below which contains symbol search results (starts with line `# Symbol Matches for`),',
+                    'apply the filter criteria from the "Filter" section below to keep or remove symbols as specified.',
+                    'Return ONLY the filtered markdown with no additional commentary or explanation.',
+                    'Preserve the exact format and content of the remaining text.',
+                    'Do not add any additional text.',
+                    'Only remove complete `## Symbol: ...` sections that don\'t satisfy the filter.',
+                    'If removing a symbol section, remove the entire section including its header.',
+                    'If the filter criteria requires information not currently present in the markdown, use the appropriate tool(s) to get the required information.',
+                    '',
+                    '# Filter',
+                    '',
+                    '```',
+                    filter,
+                    '```',
+                    '',
+                    '',
+                    markdown
+                ].join('\n');
+                filteredMarkdown = await sendRequestWithReadFileAccess(model, filterPrompt, _token, 1000, fileCache);
+                const filterElapsed = Date.now() - filterStart;
+                log(`AI filter completed in ${filterElapsed}ms`);
+            }
+
             return new vscode.LanguageModelToolResult([
-                new vscode.LanguageModelTextPart(markdown),
+                new vscode.LanguageModelTextPart(filteredMarkdown),
             ]);
         } catch (error: any) {
             throw new Error(`Failed to search symbols: ${error.message}`);

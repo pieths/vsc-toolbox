@@ -109,23 +109,12 @@ export class TestLanguageModelToolCommand {
             return undefined;
         }
 
-        const useFilter = await vscode.window.showQuickPick(['No', 'Yes'], {
-            placeHolder: 'Do you want to filter results by path?',
+        const filter = await vscode.window.showInputBox({
+            prompt: 'Enter filter criteria (or leave empty for no filter)',
+            placeHolder: 'e.g., only class methods, exclude tests, methods in Media* classes',
         });
 
-        let filter: string[] | undefined;
-        if (useFilter === 'Yes') {
-            const filterInput = await vscode.window.showInputBox({
-                prompt: 'Enter path patterns to filter (comma-separated)',
-                placeHolder: 'e.g., src/tools, src/commands',
-            });
-
-            if (filterInput) {
-                filter = filterInput.split(',').map(s => s.trim());
-            }
-        }
-
-        return { query, filter };
+        return { query, filter: filter || undefined };
     }
 
     /**
