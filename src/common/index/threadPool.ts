@@ -37,6 +37,7 @@ export class ThreadPool {
     private availableWorkers: Worker[] = [];
     private taskQueue: QueuedTask[] = [];
     private workerTaskMap: Map<Worker, QueuedTask> = new Map();
+    private pendingIndexTasks: Map<string, Promise<IndexOutput>> = new Map();
     private disposed: boolean = false;
 
     /**
@@ -198,6 +199,8 @@ export class ThreadPool {
 
     /**
      * Submit an indexing task to the pool.
+     * If an identical request (same file path) is already in progress,
+     * returns the existing promise instead of creating a duplicate task.
      *
      * @param input - Index input containing file path
      * @returns Promise that resolves with the index results
@@ -212,10 +215,26 @@ export class ThreadPool {
             });
         }
 
-        return new Promise((resolve, reject) => {
+        // Check if there's already a pending request for this file
+        const existing = this.pendingIndexTasks.get(input.filePath);
+        if (existing) {
+            return existing;
+        }
+
+        const promise = new Promise<IndexOutput>((resolve, reject) => {
             this.taskQueue.push({ type: 'index', input, resolve, reject });
             this.processNextTask();
         });
+
+        // Store promise so subsequent calls can reuse it
+        this.pendingIndexTasks.set(input.filePath, promise);
+
+        // Clean up when done (whether success or failure)
+        promise.finally(() => {
+            this.pendingIndexTasks.delete(input.filePath);
+        });
+
+        return promise;
     }
 
     /**
@@ -322,5 +341,6 @@ export class ThreadPool {
         this.workers = [];
         this.availableWorkers = [];
         this.workerTaskMap.clear();
+        this.pendingIndexTasks.clear();
     }
 }
