@@ -176,6 +176,11 @@ export class TestLanguageModelToolCommand {
             return undefined;
         }
 
-        return { query };
+        const filter = await vscode.window.showInputBox({
+            prompt: 'Enter filter criteria (or leave empty for no filter)',
+            placeHolder: 'e.g., only test files, exclude third_party, only class methods',
+        });
+
+        return { query, filter: filter || undefined };
     }
 }

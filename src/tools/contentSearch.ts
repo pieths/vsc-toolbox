@@ -4,6 +4,7 @@
 import * as vscode from 'vscode';
 import { ContentIndex, SearchResult, ContainerDetails } from '../common/index';
 import { log } from '../common/logger';
+import { getModel, sendRequestWithReadFileAccess } from '../common/copilotUtils';
 
 /**
  * Input parameters for the language model tool
@@ -11,6 +12,8 @@ import { log } from '../common/logger';
 interface ContentSearchParams {
     /** Search query with space-separated OR terms and glob wildcards */
     query: string;
+    /** Optional natural language filter to include or exclude results */
+    filter?: string;
 }
 
 /**
@@ -70,8 +73,7 @@ function formatResults(resultsWithContainers: ResultWithContainer[], query: stri
     markdown += `Found **${resultsWithContainers.length}** matches in **${byFile.size}** files.\n\n`;
 
     for (const [filePath, fileResults] of byFile) {
-        const relativePath = vscode.workspace.asRelativePath(filePath);
-        markdown += `## ${relativePath}\n\n`;
+        markdown += `## ${filePath}\n\n`;
 
         // Group results by container within this file
         const byContainer = new Map<string, ResultWithContainer[]>();
@@ -180,8 +182,40 @@ export class ContentSearchTool implements vscode.LanguageModelTool<ContentSearch
             // Format and return results
             const markdown = formatResults(resultsWithContainers, query);
 
+            // Filter results using AI if a filter is provided
+            const { filter } = options.input;
+            const model = await getModel();
+            let filteredMarkdown = markdown;
+            if (model && filter) {
+                log(`Starting AI filter with criteria: "${filter}"`);
+                const filterStart = Date.now();
+                const filterPrompt = [
+                    'You are a filter.',
+                    'Given the markdown below which contains search results (starts with line `# Search Results for`),',
+                    'apply the filter criteria from the "Filter" section below to keep or remove results as specified.',
+                    'Return ONLY the filtered markdown with no additional commentary or explanation.',
+                    'Preserve the exact format and content of the remaining text.',
+                    'Do not add any additional text.',
+                    'Only remove complete sections (starting with `## ` or `### `) or individual result lines that don\'t satisfy the filter.',
+                    'If removing a full section, remove the entire section including its header.',
+                    'If the filter criteria requires information not currently present in the markdown, use the appropriate tool(s) to get the required information.',
+                    '',
+                    '# Filter',
+                    '',
+                    '```',
+                    filter,
+                    '```',
+                    '',
+                    '',
+                    markdown
+                ].join('\n');
+                filteredMarkdown = await sendRequestWithReadFileAccess(model, filterPrompt, token, 1000);
+                const filterElapsed = Date.now() - filterStart;
+                log(`AI filter completed in ${filterElapsed}ms`);
+            }
+
             return new vscode.LanguageModelToolResult([
-                new vscode.LanguageModelTextPart(markdown)
+                new vscode.LanguageModelTextPart(filteredMarkdown)
             ]);
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);

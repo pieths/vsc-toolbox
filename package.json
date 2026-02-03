@@ -219,6 +219,10 @@
             "query": {
               "type": "string",
               "description": "Search query. Space-separated terms are OR'd together. Supports * (zero or more characters) and ? (single char) wildcards."
+            },
+            "filter": {
+              "type": "string",
+              "description": "Optional natural language filter to include or exclude results. Examples: 'only results in test files', 'exclude third_party', 'only matches in class methods', 'results in files starting with Media'. A common filter is to remove test files and mojom files since these files usually are unnecessary noise."
             }
           },
           "required": [
