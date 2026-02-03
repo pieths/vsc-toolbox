@@ -3,8 +3,9 @@
 
 import * as vscode from 'vscode';
 import { createMarkdownCodeBlock } from '../common/markdownUtils';
-import { getQualifiedNameFromSymbolInfo, getFunctionSignatureRange } from '../common/documentUtils';
+import { getFunctionSignatureRange } from '../common/documentUtils';
 import { ScopedFileCache } from '../common/scopedFileCache';
+import { ContentIndex } from '../common/index/contentIndex';
 
 /**
  * Input parameters for workspace symbol search
@@ -175,7 +176,11 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
         markdownLines.push('');
 
         // Add fully qualified name
-        const qualifiedName = await getQualifiedNameFromSymbolInfo(symbolInfo);
+        const qualifiedName = await ContentIndex.getInstance().getFullyQualifiedName(
+            filePath,
+            symbolInfo.name,
+            symbolInfo.location
+        );
         markdownLines.push('**Full Name**: `' + qualifiedName + '`');
         markdownLines.push('');
 
