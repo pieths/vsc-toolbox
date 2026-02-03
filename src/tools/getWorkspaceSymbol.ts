@@ -80,6 +80,9 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
                 throw new Error('No symbols returned from workspace symbol provider.');
             }
 
+            // Filter out symbols from untitled documents (can't read from disk)
+            symbols = symbols.filter(s => s.location.uri.scheme !== 'untitled');
+
             // Remove duplicate symbols (same name and location)
             const uniqueSymbols = new Map<string, vscode.SymbolInformation>();
             for (const symbol of symbols) {
