@@ -96,7 +96,7 @@ const ANON_NAMESPACE_REGEX = /__anon[a-fA-F0-9]+/g;
 // Excludes local variables, members, parameters, etc.
 const CONTAINER_KINDS = new Set([
     'class', 'struct', 'union', 'namespace', 'function',
-    'method', 'enum', 'module', 'interface'
+    'method', 'enum', 'module', 'interface', 'prototype'
 ]);
 
 /**
