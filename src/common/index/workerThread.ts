@@ -116,8 +116,8 @@ async function indexFile(input: IndexInput): Promise<IndexOutput> {
         // TODO: remove this when using ctags version that supports force overwrites.
         try {
             fs.unlinkSync(input.tagsPath);
-        } catch {
-            // File doesn't exist - that's fine
+        } catch (err) {
+            console.error(`Failed to delete ${input.tagsPath}:`, err);
         }
 
         // Run ctags with JSON output format
