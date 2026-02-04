@@ -44,7 +44,18 @@ export interface ContainerDetails {
 }
 
 /**
+ * Reference to a specific line in a file.
+ */
+export interface FileLineRef {
+    /** Absolute file path */
+    filePath: string;
+    /** 1-based line number */
+    line: number;
+}
+
+/**
  * Represents a single search result
+ * TODO: should this use FileLineRef?
  */
 export interface SearchResult {
     /** 1-based line number */

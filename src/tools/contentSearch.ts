@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import * as vscode from 'vscode';
-import { ContentIndex, SearchResult, ContainerDetails } from '../common/index';
+import { ContentIndex, SearchResult, ContainerDetails, FileLineRef } from '../common/index';
 import { log } from '../common/logger';
 import { getModel, sendRequestWithReadFileAccess } from '../common/copilotUtils';
 
@@ -160,13 +160,13 @@ export class ContentSearchTool implements vscode.LanguageModelTool<ContentSearch
                 ]);
             }
 
-            // Fetch container information for each result
-            const resultsWithContainers: ResultWithContainer[] = await Promise.all(
-                results.map(async (result) => {
-                    const container = await contentIndex.getContainer(result.filePath, result.line);
-                    return { result, container };
-                })
-            );
+            // Fetch container information for all results in a single batch call
+            const fileLineRefs: FileLineRef[] = results.map(r => ({ filePath: r.filePath, line: r.line }));
+            const containers = await contentIndex.getContainers(fileLineRefs);
+            const resultsWithContainers: ResultWithContainer[] = results.map((result, i) => ({
+                result,
+                container: containers[i]
+            }));
 
             // Check for cancellation
             if (token.isCancellationRequested) {

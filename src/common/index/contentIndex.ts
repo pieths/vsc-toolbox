@@ -7,7 +7,15 @@ import { CacheManager } from './cacheManager';
 import { ThreadPool } from './threadPool';
 import { FileWatcher } from './fileWatcher';
 import { parseQueryAsAnd } from '../queryParser';
-import { SearchResult, SearchResults, ContentIndexConfig, SearchInput, FunctionDetails, ContainerDetails } from './types';
+import {
+    ContainerDetails,
+    ContentIndexConfig,
+    FileLineRef,
+    FunctionDetails,
+    SearchInput,
+    SearchResult,
+    SearchResults
+} from './types';
 import { log, warn, error } from '../logger';
 
 /**
@@ -354,6 +362,54 @@ export class ContentIndex {
         }
 
         return fileIndex.getContainer(line);
+    }
+
+    /**
+     * Get the innermost container (function, class, namespace, etc.) for multiple locations.
+     *
+     * @param queries - Array of FileLineRef objects to look up
+     * @returns Array of ContainerDetails (or null) in the same order as input queries
+     */
+    async getContainers(queries: FileLineRef[]): Promise<(ContainerDetails | null)[]> {
+        if (!this.initialized) {
+            warn('ContentIndex: Not initialized');
+            return queries.map(() => null);
+        }
+
+        if (!this.cacheManager.isReady()) {
+            warn('ContentIndex: Index not ready');
+            return queries.map(() => null);
+        }
+
+        if (queries.length === 0) {
+            return [];
+        }
+
+        const uniqueFilePaths = [...new Set(queries.map(q => q.filePath))];
+        const fileIndexMap = await this.cacheManager.get(uniqueFilePaths, true);
+
+        // Group queries by file path, tracking original indices
+        const queriesByFile = new Map<string, Array<{ originalIndex: number; line: number }>>();
+        queries.forEach((query, index) => {
+            const existing = queriesByFile.get(query.filePath) || [];
+            existing.push({ originalIndex: index, line: query.line });
+            queriesByFile.set(query.filePath, existing);
+        });
+
+        // Pre-allocate results array (maintains input order)
+        const results: (ContainerDetails | null)[] = new Array(queries.length).fill(null);
+
+        // Process each file's queries consecutively (keeps FileIndex cache hot)
+        for (const [filePath, fileQueries] of queriesByFile) {
+            const fileIndex = fileIndexMap.get(filePath);
+            if (fileIndex) {
+                for (const { originalIndex, line } of fileQueries) {
+                    results[originalIndex] = await fileIndex.getContainer(line);
+                }
+            }
+        }
+
+        return results;
     }
 
     /**
