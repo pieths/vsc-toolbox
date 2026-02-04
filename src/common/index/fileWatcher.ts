@@ -166,8 +166,6 @@ export class FileWatcher implements vscode.Disposable {
             return;
         }
 
-        log(`FileWatcher: Changed: ${filePath}`);
-
         // Invalidate cache entry
         this.cacheManager.invalidate(filePath);
     }
