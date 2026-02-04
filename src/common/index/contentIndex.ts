@@ -6,7 +6,7 @@ import * as os from 'os';
 import { CacheManager } from './cacheManager';
 import { ThreadPool } from './threadPool';
 import { FileWatcher } from './fileWatcher';
-import { parseQuery, validateQuery } from '../queryParser';
+import { parseQuery } from '../queryParser';
 import { SearchResult, SearchResults, ContentIndexConfig, SearchInput, FunctionDetails, ContainerDetails } from './types';
 import { log, warn, error } from '../logger';
 
@@ -179,10 +179,9 @@ export class ContentIndex {
      * @returns SearchResults with results array and optional error
      */
     async findGlobPattern(query: string, token?: vscode.CancellationToken): Promise<SearchResults> {
-        // Validate query
-        const validationError = validateQuery(query);
-        if (validationError) {
-            return { results: [], error: validationError };
+        // Validate query is non-empty
+        if (!query.trim()) {
+            return { results: [], error: 'Search query cannot be empty' };
         }
 
         // Parse glob query to regex pattern

@@ -49,25 +49,3 @@ export function parseQuery(query: string): string {
     // Join with alternation (OR)
     return regexTerms.join('|');
 }
-
-/**
- * Validate that a query string can be parsed.
- *
- * @param query - User's search query
- * @returns Error message if invalid, undefined if valid
- */
-export function validateQuery(query: string): string | undefined {
-    const trimmed = query.trim();
-    if (!trimmed) {
-        return 'Search query cannot be empty';
-    }
-
-    // Try to compile the regex to check for validity
-    try {
-        const pattern = parseQuery(trimmed);
-        new RegExp(pattern, 'gim');
-        return undefined;
-    } catch (error) {
-        return `Invalid query pattern: ${error instanceof Error ? error.message : String(error)}`;
-    }
-}
