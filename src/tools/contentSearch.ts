@@ -39,9 +39,9 @@ function getContainerKey(container: ContainerDetails | null): string {
  */
 function formatContainerHeading(container: ContainerDetails | null): string {
     if (!container) {
-        return '### (top-level)\n\n';
+        return '### [top-level]\n\n';
     }
-    return `### (in ${container.ctagsType}) ${container.fullyQualifiedName} (lines ${container.startLine}-${container.endLine})\n\n`;
+    return `### [in ${container.ctagsType}] ${container.fullyQualifiedName} (lines ${container.startLine}-${container.endLine})\n\n`;
 }
 
 /**
