@@ -240,15 +240,9 @@ export class CacheManager {
             const elapsed = Date.now() - startTime;
 
             let successCount = 0;
-            for (let i = 0; i < outputs.length; i++) {
-                const output = outputs[i];
-                const fi = toIndex[i];
-
+            for (const output of outputs) {
                 if (output.tagsPath && !output.error) {
-                    log(`Content index: Indexed ${fi.getFilePath()}`);
                     successCount++;
-                } else if (output.error) {
-                    error(`Content index: Failed to index ${fi.getFilePath()}: ${output.error}`);
                 }
             }
 

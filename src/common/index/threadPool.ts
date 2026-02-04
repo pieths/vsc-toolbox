@@ -4,6 +4,7 @@
 import { Worker } from 'worker_threads';
 import * as path from 'path';
 import { SearchInput, SearchOutput, IndexInput, IndexOutput } from './types';
+import { log, error } from '../logger';
 
 /**
  * Represents a search task in the queue waiting to be processed
@@ -224,6 +225,14 @@ export class ThreadPool {
         const promise = new Promise<IndexOutput>((resolve, reject) => {
             this.taskQueue.push({ type: 'index', input, resolve, reject });
             this.processNextTask();
+        }).then(output => {
+            // Log once per file when indexing completes
+            if (output.tagsPath && !output.error) {
+                log(`Content index: Indexed ${output.filePath}`);
+            } else if (output.error) {
+                error(`Content index: Failed to index ${output.filePath}: ${output.error}`);
+            }
+            return output;
         });
 
         // Store promise so subsequent calls can reuse it
