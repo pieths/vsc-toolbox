@@ -212,13 +212,13 @@
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "content-search",
         "userDescription": "Search for patterns across indexed content",
-        "modelDescription": "Search for patterns across indexed content. Supports glob patterns (* and ?) and OR operations (space-separated terms). Returns matching lines grouped by file with line numbers. Use this for fast full-text search across large codebases.",
+        "modelDescription": "Search for patterns across indexed content. Supports glob patterns (* and ?) and AND operations (space-separated terms). Returns matching lines grouped by file with line numbers. Use this for fast full-text search across large codebases.",
         "inputSchema": {
           "type": "object",
           "properties": {
             "query": {
               "type": "string",
-              "description": "Search query. Space-separated terms are OR'd together. Supports * (zero or more characters) and ? (single char) wildcards."
+              "description": "Search query. Space-separated terms use AND semantics (all must match somewhere in file). Supports * (zero or more characters) and ? (single char) wildcards."
             },
             "filter": {
               "type": "string",

@@ -13,7 +13,7 @@ import { parentPort } from 'worker_threads';
 import * as fs from 'fs';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import type { SearchInput, SearchOutput, IndexInput, IndexOutput } from './types';
+import type { SearchInput, LineResult, SearchOutput, IndexInput, IndexOutput } from './types';
 
 const execFileAsync = promisify(execFile);
 
@@ -60,10 +60,10 @@ function getLineText(content: string, matchIndex: number): string {
  * @param regexPattern - Regex pattern string to search for
  * @returns Array of results with line numbers and text
  */
-function searchFileWithSingleRegex(content: string, regexPattern: string): { line: number; text: string }[] {
+function searchFileWithSingleRegex(content: string, regexPattern: string): LineResult[] {
     const regex = new RegExp(regexPattern, 'gim'); // g=global, i=case-insensitive, m=multiline
 
-    const results: { line: number; text: string }[] = [];
+    const results: LineResult[] = [];
     const seenLines = new Set<number>(); // Avoid duplicate lines
 
     // Progressive line counting - only computed when matches found
@@ -95,16 +95,52 @@ function searchFileWithSingleRegex(content: string, regexPattern: string): { lin
 }
 
 /**
- * Search a file for matches using the provided regex pattern.
+ * Search a file for matches using AND semantics across multiple regex patterns.
+ * All patterns must match somewhere in the file for results to be returned.
  *
- * @param input - Search input containing file path and regex pattern
+ * @param input - Search input containing file path and regex patterns array
  * @returns Search output with results or error
  */
 async function searchFile(input: SearchInput): Promise<SearchOutput> {
     try {
         const content = await fs.promises.readFile(input.filePath, 'utf8');
-        const results = searchFileWithSingleRegex(content, input.regexPattern);
-        return { filePath: input.filePath, results };
+
+        // If no patterns provided, return empty results
+        if (!input.regexPatterns || input.regexPatterns.length === 0) {
+            return { filePath: input.filePath, results: [] };
+        }
+
+        // Collect results for each pattern
+        const allPatternResults: LineResult[][] = [];
+
+        for (const pattern of input.regexPatterns) {
+            const patternResults = searchFileWithSingleRegex(content, pattern);
+
+            // If any pattern has no matches, the file doesn't match (AND semantics)
+            if (patternResults.length === 0) {
+                return { filePath: input.filePath, results: [] };
+            }
+
+            allPatternResults.push(patternResults);
+        }
+
+        // All patterns matched - merge results and deduplicate by line number
+        const seenLines = new Set<number>();
+        const mergedResults: LineResult[] = [];
+
+        for (const patternResults of allPatternResults) {
+            for (const result of patternResults) {
+                if (!seenLines.has(result.line)) {
+                    seenLines.add(result.line);
+                    mergedResults.push(result);
+                }
+            }
+        }
+
+        // Sort by line number
+        mergedResults.sort((a, b) => a.line - b.line);
+
+        return { filePath: input.filePath, results: mergedResults };
     } catch (error) {
         return {
             filePath: input.filePath,

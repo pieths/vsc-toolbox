@@ -6,7 +6,7 @@ import * as os from 'os';
 import { CacheManager } from './cacheManager';
 import { ThreadPool } from './threadPool';
 import { FileWatcher } from './fileWatcher';
-import { parseQuery } from '../queryParser';
+import { parseQueryAsAnd } from '../queryParser';
 import { SearchResult, SearchResults, ContentIndexConfig, SearchInput, FunctionDetails, ContainerDetails } from './types';
 import { log, warn, error } from '../logger';
 
@@ -34,7 +34,7 @@ function getConfig(): ContentIndexConfig {
  *
  * Usage:
  *   const index = ContentIndex.getInstance();
- *   const results = await index.findGlobPattern('myFunction*');
+ *   const results = await index.getDocumentMatches('myFunction*');
  */
 export class ContentIndex {
     private static instance: ContentIndex | null = null;
@@ -172,35 +172,34 @@ export class ContentIndex {
 
     /**
      * Search for content matching a glob pattern query.
-     * Validates the query, converts glob wildcards to regex, and performs the search.
      *
-     * @param query - User search query with glob patterns (* and ?) and space-separated OR terms
+     * @param query - User search query with glob patterns (* and ?) and space-separated AND terms
      * @param token - Optional cancellation token
      * @returns SearchResults with results array and optional error
      */
-    async findGlobPattern(query: string, token?: vscode.CancellationToken): Promise<SearchResults> {
+    async getDocumentMatches(query: string, token?: vscode.CancellationToken): Promise<SearchResults> {
         // Validate query is non-empty
         if (!query.trim()) {
             return { results: [], error: 'Search query cannot be empty' };
         }
 
         // Parse glob query to regex pattern
-        const regexPattern = parseQuery(query);
+        const regexPatterns = parseQueryAsAnd(query);
 
         // Perform the search
-        const results = await this.findRegexPattern(regexPattern, token);
+        const results = await this.getDocumentMatchesInternal(regexPatterns, token);
         return { results };
     }
 
     /**
-     * Search for content matching a regex pattern.
-     * Internal method - use findGlobPattern for public API.
+     * Search for content matching regex patterns.
+     * Internal method - use getDocumentMatches for public API.
      *
-     * @param regexPattern - Regex pattern string to search for
+     * @param regexPatterns - Array of regex pattern strings to search for
      * @param token - Optional cancellation token
      * @returns Array of search results
      */
-    private async findRegexPattern(regexPattern: string, token?: vscode.CancellationToken): Promise<SearchResult[]> {
+    private async getDocumentMatchesInternal(regexPatterns: string[], token?: vscode.CancellationToken): Promise<SearchResult[]> {
         if (!this.initialized || !this.threadPool) {
             warn('ContentIndex: Not initialized');
             return [];
@@ -230,7 +229,7 @@ export class ContentIndex {
                 searchInputs.push({
                     type: 'search',
                     filePath: fileIndex.getFilePath(),
-                    regexPattern
+                    regexPatterns
                 });
             }
 

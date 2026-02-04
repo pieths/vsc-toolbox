@@ -74,8 +74,16 @@ export interface SearchInput {
     type: 'search';
     /** Absolute file path to search */
     filePath: string;
-    /** Regex pattern string to search for */
-    regexPattern: string;
+    /** Regex pattern strings to search for */
+    regexPatterns: string[];
+}
+
+/**
+ * A single search result with line number and text content
+ */
+export interface LineResult {
+    line: number;
+    text: string;
 }
 
 /**
@@ -84,8 +92,8 @@ export interface SearchInput {
 export interface SearchOutput {
     /** Absolute file path that was searched */
     filePath: string;
-    /** Array of search results (without filePath, added by main thread) */
-    results: { line: number; text: string }[];
+    /** Array of search results */
+    results: LineResult[];
     /** Error message if search failed */
     error?: string;
 }

@@ -4,7 +4,7 @@
 import * as vscode from 'vscode';
 import { ScopedFileCache } from './scopedFileCache';
 import { log } from './logger';
-import { parseQuery } from './queryParser';
+import { parseQueryAsOr } from './queryParser';
 import { ContentIndex } from './index';
 
 /**
@@ -145,7 +145,7 @@ async function executeFileGlobTool(
         }
 
         const lines = await cache.getLines(normalizedPath);
-        const pattern = parseQuery(input.query);
+        const pattern = parseQueryAsOr(input.query);
 
         if (!pattern) {
             return `Error: Empty query pattern`;

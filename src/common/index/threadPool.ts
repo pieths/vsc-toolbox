@@ -182,7 +182,7 @@ export class ThreadPool {
      * @param input - Search input containing file path, regex pattern, and line starts
      * @returns Promise that resolves with the search results
      */
-    private submit(input: SearchInput): Promise<SearchOutput> {
+    private submitSearch(input: SearchInput): Promise<SearchOutput> {
         if (this.disposed) {
             return Promise.resolve({
                 filePath: input.filePath,
@@ -271,7 +271,7 @@ export class ThreadPool {
             }));
         }
 
-        return Promise.all(inputs.map(input => this.submit(input)));
+        return Promise.all(inputs.map(input => this.submitSearch(input)));
     }
 
     /**

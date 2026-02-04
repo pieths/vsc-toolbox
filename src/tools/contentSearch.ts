@@ -142,7 +142,7 @@ export class ContentSearchTool implements vscode.LanguageModelTool<ContentSearch
             }
 
             // Perform the search using ContentIndex
-            const searchResult = await contentIndex.findGlobPattern(query, token);
+            const searchResult = await contentIndex.getDocumentMatches(query, token);
 
             // Check for validation error
             if (searchResult.error) {
