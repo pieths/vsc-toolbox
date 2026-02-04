@@ -53,8 +53,49 @@ function getLineText(content: string, matchIndex: number): string {
 }
 
 /**
- * Search a file for matches using the provided regex pattern.
+ * Search file content for matches using the provided regex pattern.
  * Uses progressive line counting - only computes line numbers for matches.
+ *
+ * @param content - Full file content to search
+ * @param regexPattern - Regex pattern string to search for
+ * @returns Array of results with line numbers and text
+ */
+function searchFileWithSingleRegex(content: string, regexPattern: string): { line: number; text: string }[] {
+    const regex = new RegExp(regexPattern, 'gim'); // g=global, i=case-insensitive, m=multiline
+
+    const results: { line: number; text: string }[] = [];
+    const seenLines = new Set<number>(); // Avoid duplicate lines
+
+    // Progressive line counting - only computed when matches found
+    let lastPos = 0;
+    let currentLine = 1;
+
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(content)) !== null) {
+        // Count newlines from lastPos to match position using indexOf
+        let pos = lastPos;
+        while (pos < match.index) {
+            const nextNewline = content.indexOf('\n', pos);
+            if (nextNewline === -1 || nextNewline >= match.index) {
+                break;
+            }
+            currentLine++;
+            pos = nextNewline + 1;
+        }
+        lastPos = pos;
+
+        if (!seenLines.has(currentLine)) {
+            seenLines.add(currentLine);
+            const text = getLineText(content, match.index);
+            results.push({ line: currentLine, text });
+        }
+    }
+
+    return results;
+}
+
+/**
+ * Search a file for matches using the provided regex pattern.
  *
  * @param input - Search input containing file path and regex pattern
  * @returns Search output with results or error
@@ -62,36 +103,7 @@ function getLineText(content: string, matchIndex: number): string {
 async function searchFile(input: SearchInput): Promise<SearchOutput> {
     try {
         const content = await fs.promises.readFile(input.filePath, 'utf8');
-        const regex = new RegExp(input.regexPattern, 'gim'); // g=global, i=case-insensitive, m=multiline
-
-        const results: { line: number; text: string }[] = [];
-        const seenLines = new Set<number>(); // Avoid duplicate lines
-
-        // Progressive line counting - only computed when matches found
-        let lastPos = 0;
-        let currentLine = 1;
-
-        let match: RegExpExecArray | null;
-        while ((match = regex.exec(content)) !== null) {
-            // Count newlines from lastPos to match position using indexOf
-            let pos = lastPos;
-            while (pos < match.index) {
-                const nextNewline = content.indexOf('\n', pos);
-                if (nextNewline === -1 || nextNewline >= match.index) {
-                    break;
-                }
-                currentLine++;
-                pos = nextNewline + 1;
-            }
-            lastPos = pos;
-
-            if (!seenLines.has(currentLine)) {
-                seenLines.add(currentLine);
-                const text = getLineText(content, match.index);
-                results.push({ line: currentLine, text });
-            }
-        }
-
+        const results = searchFileWithSingleRegex(content, input.regexPattern);
         return { filePath: input.filePath, results };
     } catch (error) {
         return {
