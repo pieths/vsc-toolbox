@@ -366,6 +366,8 @@ export async function sendRequestWithReadFileAccess(
         vscode.LanguageModelChatMessage.User(text)
     ];
 
+    log(`sendRequestWithReadFileAccess: Using model "${model.name}" (${model.id})`);
+
     const token = cancellationToken ?? new vscode.CancellationTokenSource().token;
     const cache = fileCache ?? new ScopedFileCache();
     let toolCallCount = 0;

@@ -135,7 +135,7 @@
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "get-workspace-symbol",
         "userDescription": "Search for symbols (classes, functions, variables, etc.) in code",
-        "modelDescription": "Search for symbols (classes, functions, variables, etc.) across the entire codebase using workspace symbol providers. Supports fuzzy/partial matching. Returns symbol names, kinds (Class, Function, Variable, etc.), file locations, container names, source line context, and type details when available. The optional 'filter' parameter can limit results to specific file paths. If you need more detailed information than what is returned, read the file directly.",
+        "modelDescription": "Search for symbols (classes, functions, variables, etc.) across the entire codebase using workspace symbol providers. Supports fuzzy/partial matching. Returns symbol names, kinds (Class, Function, Variable, etc.), file locations, container names, source line context, and type details when available. The optional 'filter' parameter can limit results based on specific criteria. If you need more detailed information than what is returned, read the file directly.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -145,7 +145,7 @@
             },
             "filter": {
               "type": "string",
-              "description": "Optional natural language filter to include or exclude symbols from results. Examples: 'only class methods', 'exclude test files', 'exclude mojom related files', 'methods in classes starting with Media', 'functions that take a string parameter'"
+              "description": "Optional natural language filter to include or exclude symbols from results. Can filter by symbol kind, file paths, file types, directory names, or symbol properties. Examples: 'only class methods', 'only functions', 'exclude test files', 'exclude mojom related files', 'only .cc files', 'only symbols in src/media/', 'exclude third_party', 'methods in classes starting with Media', 'functions that take a string parameter', 'only static methods', 'exclude private members'. Combine multiple criteria: 'only public methods in .h files, exclude test files'. A common filter is to remove test files and mojom files since these files usually are unnecessary noise."
             }
           },
           "required": [
@@ -195,7 +195,7 @@
             },
             "filter": {
               "type": "string",
-              "description": "Optional natural language filter to include or exclude references from results. Examples: 'only references in test files', 'exclude third_party', 'only call sites (exclude declarations)', 'references in classes starting with Media'. A common filter is to remove test files and mojom files since these files usually are unnecessary noise."
+              "description": "Optional natural language filter to include or exclude references from results. Can filter by file paths, file types, directory names, reference type, or code context. Examples: 'only references in test files', 'exclude test files', 'only .cc files', 'only files in src/media/', 'exclude third_party and out directories', 'only call sites (exclude declarations)', 'only assignments', 'references in classes starting with Media', 'exclude generated code', 'only header files'. Combine multiple criteria: 'only call sites in .cc files, exclude tests'. A common filter is to remove test files and mojom files since these files usually are unnecessary noise."
             }
           },
           "required": [
@@ -222,7 +222,7 @@
             },
             "filter": {
               "type": "string",
-              "description": "Optional natural language filter to include or exclude results. Examples: 'only results in test files', 'exclude third_party', 'only matches in class methods', 'results in files starting with Media'. A common filter is to remove test files and mojom files since these files usually are unnecessary noise."
+              "description": "Optional natural language filter to include or exclude results. Can filter by file paths, file types, directory names, content patterns, or code structure. Examples: 'only .cc files', 'exclude test files and mojom files', 'only files in src/media/', 'exclude third_party and out directories', 'only matches in class methods', 'results in files starting with Media', 'only header files', 'exclude generated code'. Combine multiple criteria: 'only .cc files in src/media, exclude tests'. A common filter is to remove test files and mojom files since these files usually are unnecessary noise."
             }
           },
           "required": [
