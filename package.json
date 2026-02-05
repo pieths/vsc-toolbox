@@ -3,9 +3,9 @@
   "displayName": "VSC Toolbox",
   "description": "Tools for VS Code",
   "version": "0.1.0",
-  "publisher": "Piet Schouten",
+  "publisher": "pieths",
   "author": {
-    "name": "Piet Hein Schouten"
+    "name": "pieths"
   },
   "license": "MIT",
   "engines": {

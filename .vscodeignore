@@ -1,10 +1,10 @@
-.vscode/**
-.vscode-test/**
-src/**
-.gitignore
-.yarnrc
-vsc-extension-quickstart.md
-**/tsconfig.json
-**/.eslintrc.json
-**/*.map
-**/*.ts
+# Exclude everything by default
+**
+
+# Include only what the extension needs
+!package.json
+!README.md
+!LICENSE
+!out/**
+!bin/win_x64/llama.cpp/**
+!node_modules/picomatch/**
