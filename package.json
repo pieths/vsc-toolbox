@@ -135,7 +135,7 @@
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "get-workspace-symbol",
         "userDescription": "Search for symbols (classes, functions, variables, etc.) in code",
-        "modelDescription": "Search for symbols (classes, functions, variables, etc.) across the entire codebase using workspace symbol providers. Supports fuzzy/partial matching. Returns symbol names, kinds (Class, Function, Variable, etc.), file locations, container names, source line context, and type details when available. The optional 'filter' parameter can limit results based on specific criteria. If you need more detailed information than what is returned, read the file directly.",
+        "modelDescription": "Search for symbols (classes, functions, variables, etc.) across the entire codebase using workspace symbol providers. Supports fuzzy/partial matching. Returns symbol names, kinds (Class, Function, Variable, etc.), file locations, container names, source line context, and type details when available. The optional 'filter' parameter can limit results based on specific criteria.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -159,7 +159,7 @@
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "get-document-symbol-references",
         "userDescription": "Find all references to a symbol at a specific location",
-        "modelDescription": "Find all references to a symbol at a specific location in a file. Returns all locations where the symbol is used throughout the codebase, including declarations, along with source context (up to 10 lines before and 10 lines after each reference, constrained to method boundaries when applicable). Use this to understand how a symbol is used, find all call sites of a function, or see where a variable is accessed. Requires exact file URI (file:// format), zero-based line/character position, the symbol name, and the complete source line text. The symbol name and source line are used to verify and correct the exact position, helping prevent off-by-one errors. If you need more detailed information than what is returned, read the file directly.",
+        "modelDescription": "Find all references to a symbol at a specific location in a file. Returns all locations where the symbol is used throughout the codebase, including declarations, along with source context (up to 10 lines before and 10 lines after each reference, constrained to method boundaries when applicable). Use this to understand how a symbol is used, find all call sites of a function, or see where a variable is accessed. Requires exact file URI (file:// format), zero-based line/character position, the symbol name, and the complete source line text. The symbol name and source line are used to verify and correct the exact position, helping prevent off-by-one errors.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -238,7 +238,7 @@
             },
             "filter": {
               "type": "string",
-              "description": "Optional natural language filter to include or exclude results AFTER searching. Use for complex semantic filtering that requires AI reasoning. Examples: 'only matches in class methods', 'exclude declarations', 'only call sites', 'results where the function takes a string parameter'. For simple path filtering, prefer using filePathFilter instead as it's faster."
+              "description": "Optional natural language filter to include or exclude results AFTER searching. Use for complex semantic filtering that requires AI reasoning. Examples: 'only matches in class methods', 'exclude declarations', 'only call sites', 'results where the function takes a string parameter'. For simple path filtering, prefer using include/exclude instead as it's faster."
             }
           },
           "required": [
