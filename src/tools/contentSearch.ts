@@ -12,6 +12,10 @@ import { getModel, sendRequestWithReadFileAccess } from '../common/copilotUtils'
 interface ContentSearchParams {
     /** Search query with space-separated OR terms and glob wildcards */
     query: string;
+    /** Optional comma-separated glob patterns to include only matching file paths */
+    include?: string;
+    /** Optional comma-separated glob patterns to exclude matching file paths */
+    exclude?: string;
     /** Optional natural language filter to include or exclude results */
     filter?: string;
 }
@@ -142,7 +146,8 @@ export class ContentSearchTool implements vscode.LanguageModelTool<ContentSearch
             }
 
             // Perform the search using ContentIndex
-            const searchResult = await contentIndex.getDocumentMatches(query, token);
+            const { include, exclude } = options.input;
+            const searchResult = await contentIndex.getDocumentMatches(query, include, exclude, token);
 
             // Check for validation error
             if (searchResult.error) {

@@ -182,10 +182,17 @@ export class ContentIndex {
      * Search for content matching a glob pattern query.
      *
      * @param query - User search query with glob patterns (* and ?) and space-separated AND terms
+     * @param include - Optional comma-separated glob patterns to include only matching file paths
+     * @param exclude - Optional comma-separated glob patterns to exclude matching file paths
      * @param token - Optional cancellation token
      * @returns SearchResults with results array and optional error
      */
-    async getDocumentMatches(query: string, token?: vscode.CancellationToken): Promise<SearchResults> {
+    async getDocumentMatches(
+        query: string,
+        include?: string,
+        exclude?: string,
+        token?: vscode.CancellationToken
+    ): Promise<SearchResults> {
         // Validate query is non-empty
         if (!query.trim()) {
             return { results: [], error: 'Search query cannot be empty' };
@@ -195,7 +202,7 @@ export class ContentIndex {
         const regexPatterns = parseQueryAsAnd(query);
 
         // Perform the search
-        const results = await this.getDocumentMatchesInternal(regexPatterns, token);
+        const results = await this.getDocumentMatchesInternal(regexPatterns, include, exclude, token);
         return { results };
     }
 
@@ -204,10 +211,17 @@ export class ContentIndex {
      * Internal method - use getDocumentMatches for public API.
      *
      * @param regexPatterns - Array of regex pattern strings to search for
+     * @param include - Optional comma-separated glob patterns to include only matching file paths
+     * @param exclude - Optional comma-separated glob patterns to exclude matching file paths
      * @param token - Optional cancellation token
      * @returns Array of search results
      */
-    private async getDocumentMatchesInternal(regexPatterns: string[], token?: vscode.CancellationToken): Promise<SearchResult[]> {
+    private async getDocumentMatchesInternal(
+        regexPatterns: string[],
+        include?: string,
+        exclude?: string,
+        token?: vscode.CancellationToken
+    ): Promise<SearchResult[]> {
         if (!this.initialized || !this.threadPool) {
             warn('ContentIndex: Not initialized');
             return [];
@@ -224,8 +238,8 @@ export class ContentIndex {
         }
 
         try {
-            // Get all files from cache
-            const allFiles = await this.cacheManager.getAll();
+            // Get all files from cache, filtered by include/exclude glob patterns
+            const allFiles = this.cacheManager.getAllPaths(include, exclude);
 
             if (allFiles.length === 0) {
                 return [];
@@ -233,10 +247,10 @@ export class ContentIndex {
 
             // Prepare search inputs
             const searchInputs: SearchInput[] = [];
-            for (const fileIndex of allFiles) {
+            for (const filePath of allFiles) {
                 searchInputs.push({
                     type: 'search',
-                    filePath: fileIndex.getFilePath(),
+                    filePath,
                     regexPatterns
                 });
             }

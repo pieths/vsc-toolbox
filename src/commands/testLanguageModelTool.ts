@@ -176,11 +176,21 @@ export class TestLanguageModelToolCommand {
             return undefined;
         }
 
-        const filter = await vscode.window.showInputBox({
-            prompt: 'Enter filter criteria (or leave empty for no filter)',
-            placeHolder: 'e.g., only test files, exclude third_party, only class methods',
+        const include = await vscode.window.showInputBox({
+            prompt: 'Enter include glob pattern(s) - comma-separated (or leave empty for all files)',
+            placeHolder: 'e.g., **/*.cc, **/media/**',
         });
 
-        return { query, filter: filter || undefined };
+        const exclude = await vscode.window.showInputBox({
+            prompt: 'Enter exclude glob pattern(s) - comma-separated (or leave empty)',
+            placeHolder: 'e.g., **/test/**, **/*mojom*',
+        });
+
+        const filter = await vscode.window.showInputBox({
+            prompt: 'Enter natural language filter criteria (or leave empty for no filter)',
+            placeHolder: 'e.g., only class methods, exclude declarations',
+        });
+
+        return { query, include: include || undefined, exclude: exclude || undefined, filter: filter || undefined };
     }
 }

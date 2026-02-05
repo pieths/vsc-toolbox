@@ -4,6 +4,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import picomatch from 'picomatch';
 import { FileIndex } from './fileIndex';
 import { ThreadPool } from './threadPool';
 import { IndexInput } from './types';
@@ -267,12 +268,41 @@ export class CacheManager {
     }
 
     /**
-     * Get all file paths in cache.
+     * Get all file paths in cache, optionally filtered by include/exclude glob patterns.
      *
-     * @returns Array of absolute file paths
+     * @param include - Optional comma-separated glob patterns to include
+     * @param exclude - Optional comma-separated glob patterns to exclude
+     * @returns Array of absolute file paths (filtered if patterns provided)
      */
-    getAllPaths(): string[] {
-        return Array.from(this.cache.keys());
+    getAllPaths(include?: string, exclude?: string): string[] {
+        const paths = Array.from(this.cache.keys());
+
+        if (!include && !exclude) {
+            return paths;
+        }
+
+        // Parse comma-separated patterns
+        const includePatterns = include ? include.split(',').map(p => p.trim()).filter(p => p) : [];
+        const excludePatterns = exclude ? exclude.split(',').map(p => p.trim()).filter(p => p) : [];
+
+        // Compile patterns to native RegExp for fast matching
+        // windows: true makes regex match both / and \ separators
+        const includeRegexes = includePatterns.map(p => picomatch.makeRe(p, { windows: true }));
+        const excludeRegexes = excludePatterns.map(p => picomatch.makeRe(p, { windows: true }));
+
+        return paths.filter(p => {
+            // If include patterns specified, path must match at least one
+            if (includeRegexes.length > 0 && !includeRegexes.some(re => re.test(p))) {
+                return false;
+            }
+
+            // If exclude patterns specified, path must not match any
+            if (excludeRegexes.length > 0 && excludeRegexes.some(re => re.test(p))) {
+                return false;
+            }
+
+            return true;
+        });
     }
 
     /**

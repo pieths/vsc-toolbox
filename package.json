@@ -220,9 +220,17 @@
               "type": "string",
               "description": "Search query. Space-separated terms use AND semantics (all must match somewhere in file). Supports * (zero or more characters) and ? (single char) wildcards."
             },
+            "include": {
+              "type": "string",
+              "description": "Optional glob pattern(s) to include only matching file paths. Comma-separated for multiple patterns. Uses VS Code/picomatch glob syntax. Examples: '**/*.cc' (only .cc files), '**/media/**' (files in media directories), '**/*.cc, **/*.h' (both .cc and .h files). If not specified, all indexed files are searched."
+            },
+            "exclude": {
+              "type": "string",
+              "description": "Optional glob pattern(s) to exclude matching file paths. Comma-separated for multiple patterns. Applied after include filter. Examples: '**/test/**' (exclude test directories), '**/*mojom*' (exclude mojom files), '**/test/**, **/*_unittest.cc' (exclude tests). Common exclusions: test files, mojom files, third_party."
+            },
             "filter": {
               "type": "string",
-              "description": "Optional natural language filter to include or exclude results. Can filter by file paths, file types, directory names, content patterns, or code structure. Examples: 'only .cc files', 'exclude test files and mojom files', 'only files in src/media/', 'exclude third_party and out directories', 'only matches in class methods', 'results in files starting with Media', 'only header files', 'exclude generated code'. Combine multiple criteria: 'only .cc files in src/media, exclude tests'. A common filter is to remove test files and mojom files since these files usually are unnecessary noise."
+              "description": "Optional natural language filter to include or exclude results AFTER searching. Use for complex semantic filtering that requires AI reasoning. Examples: 'only matches in class methods', 'exclude declarations', 'only call sites', 'results where the function takes a string parameter'. For simple path filtering, prefer using filePathFilter instead as it's faster."
             }
           },
           "required": [
@@ -240,10 +248,14 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "@types/picomatch": "^4.0.2",
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
     "eslint": "^8.50.0",
     "typescript": "^5.2.0"
+  },
+  "dependencies": {
+    "picomatch": "^4.0.3"
   }
 }
