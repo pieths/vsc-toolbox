@@ -143,9 +143,17 @@
               "type": "string",
               "description": "Symbol text to search for. Supports fuzzy matching (e.g., 'MyClass', 'myFunc', 'Vec' will match 'Vector')"
             },
+            "include": {
+              "type": "string",
+              "description": "Optional glob pattern(s) to include only matching file paths. Comma-separated for multiple patterns. Uses VS Code/picomatch glob syntax. Examples: '**/*.cc' (only .cc files), '**/media/**' (files in media directories), '**/*.cc, **/*.h' (both .cc and .h files). If not specified, all indexed files are searched."
+            },
+            "exclude": {
+              "type": "string",
+              "description": "Optional glob pattern(s) to exclude matching file paths. Comma-separated for multiple patterns. Applied after include filter. Examples: '**/test/**' (exclude test directories), '**/*mojom*' (exclude mojom files), '**/test/**, **/*_unittest.cc' (exclude tests). Common exclusions: test files, mojom files, third_party."
+            },
             "filter": {
               "type": "string",
-              "description": "Optional natural language filter to include or exclude symbols from results. Can filter by symbol kind, file paths, file types, directory names, or symbol properties. Examples: 'only class methods', 'only functions', 'exclude test files', 'exclude mojom related files', 'only .cc files', 'only symbols in src/media/', 'exclude third_party', 'methods in classes starting with Media', 'functions that take a string parameter', 'only static methods', 'exclude private members'. Combine multiple criteria: 'only public methods in .h files, exclude test files'. A common filter is to remove test files and mojom files since these files usually are unnecessary noise."
+              "description": "Optional natural language filter to include or exclude symbols AFTER searching. Use for complex semantic filtering that requires AI reasoning. Examples: 'only class methods', 'only static methods', 'exclude private members', 'functions that take a string parameter'. For simple path filtering, prefer using include/exclude instead as they are faster."
             }
           },
           "required": [

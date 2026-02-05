@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import * as vscode from 'vscode';
+import picomatch from 'picomatch';
 import { createMarkdownCodeBlock } from '../common/markdownUtils';
 import { getFunctionSignatureRange } from '../common/documentUtils';
 import { ScopedFileCache } from '../common/scopedFileCache';
@@ -14,6 +15,8 @@ import { log } from '../common/logger';
  */
 export interface IWorkspaceSymbolParams {
     query: string;
+    include?: string;
+    exclude?: string;
     filter?: string;
 }
 
@@ -28,15 +31,21 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
         options: vscode.LanguageModelToolInvocationPrepareOptions<IWorkspaceSymbolParams>,
         _token: vscode.CancellationToken
     ): Promise<vscode.PreparedToolInvocation> {
-        const { query, filter } = options.input;
+        const { query, include, exclude, filter } = options.input;
         const filterInfo = filter ? ` filtered by: ${filter}` : '';
+        const pathFilterInfo = include || exclude
+            ? ` [paths: ${include ? `include=${include}` : ''}${include && exclude ? ', ' : ''}${exclude ? `exclude=${exclude}` : ''}]`
+            : '';
 
         return {
-            invocationMessage: `Searching for symbol: "${query}"${filterInfo}`,
+            invocationMessage: `Searching for symbol: "${query}"${pathFilterInfo}${filterInfo}`,
             confirmationMessages: {
                 title: 'Search Workspace Symbols',
                 message: new vscode.MarkdownString(
-                    `Search for symbols matching **"${query}"** across the workspace?${filterInfo ? `\n\nFilter: ${filter}` : ''}`
+                    `Search for symbols matching **"${query}"** across the workspace?` +
+                    (include ? `\n- **Include**: \`${include}\`` : '') +
+                    (exclude ? `\n- **Exclude**: \`${exclude}\`` : '') +
+                    (filter ? `\n\nFilter: ${filter}` : '')
                 ),
             },
         };
@@ -46,7 +55,7 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
         options: vscode.LanguageModelToolInvocationOptions<IWorkspaceSymbolParams>,
         _token: vscode.CancellationToken
     ): Promise<vscode.LanguageModelToolResult> {
-        const { query, filter } = options.input;
+        const { query, include, exclude, filter } = options.input;
 
         // Create a file cache for this invocation to avoid repeated file reads
         const fileCache = new ScopedFileCache();
@@ -100,6 +109,25 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
                 const uri = symbol.location.uri.toString();
                 return !excludePatterns.some(pattern => pattern.test(uri));
             });
+
+            // Apply include/exclude glob filtering on file paths
+            if (include || exclude) {
+                const includePatterns = include ? include.split(',').map(p => p.trim()).filter(p => p) : [];
+                const excludePatterns2 = exclude ? exclude.split(',').map(p => p.trim()).filter(p => p) : [];
+                const includeRegexes = includePatterns.map(p => picomatch.makeRe(p, { windows: true }));
+                const excludeRegexes = excludePatterns2.map(p => picomatch.makeRe(p, { windows: true }));
+
+                filteredSymbols = filteredSymbols.filter(symbol => {
+                    const path = symbol.location.uri.fsPath;
+                    if (includeRegexes.length > 0 && !includeRegexes.some(re => re.test(path))) {
+                        return false;
+                    }
+                    if (excludeRegexes.length > 0 && excludeRegexes.some(re => re.test(path))) {
+                        return false;
+                    }
+                    return true;
+                });
+            }
 
             // Sort symbols: exact matches first, then substring matches,
             // then fuzzy matches, preserving original order within each group.
