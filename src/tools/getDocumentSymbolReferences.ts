@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import * as vscode from 'vscode';
+import picomatch from 'picomatch';
 import { createMarkdownCodeBlock } from '../common/markdownUtils';
 import { getFunctionSignatureRange } from '../common/documentUtils';
 import { ContentIndex, ContainerDetails } from '../common/index';
@@ -20,6 +21,8 @@ export interface ITextDocumentReferencesParams {
     };
     symbolName: string;
     sourceLine: string;
+    include?: string;
+    exclude?: string;
     filter?: string;
 }
 
@@ -57,12 +60,15 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
         options: vscode.LanguageModelToolInvocationPrepareOptions<ITextDocumentReferencesParams>,
         _token: vscode.CancellationToken
     ): Promise<vscode.PreparedToolInvocation> {
-        const { uri, position, symbolName, filter } = options.input;
+        const { uri, position, symbolName, include, exclude, filter } = options.input;
         const fileName = uri.split('/').pop() || uri;
         const filterInfo = filter ? ` filtered by: ${filter}` : '';
+        const pathFilterInfo = include || exclude
+            ? ` [paths: ${include ? `include=${include}` : ''}${include && exclude ? ', ' : ''}${exclude ? `exclude=${exclude}` : ''}]`
+            : '';
 
         return {
-            invocationMessage: `Finding references to '${symbolName}' at ${fileName}:${position.line + 1}:${position.character + 1}${filterInfo}`,
+            invocationMessage: `Finding references to '${symbolName}' at ${fileName}:${position.line + 1}:${position.character + 1}${pathFilterInfo}${filterInfo}`,
             confirmationMessages: {
                 title: 'Find References',
                 message: new vscode.MarkdownString(
@@ -70,6 +76,8 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                     `- **File**: \`${fileName}\`\n` +
                     `- **Line**: ${position.line + 1}\n` +
                     `- **Column**: ${position.character + 1}` +
+                    (include ? `\n- **Include**: \`${include}\`` : '') +
+                    (exclude ? `\n- **Exclude**: \`${exclude}\`` : '') +
                     (filter ? `\n\nFilter: ${filter}` : '')
                 ),
             },
@@ -80,7 +88,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
         options: vscode.LanguageModelToolInvocationOptions<ITextDocumentReferencesParams>,
         _token: vscode.CancellationToken
     ): Promise<vscode.LanguageModelToolResult> {
-        const { uri, position, symbolName, sourceLine, filter } = options.input;
+        const { uri, position, symbolName, sourceLine, include, exclude, filter } = options.input;
 
         // Create a file cache for this invocation to avoid repeated file reads
         const fileCache = new ScopedFileCache();
@@ -113,7 +121,26 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
             const referenceSearchElapsed = Date.now() - referenceSearchStart;
             log(`Reference search took ${referenceSearchElapsed}ms for: ${symbolName}`);
 
-            const verifiedReferences = await this.verifyReferences(references, symbolName, fileCache);
+            let verifiedReferences = await this.verifyReferences(references, symbolName, fileCache);
+
+            // Apply include/exclude glob filtering on file paths
+            if (include || exclude) {
+                const includePatterns = include ? include.split(',').map(p => p.trim()).filter(p => p) : [];
+                const excludePatterns = exclude ? exclude.split(',').map(p => p.trim()).filter(p => p) : [];
+                const includeRegexes = includePatterns.map(p => picomatch.makeRe(p, { windows: true }));
+                const excludeRegexes = excludePatterns.map(p => picomatch.makeRe(p, { windows: true }));
+
+                verifiedReferences = verifiedReferences.filter(ref => {
+                    const refPath = ref.uri.fsPath;
+                    if (includeRegexes.length > 0 && !includeRegexes.some(re => re.test(refPath))) {
+                        return false;
+                    }
+                    if (excludeRegexes.length > 0 && excludeRegexes.some(re => re.test(refPath))) {
+                        return false;
+                    }
+                    return true;
+                });
+            }
 
             const consolidatedReferences = await this.consolidateReferences(
                 verifiedReferences,

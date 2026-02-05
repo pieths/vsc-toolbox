@@ -138,9 +138,19 @@ export class TestLanguageModelToolCommand {
         // Get the source line
         const sourceLine = document.lineAt(position.line).text;
 
+        const include = await vscode.window.showInputBox({
+            prompt: 'Enter include glob pattern(s) - comma-separated (or leave empty for all files)',
+            placeHolder: 'e.g., **/*.cc, **/media/**',
+        });
+
+        const exclude = await vscode.window.showInputBox({
+            prompt: 'Enter exclude glob pattern(s) - comma-separated (or leave empty)',
+            placeHolder: 'e.g., **/test/**, **/*mojom*',
+        });
+
         const filter = await vscode.window.showInputBox({
-            prompt: 'Enter filter criteria (or leave empty for no filter)',
-            placeHolder: 'e.g., only test files, exclude third_party, only call sites',
+            prompt: 'Enter natural language filter criteria (or leave empty for no filter)',
+            placeHolder: 'e.g., only call sites, exclude declarations',
         });
 
         return {
@@ -151,6 +161,8 @@ export class TestLanguageModelToolCommand {
             },
             symbolName,
             sourceLine,
+            include: include || undefined,
+            exclude: exclude || undefined,
             filter: filter || undefined,
         };
     }

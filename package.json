@@ -193,9 +193,17 @@
               "type": "string",
               "description": "The complete source line containing the symbol (used to verify the exact location)"
             },
+            "include": {
+              "type": "string",
+              "description": "Optional glob pattern(s) to include only matching file paths. Comma-separated for multiple patterns. Uses VS Code/picomatch glob syntax. Examples: '**/*.cc' (only .cc files), '**/media/**' (files in media directories), '**/*.cc, **/*.h' (both .cc and .h files). If not specified, all indexed files are searched."
+            },
+            "exclude": {
+              "type": "string",
+              "description": "Optional glob pattern(s) to exclude matching file paths. Comma-separated for multiple patterns. Applied after include filter. Examples: '**/test/**' (exclude test directories), '**/*mojom*' (exclude mojom files), '**/test/**, **/*_unittest.cc' (exclude tests). Common exclusions: test files, mojom files, third_party."
+            },
             "filter": {
               "type": "string",
-              "description": "Optional natural language filter to include or exclude references from results. Can filter by file paths, file types, directory names, reference type, or code context. Examples: 'only references in test files', 'exclude test files', 'only .cc files', 'only files in src/media/', 'exclude third_party and out directories', 'only call sites (exclude declarations)', 'only assignments', 'references in classes starting with Media', 'exclude generated code', 'only header files'. Combine multiple criteria: 'only call sites in .cc files, exclude tests'. A common filter is to remove test files and mojom files since these files usually are unnecessary noise."
+              "description": "Optional natural language filter to include or exclude references AFTER finding them. Use for complex semantic filtering that requires AI reasoning. Examples: 'only call sites (exclude declarations)', 'only assignments', 'only references in class methods', 'exclude forward declarations', 'only references where the symbol is passed as a parameter'. For simple path filtering, prefer using include/exclude instead as they are faster."
             }
           },
           "required": [
