@@ -224,35 +224,44 @@ export class CacheManager {
 
         // Batch index all invalid files
         if (toIndex.length > 0) {
-            if (!this.threadPool) {
-                warn('Content index: Cannot ensure valid - thread pool not set');
-                return result;
-            }
-
-            const inputs: IndexInput[] = toIndex.map(fi => ({
-                type: 'index' as const,
-                filePath: fi.getFilePath(),
-                ctagsPath: this.ctagsPath,
-                tagsPath: fi.getTagsPath()  // Now always available
-            }));
-
-            const startTime = Date.now();
-            const outputs = await this.threadPool.indexAll(inputs);
-            const elapsed = Date.now() - startTime;
-
-            let successCount = 0;
-            for (const output of outputs) {
-                if (output.tagsPath && !output.error) {
-                    successCount++;
-                }
-            }
-
-            if (successCount > 0) {
-                log(`Content index: Indexed ${successCount} files in ${elapsed}ms`);
-            }
+            await this.indexFiles(toIndex);
         }
 
         return result;
+    }
+
+    /**
+     * Index a batch of FileIndex instances.
+     *
+     * @param toIndex - Array of FileIndex instances to index
+     */
+    private async indexFiles(toIndex: FileIndex[]): Promise<void> {
+        if (!this.threadPool) {
+            warn('Content index: Cannot ensure valid - thread pool not set');
+            return;
+        }
+
+        const inputs: IndexInput[] = toIndex.map(fi => ({
+            type: 'index' as const,
+            filePath: fi.getFilePath(),
+            ctagsPath: this.ctagsPath,
+            tagsPath: fi.getTagsPath()
+        }));
+
+        const startTime = Date.now();
+        const outputs = await this.threadPool.indexAll(inputs);
+        const elapsed = Date.now() - startTime;
+
+        let successCount = 0;
+        for (const output of outputs) {
+            if (output.tagsPath && !output.error) {
+                successCount++;
+            }
+        }
+
+        if (successCount > 0) {
+            log(`Content index: Indexed ${successCount} files in ${elapsed}ms`);
+        }
     }
 
     /**
