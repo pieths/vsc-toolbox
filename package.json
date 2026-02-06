@@ -59,6 +59,18 @@
           "default": true,
           "description": "Enable VSC Toolbox"
         },
+        "vscToolbox.logLevel": {
+          "type": "string",
+          "default": "info",
+          "enum": ["debug", "info", "warn", "error"],
+          "enumDescriptions": [
+            "Show all messages including debug",
+            "Show info, warning, and error messages",
+            "Show warning and error messages only",
+            "Show error messages only"
+          ],
+          "description": "Controls the minimum log level for the Output panel."
+        },
         "vscToolbox.searchUrls": {
           "type": "array",
           "default": [
