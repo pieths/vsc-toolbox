@@ -173,16 +173,18 @@ export class FileIndex {
 
     /**
      * Compute the deterministic tags file path for this source file.
-     * Uses MD5 hash of the full path to avoid conflicts.
+     * Uses SHA-256 hash of the full path to avoid conflicts.
      */
     private computeTagsPath(cacheDir: string): string {
-        const hash = crypto.createHash('md5')
+        const hash = crypto.createHash('sha256')
             .update(this.filePath)
             .digest('hex')
             .substring(0, 16)
             .toUpperCase();
         const fileName = path.basename(this.filePath);
-        return path.join(cacheDir, `${fileName}.${hash}.tags`);
+        const firstChar = fileName[0]?.toLowerCase() ?? '_';
+        const subDir = firstChar >= 'a' && firstChar <= 'z' ? firstChar : '_';
+        return path.join(cacheDir, subDir, `${fileName}.${hash}.tags`);
     }
 
     /**

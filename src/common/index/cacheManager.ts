@@ -61,9 +61,12 @@ export class CacheManager {
             ? path.join(workspaceFolder.uri.fsPath, '.cache', 'vsctoolbox', 'index')
             : '';
 
-        // Ensure cache directory exists
+        // Ensure cache directory and a-z subdirectories exist
         if (this.cacheDir) {
-            await fs.promises.mkdir(this.cacheDir, { recursive: true });
+            const alphabet = 'abcdefghijklmnopqrstuvwxyz';
+            // Create a subdirectory for each letter plus '_' for non-alpha filenames
+            const subdirs = [...alphabet, '_'].map(ch => path.join(this.cacheDir, ch));
+            await Promise.all(subdirs.map(dir => fs.promises.mkdir(dir, { recursive: true })));
         }
 
         log(`Content index: includePaths =\n${JSON.stringify(includePaths, null, 2)}`);
