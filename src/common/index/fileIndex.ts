@@ -202,16 +202,40 @@ export class FileIndex {
 
     /**
      * Check if the tags file exists and is newer than the source file.
-     * Uses synchronous stat calls for simplicity - stat is fast (~0.05ms).
      */
     isValid(): boolean {
         try {
             const sourceMtime = fs.statSync(this.filePath).mtimeMs;
             const tagsMtime = fs.statSync(this.tagsPath).mtimeMs;
-            return tagsMtime >= sourceMtime;
+            if (tagsMtime >= sourceMtime) {
+                return true; // Tags file is up-to-date
+            } else {
+                // This is copied from the worker thread - if modifying,
+                // also update the same logic there.
+
+                // Read source file and compute SHA256 hash
+                const sourceContent = fs.readFileSync(this.filePath);
+                const hash = crypto.createHash('sha256').update(sourceContent).digest('hex');
+
+                const HASH_LINE_LEN = 96;
+                const HASH_OFFSET = 29; // offset to the start of the 64-char hex hash
+                const fileSize = fs.statSync(this.tagsPath).size;
+                if (fileSize >= HASH_LINE_LEN) {
+                    const fd = fs.openSync(this.tagsPath, 'r');
+                    const buf = Buffer.alloc(HASH_LINE_LEN);
+                    fs.readSync(fd, buf, 0, HASH_LINE_LEN, fileSize - HASH_LINE_LEN);
+                    fs.closeSync(fd);
+                    const storedHash = buf.toString('utf8').substring(HASH_OFFSET, HASH_OFFSET + 64);
+                    if (storedHash === hash) {
+                        return true;
+                    }
+                }
+            }
         } catch {
             return false;  // Tags file doesn't exist or other error
         }
+
+        return false; // Tags file is stale
     }
 
     /**
@@ -228,18 +252,12 @@ export class FileIndex {
      * @returns Array of Tag objects, or null if not valid or parsing fails
      */
     private async getTags(): Promise<Tag[] | null> {
-        // Get mtimes - also serves as existence/validity check
-        let sourceMtime: number;
-        let tagsMtime: number;
-        try {
-            sourceMtime = fs.statSync(this.filePath).mtimeMs;
-            tagsMtime = fs.statSync(this.tagsPath).mtimeMs;
-            if (tagsMtime < sourceMtime) {
-                return null;  // Tags file is stale
-            }
-        } catch {
-            return null;  // File doesn't exist or other error
+        if (!this.isValid()) {
+            return null;
         }
+
+        // Get tags file mtime for cache staleness check
+        const tagsMtime = fs.statSync(this.tagsPath).mtimeMs;
 
         // Check LRU cache - pass tagsMtime for staleness check
         const cached = tagsCache.get(this.tagsPath, tagsMtime);
