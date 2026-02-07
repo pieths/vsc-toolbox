@@ -131,6 +131,15 @@ export class CacheManager {
                 }
             }
 
+            // Wait briefly before indexing to allow VS Code and other extensions
+            // to finish any post-startup file modifications that would trigger
+            // unnecessary re-indexing (e.g., formatOnSave, insertFinalNewline).
+            await new Promise(resolve => setTimeout(resolve, 10000));
+
+            // Index all discovered files with ctags
+            const allFiles = Array.from(this.cache.values());
+            await this.indexFiles(allFiles);
+
             this.indexingComplete = true;
             log(`Content index: Added ${this.cache.size} files to cache`);
         } catch (err) {
