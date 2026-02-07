@@ -335,6 +335,7 @@ export class CacheManager {
         if (!this.cache.has(normalizedPath) && this.fileExtensions.includes(ext)) {
             const fileIndex = new FileIndex(filePath, this.cacheDir);
             this.cache.set(normalizedPath, fileIndex);
+            this.indexFiles([fileIndex]);
             log(`Content index: Added new file ${filePath}`);
         }
     }
