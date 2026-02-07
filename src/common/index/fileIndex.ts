@@ -220,7 +220,6 @@ export class FileIndex {
      */
     invalidate(): void {
         tagsCache.delete(this.tagsPath);
-        fs.promises.unlink(this.tagsPath).catch(() => { });
     }
 
     /**

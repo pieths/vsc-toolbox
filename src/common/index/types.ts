@@ -124,11 +124,25 @@ export interface IndexInput {
 }
 
 /**
+ * Status of an indexing operation
+ */
+export const enum IndexStatus {
+    /** File was indexed (ctags was run and tags file was created) */
+    Indexed,
+    /** File was skipped (tags file was already up-to-date) */
+    Skipped,
+    /** Indexing failed (error occurred) */
+    Failed,
+}
+
+/**
  * Output data returned from a worker thread after indexing
  */
 export interface IndexOutput {
     /** Discriminator for message type */
     type: 'index';
+    /** Final status of the indexing operation */
+    status: IndexStatus;
     /** Absolute file path that was indexed */
     filePath: string;
     /** Path to the generated tags file, or null on error */

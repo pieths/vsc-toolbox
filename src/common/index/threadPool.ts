@@ -3,7 +3,7 @@
 
 import { Worker } from 'worker_threads';
 import * as path from 'path';
-import { SearchInput, SearchOutput, IndexInput, IndexOutput } from './types';
+import { SearchInput, SearchOutput, IndexInput, IndexOutput, IndexStatus } from './types';
 import { log, error } from '../logger';
 
 /**
@@ -96,6 +96,7 @@ export class ThreadPool {
                 if (task.type === 'index') {
                     task.resolve({
                         type: 'index',
+                        status: IndexStatus.Failed,
                         filePath: task.input.filePath,
                         tagsPath: null,
                         error: error.message
@@ -210,6 +211,7 @@ export class ThreadPool {
         if (this.disposed) {
             return Promise.resolve({
                 type: 'index',
+                status: IndexStatus.Failed,
                 filePath: input.filePath,
                 tagsPath: null,
                 error: 'Thread pool has been disposed'
@@ -226,10 +228,10 @@ export class ThreadPool {
             this.taskQueue.push({ type: 'index', input, resolve, reject });
             this.processNextTask();
         }).then(output => {
-            // Log once per file when indexing completes
-            if (output.tagsPath && !output.error) {
+            if (output.status === IndexStatus.Indexed) {
+                // Log once per file when indexing completes
                 log(`Content index: Indexed ${output.filePath}`);
-            } else if (output.error) {
+            } else if (output.status == IndexStatus.Failed && output.error) {
                 error(`Content index: Failed to index ${output.filePath}: ${output.error}`);
             }
             return output;
@@ -256,6 +258,7 @@ export class ThreadPool {
         if (this.disposed) {
             return inputs.map(input => ({
                 type: 'index' as const,
+                status: IndexStatus.Failed,
                 filePath: input.filePath,
                 tagsPath: null,
                 error: 'Thread pool has been disposed'
@@ -326,6 +329,7 @@ export class ThreadPool {
             if (task.type === 'index') {
                 task.resolve({
                     type: 'index',
+                    status: IndexStatus.Failed,
                     filePath: task.input.filePath,
                     tagsPath: null,
                     error: 'Thread pool disposed'
