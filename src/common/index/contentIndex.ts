@@ -17,6 +17,7 @@ import {
     SearchResults
 } from './types';
 import { log, warn, error } from '../logger';
+import { LlamaServer } from './llamaServer';
 
 /**
  * Get the content index configuration from VS Code settings.
@@ -50,6 +51,7 @@ export class ContentIndex {
     private cacheManager: CacheManager;
     private threadPool: ThreadPool | null = null;
     private fileWatcher: FileWatcher | null = null;
+    private llamaServer: LlamaServer;
     private statusBarItem: vscode.StatusBarItem | null = null;
     private initialized: boolean = false;
     private disposed: boolean = false;
@@ -59,6 +61,7 @@ export class ContentIndex {
      */
     private constructor() {
         this.cacheManager = new CacheManager();
+        this.llamaServer = new LlamaServer();
     }
 
     /**
@@ -113,6 +116,9 @@ export class ContentIndex {
         this.statusBarItem.tooltip = "VSC Toolbox: Content index is building";
         this.statusBarItem.show();
 
+        // Initialize llama server for embeddings
+        this.llamaServer.initialize(context);
+
         // Create components
         this.threadPool = new ThreadPool(workerThreads);
         this.fileWatcher = new FileWatcher(this.cacheManager, includePaths, fileExtensions);
@@ -132,13 +138,21 @@ export class ContentIndex {
         );
 
         // Start background indexing (fire-and-forget, non-blocking)
-        this.cacheManager.initialize(includePaths, fileExtensions, ctagsPath, this.threadPool).then(() => {
+        this.cacheManager.initialize(includePaths, fileExtensions, ctagsPath, this.threadPool).then(async () => {
             const fileCount = this.cacheManager.getFileCount();
             // Hide status bar and show temporary notification
             this.statusBarItem?.dispose();
             this.statusBarItem = null;
             vscode.window.showInformationMessage(`VSC Toolbox: Content index: Indexed ${fileCount} files`);
             log('ContentIndex: Indexing complete');
+
+            // Start llama-server for embeddings (downloads model on first run)
+            const started = await this.llamaServer.start();
+            if (started) {
+                log('ContentIndex: LlamaServer started');
+            } else {
+                warn('ContentIndex: LlamaServer failed to start (embeddings unavailable)');
+            }
         }).catch(err => {
             // Hide status bar and show error notification
             this.statusBarItem?.dispose();
@@ -314,6 +328,8 @@ export class ContentIndex {
 
         this.threadPool?.dispose();
         this.threadPool = null;
+
+        this.llamaServer.stop();
 
         this.statusBarItem?.dispose();
         this.statusBarItem = null;
