@@ -270,11 +270,42 @@ async function indexFile(input: IndexInput): Promise<IndexOutput> {
 
 // ── Chunking constants and helpers ──────────────────────────────────────────
 
+// TODO: add lines above container to fix scenarios like this:
+//
+// // Returns an "ext-profile" feature query (with ending comma) for a video codec.
+// // Returns an empty string if "ext-profile" is not needed.
+// std::string GetExtProfile(VideoCodec codec) {
+//   if (codec == VideoCodec::kDolbyVision)
+//     return "ext-profile=dvhe.05,";
+//
+//   return "";
+// }
+//
+// Produced this output:
+//
+// ── chunk 4 (lines 177-179) ──
+// file: D:\cs\src\media\mojo\services\media_foundation_service.cc
+//
+//
+// // Returns an "ext-profile" feature query (with ending comma) for a video codec.
+// // Returns an empty string if "ext-profile" is not needed.
+//
+// ── chunk 5 (lines 180-185) ──
+// file: D:\cs\src\media\mojo\services\media_foundation_service.cc
+// function: media::(anonymous namespace)::GetExtProfile
+//
+// std::string GetExtProfile(VideoCodec codec) {
+// if (codec == VideoCodec::kDolbyVision)
+//     return "ext-profile=dvhe.05,";
+//
+// return "";
+// }
+
 /** Maximum number of lines per chunk for embedding */
-const MAX_CHUNK_LINES = 50;
+const MAX_CHUNK_LINES = 150;
 
 /** Number of overlapping lines between consecutive chunks (~20% of chunk size) */
-const CHUNK_OVERLAP_LINES = 10;
+const CHUNK_OVERLAP_LINES = 15;
 
 /** C/C++ file extensions that use ctags-based chunking */
 const CPP_EXTENSIONS = new Set([
@@ -291,15 +322,27 @@ const CHUNK_CONTAINER_KINDS = new Set([
 
 /** Minimal tag entry used for chunking */
 interface TagEntry {
+    name: string;
     line: number;
     end: number;
     kind: string;
+    scope?: string;
+    signature?: string;
+    typeref?: string;
 }
 
-/** A 1-based inclusive line range */
-interface LineRange {
+/** A top-level container range with associated tag metadata */
+interface ContainerRange {
+    /** 1-based start line */
     startLine: number;
+    /** 1-based end line (inclusive) */
     endLine: number;
+    /** ctags kind of the outermost container (e.g., "function", "class") */
+    kind: string;
+    /** Fully qualified name of the outermost container */
+    qualifiedName: string;
+    /** Function/method signature, if available */
+    signature?: string;
 }
 
 /**
@@ -325,9 +368,13 @@ function parseContainerTags(tagsContent: string): TagEntry[] {
             if (!CHUNK_CONTAINER_KINDS.has(entry.kind)) continue;
 
             tags.push({
+                name: entry.name,
                 line: entry.line,
                 end: entry.end,
                 kind: entry.kind,
+                scope: entry.scope,
+                signature: entry.signature,
+                typeref: entry.typeref,
             });
         } catch {
             continue;
@@ -337,22 +384,79 @@ function parseContainerTags(tagsContent: string): TagEntry[] {
     return tags;
 }
 
+// Regex for replacing anonymous namespace markers (compiled once)
+const ANON_NAMESPACE_REGEX = /__anon[a-fA-F0-9]+/g;
+
+/**
+ * Replace anonymous namespace markers (e.g., __anon1234abcd) with "(anonymous namespace)".
+ * ctags uses these markers for unnamed namespaces in C++.
+ */
+function normalizeScope(scope: string): string {
+    return scope.replace(ANON_NAMESPACE_REGEX, '(anonymous namespace)');
+}
+
+/**
+ * Build the fully qualified name for a tag entry.
+ * Combines scope (if present) with the tag name using "::" separator.
+ * Anonymous namespace markers are normalized to "(anonymous namespace)".
+ */
+function buildQualifiedName(tag: TagEntry): string {
+    const name = normalizeScope(tag.name);
+    if (tag.scope) {
+        return `${normalizeScope(tag.scope)}::${name}`;
+    }
+    return name;
+}
+
+/**
+ * Build the full signature string for a tag entry.
+ * Combines return type (from typeref), name, and parameters (from signature).
+ * Example: "std::string GetExtProfile(VideoCodec codec)"
+ *
+ * @param tag - The tag entry to build the signature for
+ * @returns The full signature string, e.g. "int add(int a, int b)" or "add(int a, int b)"
+ */
+function buildSignature(tag: TagEntry): string {
+    let returnType = '';
+    if (tag.typeref) {
+        // typeref is typically "typename:ReturnType" or similar
+        const colonIndex = tag.typeref.indexOf(':');
+        if (colonIndex !== -1) {
+            returnType = tag.typeref.substring(colonIndex + 1);
+        } else {
+            returnType = tag.typeref;
+        }
+    }
+
+    const params = tag.signature || '';
+    return returnType
+        ? `${returnType} ${tag.name}${params}`
+        : `${tag.name}${params}`;
+}
+
 /**
  * Find top-level (non-nested) container ranges from a set of tags.
  * Overlapping or nested containers are merged into the outermost range.
+ * Each range retains the metadata (kind, name, signature) of the outermost container.
  *
  * @param tags - Array of tag entries sorted by start line
- * @returns Array of non-overlapping line ranges in document order
+ * @returns Array of non-overlapping container ranges in document order
  */
-function findTopLevelRanges(tags: TagEntry[]): LineRange[] {
+function findTopLevelRanges(tags: TagEntry[]): ContainerRange[] {
     const sorted = tags.slice().sort((a, b) => a.line - b.line);
-    const topLevel: LineRange[] = [];
+    const topLevel: ContainerRange[] = [];
     let currentEnd = 0;
 
     for (const tag of sorted) {
         if (tag.line > currentEnd) {
             // Starts after the current top-level range
-            topLevel.push({ startLine: tag.line, endLine: tag.end });
+            topLevel.push({
+                startLine: tag.line,
+                endLine: tag.end,
+                kind: tag.kind,
+                qualifiedName: buildQualifiedName(tag),
+                signature: buildSignature(tag),
+            });
             currentEnd = tag.end;
         } else if (tag.end > currentEnd) {
             // Overlaps and extends beyond – merge into current range
@@ -407,6 +511,62 @@ function splitIntoChunks(
     return chunks;
 }
 
+/** ctags kinds that can have a signature line in non-first chunk prefixes */
+const SIGNATURE_KINDS = new Set(['function', 'method', 'prototype']);
+
+/**
+ * Compute the context prefix for a chunk.
+ *
+ * The prefix provides embedding context so that each chunk can be understood
+ * in isolation. The format is:
+ *   Line 1: file: <filePath>
+ *   Line 2: <ctagsKind>: <fullyQualifiedName>    (only if inside a container)
+ *   Line 3: signature: <signature>               (only for non-first chunks
+ *                                                  of function/method/prototype)
+ *   Blank line separator
+ *
+ * @param filePath - Absolute path of the source file
+ * @param container - Container metadata, or undefined if the chunk is outside any container
+ * @param isFirstChunk - Whether this is the first chunk of the container
+ * @returns The prefix string (including trailing blank line)
+ */
+function computeChunkPrefix(
+    filePath: string,
+    container?: { kind: string; qualifiedName: string; signature?: string },
+    isFirstChunk: boolean = true,
+): string {
+    let prefix = `file: ${filePath}`;
+
+    if (container) {
+        prefix += `\n${container.kind}: ${container.qualifiedName}`;
+
+        if (!isFirstChunk && SIGNATURE_KINDS.has(container.kind) && container.signature) {
+            prefix += `\nsignature: ${container.signature}`;
+        }
+    }
+
+    return prefix + '\n\n';
+}
+
+/**
+ * Prepend a context prefix to each chunk's text.
+ *
+ * @param chunks - Array of chunks to modify in place
+ * @param filePath - Absolute path of the source file
+ * @param container - Container metadata, or undefined if chunks are outside any container
+ */
+function prependPrefixes(
+    chunks: Chunk[],
+    filePath: string,
+    container?: { kind: string; qualifiedName: string; signature?: string },
+): void {
+    for (let i = 0; i < chunks.length; i++) {
+        const isFirstChunk = i === 0;
+        const prefix = computeChunkPrefix(filePath, container, isFirstChunk);
+        chunks[i].text = prefix + chunks[i].text;
+    }
+}
+
 /**
  * Compute text chunks for a C++ file using ctags container boundaries.
  * Containers (functions, classes, etc.) are kept together when possible.
@@ -430,18 +590,24 @@ function computeChunksWithCtags(
     for (const range of topLevelRanges) {
         // Chunk the gap before this container (includes, forward decls, etc.)
         if (cursor < range.startLine) {
-            chunks.push(...splitIntoChunks(lines, cursor, range.startLine - 1, MAX_CHUNK_LINES));
+            const gapChunks = splitIntoChunks(lines, cursor, range.startLine - 1, MAX_CHUNK_LINES);
+            prependPrefixes(gapChunks, input.filePath);
+            chunks.push(...gapChunks);
         }
 
         // Chunk the container itself
-        chunks.push(...splitIntoChunks(lines, range.startLine, range.endLine, MAX_CHUNK_LINES));
+        const containerChunks = splitIntoChunks(lines, range.startLine, range.endLine, MAX_CHUNK_LINES);
+        prependPrefixes(containerChunks, input.filePath, range);
+        chunks.push(...containerChunks);
 
         cursor = range.endLine + 1;
     }
 
     // Chunk any trailing lines after the last container
     if (cursor <= totalLines) {
-        chunks.push(...splitIntoChunks(lines, cursor, totalLines, MAX_CHUNK_LINES));
+        const trailingChunks = splitIntoChunks(lines, cursor, totalLines, MAX_CHUNK_LINES);
+        prependPrefixes(trailingChunks, input.filePath);
+        chunks.push(...trailingChunks);
     }
 
     return {
@@ -464,6 +630,7 @@ function computeChunksSimple(
     lines: string[],
 ): ComputeChunksOutput {
     const chunks = splitIntoChunks(lines, 1, lines.length, MAX_CHUNK_LINES);
+    prependPrefixes(chunks, input.filePath);
 
     return {
         type: 'computeChunks',
