@@ -152,6 +152,44 @@ export interface IndexOutput {
 }
 
 /**
+ * A single chunk of text from a file, defined by line range.
+ */
+export interface Chunk {
+    /** 1-based start line of the chunk */
+    startLine: number;
+    /** 1-based end line of the chunk (inclusive) */
+    endLine: number;
+    /** Full text content from startLine to endLine (inclusive) */
+    text: string;
+}
+
+/**
+ * Input data sent to a worker thread for computing chunks
+ */
+export interface ComputeChunksInput {
+    /** Discriminator for message type */
+    type: 'computeChunks';
+    /** Absolute file path to the source file */
+    filePath: string;
+    /** Absolute path to the corresponding ctags tags file */
+    ctagsPath: string;
+}
+
+/**
+ * Output data returned from a worker thread after computing chunks
+ */
+export interface ComputeChunksOutput {
+    /** Discriminator for message type */
+    type: 'computeChunks';
+    /** Absolute file path that was processed */
+    filePath: string;
+    /** Array of text chunks extracted from the file */
+    chunks: Chunk[];
+    /** Error message if chunking failed */
+    error?: string;
+}
+
+/**
  * Configuration for the content index functionality
  */
 export interface ContentIndexConfig {

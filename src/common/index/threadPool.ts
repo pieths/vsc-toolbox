@@ -3,7 +3,15 @@
 
 import { Worker } from 'worker_threads';
 import * as path from 'path';
-import { SearchInput, SearchOutput, IndexInput, IndexOutput, IndexStatus } from './types';
+import {
+    SearchInput,
+    SearchOutput,
+    IndexInput,
+    IndexOutput,
+    IndexStatus,
+    ComputeChunksInput,
+    ComputeChunksOutput,
+} from './types';
 import { log, error } from '../logger';
 
 /**
@@ -26,7 +34,17 @@ interface QueuedIndexTask {
     reject: (error: Error) => void;
 }
 
-type QueuedTask = QueuedSearchTask | QueuedIndexTask;
+/**
+ * Represents a compute chunks task in the queue waiting to be processed
+ */
+interface QueuedComputeChunksTask {
+    type: 'computeChunks';
+    input: ComputeChunksInput;
+    resolve: (output: ComputeChunksOutput) => void;
+    reject: (error: Error) => void;
+}
+
+type QueuedTask = QueuedSearchTask | QueuedIndexTask | QueuedComputeChunksTask;
 
 /**
  * ThreadPool manages a pool of worker threads for parallel content
@@ -63,7 +81,7 @@ export class ThreadPool {
 
         const worker = new Worker(workerPath);
 
-        worker.on('message', (output: SearchOutput | IndexOutput) => {
+        worker.on('message', (output: SearchOutput | IndexOutput | ComputeChunksOutput) => {
             // Get the task that was being processed
             const task = this.workerTaskMap.get(worker);
             this.workerTaskMap.delete(worker);
@@ -72,6 +90,8 @@ export class ThreadPool {
                 // Type assertion based on task type
                 if (task.type === 'index') {
                     task.resolve(output as IndexOutput);
+                } else if (task.type === 'computeChunks') {
+                    task.resolve(output as ComputeChunksOutput);
                 } else {
                     task.resolve(output as SearchOutput);
                 }
@@ -99,6 +119,13 @@ export class ThreadPool {
                         status: IndexStatus.Failed,
                         filePath: task.input.filePath,
                         tagsPath: null,
+                        error: error.message
+                    });
+                } else if (task.type === 'computeChunks') {
+                    task.resolve({
+                        type: 'computeChunks',
+                        filePath: task.input.filePath,
+                        chunks: [],
                         error: error.message
                     });
                 } else {
@@ -269,6 +296,47 @@ export class ThreadPool {
     }
 
     /**
+     * Submit a compute chunks task to the pool.
+     *
+     * @param input - Compute chunks input containing file path and ctags path
+     * @returns Promise that resolves with the computed chunks
+     */
+    private submitComputeChunks(input: ComputeChunksInput): Promise<ComputeChunksOutput> {
+        if (this.disposed) {
+            return Promise.resolve({
+                type: 'computeChunks',
+                filePath: input.filePath,
+                chunks: [],
+                error: 'Thread pool has been disposed'
+            });
+        }
+
+        return new Promise((resolve, reject) => {
+            this.taskQueue.push({ type: 'computeChunks', input, resolve, reject });
+            this.processNextTask();
+        });
+    }
+
+    /**
+     * Compute chunks for multiple files in parallel.
+     *
+     * @param inputs - Array of compute chunks inputs to process
+     * @returns Promise that resolves with all computed chunks
+     */
+    async computeChunksAll(inputs: ComputeChunksInput[]): Promise<ComputeChunksOutput[]> {
+        if (this.disposed) {
+            return inputs.map(input => ({
+                type: 'computeChunks' as const,
+                filePath: input.filePath,
+                chunks: [],
+                error: 'Thread pool has been disposed'
+            }));
+        }
+
+        return Promise.all(inputs.map(input => this.submitComputeChunks(input)));
+    }
+
+    /**
      * Search multiple files in parallel.
      *
      * @param inputs - Array of search inputs to process
@@ -332,6 +400,13 @@ export class ThreadPool {
                     status: IndexStatus.Failed,
                     filePath: task.input.filePath,
                     tagsPath: null,
+                    error: 'Thread pool disposed'
+                });
+            } else if (task.type === 'computeChunks') {
+                task.resolve({
+                    type: 'computeChunks',
+                    filePath: task.input.filePath,
+                    chunks: [],
                     error: 'Thread pool disposed'
                 });
             } else {

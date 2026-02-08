@@ -11,6 +11,7 @@
 
 import { parentPort } from 'worker_threads';
 import * as fs from 'fs';
+import * as path from 'path';
 import * as crypto from 'crypto';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -21,6 +22,9 @@ import type {
     SearchOutput,
     IndexInput,
     IndexOutput,
+    Chunk,
+    ComputeChunksInput,
+    ComputeChunksOutput,
 } from './types';
 
 const execFileAsync = promisify(execFile);
@@ -264,11 +268,258 @@ async function indexFile(input: IndexInput): Promise<IndexOutput> {
     }
 }
 
+// ── Chunking constants and helpers ──────────────────────────────────────────
+
+/** Maximum number of lines per chunk for embedding */
+const MAX_CHUNK_LINES = 50;
+
+/** Number of overlapping lines between consecutive chunks (~20% of chunk size) */
+const CHUNK_OVERLAP_LINES = 10;
+
+/** C/C++ file extensions that use ctags-based chunking */
+const CPP_EXTENSIONS = new Set([
+    '.c', '.cc', '.cpp', '.cxx',
+    '.h', '.hh', '.hpp', '.hxx',
+]);
+
+/** ctags kinds that represent structural containers */
+// TODO: should prototype be removed? It's creating a lot of one liners.
+const CHUNK_CONTAINER_KINDS = new Set([
+    'class', 'struct', 'union', 'function',
+    'method', 'enum', 'interface', 'prototype'
+]);
+
+/** Minimal tag entry used for chunking */
+interface TagEntry {
+    line: number;
+    end: number;
+    kind: string;
+}
+
+/** A 1-based inclusive line range */
+interface LineRange {
+    startLine: number;
+    endLine: number;
+}
+
+/**
+ * Parse a ctags JSON file and return container entries that have an end line.
+ *
+ * @param tagsContent - Raw content of the ctags JSON file
+ * @returns Array of tag entries with line ranges
+ */
+function parseContainerTags(tagsContent: string): TagEntry[] {
+    const tags: TagEntry[] = [];
+
+    for (const line of tagsContent.split('\n')) {
+        if (!line.trim()) continue;
+
+        // Fast-skip pseudo-tags and hash lines
+        if (line.startsWith('{"_type": "ptag"')) continue;
+        if (line.startsWith('{"_type": "sha256"')) continue;
+
+        try {
+            const entry = JSON.parse(line);
+            if (entry._type !== 'tag') continue;
+            if (entry.end === undefined) continue;
+            if (!CHUNK_CONTAINER_KINDS.has(entry.kind)) continue;
+
+            tags.push({
+                line: entry.line,
+                end: entry.end,
+                kind: entry.kind,
+            });
+        } catch {
+            continue;
+        }
+    }
+
+    return tags;
+}
+
+/**
+ * Find top-level (non-nested) container ranges from a set of tags.
+ * Overlapping or nested containers are merged into the outermost range.
+ *
+ * @param tags - Array of tag entries sorted by start line
+ * @returns Array of non-overlapping line ranges in document order
+ */
+function findTopLevelRanges(tags: TagEntry[]): LineRange[] {
+    const sorted = tags.slice().sort((a, b) => a.line - b.line);
+    const topLevel: LineRange[] = [];
+    let currentEnd = 0;
+
+    for (const tag of sorted) {
+        if (tag.line > currentEnd) {
+            // Starts after the current top-level range
+            topLevel.push({ startLine: tag.line, endLine: tag.end });
+            currentEnd = tag.end;
+        } else if (tag.end > currentEnd) {
+            // Overlaps and extends beyond – merge into current range
+            topLevel[topLevel.length - 1].endLine = tag.end;
+            currentEnd = tag.end;
+        }
+        // Otherwise fully nested – skip
+    }
+
+    return topLevel;
+}
+
+/**
+ * Split a line range into chunks of at most `maxLines` lines with overlap.
+ * Empty (whitespace-only) chunks are discarded.
+ * When the remaining lines fit in a single chunk, no overlap is added.
+ *
+ * @param lines - Array of all lines in the file (0-based index)
+ * @param startLine - 1-based start line
+ * @param endLine - 1-based end line (inclusive)
+ * @param maxLines - Maximum lines per chunk
+ * @param overlap - Number of overlapping lines between consecutive chunks
+ * @returns Array of Chunk objects
+ */
+function splitIntoChunks(
+    lines: string[],
+    startLine: number,
+    endLine: number,
+    maxLines: number,
+    overlap: number = CHUNK_OVERLAP_LINES,
+): Chunk[] {
+    const chunks: Chunk[] = [];
+    const stride = maxLines - overlap;
+    let current = startLine;
+
+    while (current <= endLine) {
+        const chunkEnd = Math.min(current + maxLines - 1, endLine);
+        const text = lines.slice(current - 1, chunkEnd).join('\n');
+
+        if (text.trim()) {
+            chunks.push({ startLine: current, endLine: chunkEnd, text });
+        }
+
+        // If this chunk reached the end, we're done
+        if (chunkEnd >= endLine) {
+            break;
+        }
+
+        current += stride;
+    }
+
+    return chunks;
+}
+
+/**
+ * Compute text chunks for a C++ file using ctags container boundaries.
+ * Containers (functions, classes, etc.) are kept together when possible.
+ * Gaps between containers are chunked separately.
+ *
+ * @param input - Input containing file path and ctags path
+ * @param lines - Array of all lines in the file
+ * @returns Output with extracted chunks
+ */
+function computeChunksWithCtags(
+    input: ComputeChunksInput,
+    lines: string[],
+    tags: TagEntry[],
+): ComputeChunksOutput {
+    const totalLines = lines.length;
+    const topLevelRanges = findTopLevelRanges(tags);
+    const chunks: Chunk[] = [];
+
+    let cursor = 1; // 1-based current line
+
+    for (const range of topLevelRanges) {
+        // Chunk the gap before this container (includes, forward decls, etc.)
+        if (cursor < range.startLine) {
+            chunks.push(...splitIntoChunks(lines, cursor, range.startLine - 1, MAX_CHUNK_LINES));
+        }
+
+        // Chunk the container itself
+        chunks.push(...splitIntoChunks(lines, range.startLine, range.endLine, MAX_CHUNK_LINES));
+
+        cursor = range.endLine + 1;
+    }
+
+    // Chunk any trailing lines after the last container
+    if (cursor <= totalLines) {
+        chunks.push(...splitIntoChunks(lines, cursor, totalLines, MAX_CHUNK_LINES));
+    }
+
+    return {
+        type: 'computeChunks',
+        filePath: input.filePath,
+        chunks,
+    };
+}
+
+/**
+ * Compute text chunks for a non-C++ file using simple fixed-size splitting.
+ * No structural awareness – just splits into consecutive line groups.
+ *
+ * @param input - Input containing file path
+ * @param lines - Array of all lines in the file
+ * @returns Output with extracted chunks
+ */
+function computeChunksSimple(
+    input: ComputeChunksInput,
+    lines: string[],
+): ComputeChunksOutput {
+    const chunks = splitIntoChunks(lines, 1, lines.length, MAX_CHUNK_LINES);
+
+    return {
+        type: 'computeChunks',
+        filePath: input.filePath,
+        chunks,
+    };
+}
+
+/**
+ * Compute text chunks for a file.
+ * For C/C++ files the ctags file is parsed to produce structure-aware chunks.
+ * For all other files a simple fixed-size line split is used.
+ *
+ * @param input - Input containing file path and ctags path
+ * @returns Output with extracted chunks
+ */
+async function computeChunks(input: ComputeChunksInput): Promise<ComputeChunksOutput> {
+    try {
+        const content = await fs.promises.readFile(input.filePath, 'utf8');
+        const lines = content.split('\n');
+
+        const ext = path.extname(input.filePath).toLowerCase();
+
+        if (CPP_EXTENSIONS.has(ext)) {
+            // Try to read the ctags file; fall back to simple chunking if unavailable
+            try {
+                const tagsContent = await fs.promises.readFile(input.ctagsPath, 'utf8');
+                const tags = parseContainerTags(tagsContent);
+
+                if (tags.length > 0) {
+                    return computeChunksWithCtags(input, lines, tags);
+                }
+            } catch {
+                // Tags file missing or unreadable – fall through to simple chunking
+            }
+        }
+
+        return computeChunksSimple(input, lines);
+    } catch (error) {
+        return {
+            type: 'computeChunks',
+            filePath: input.filePath,
+            chunks: [],
+            error: error instanceof Error ? error.message : String(error),
+        };
+    }
+}
+
 // Listen for messages from the main thread
 if (parentPort) {
-    parentPort.on('message', async (input: SearchInput | IndexInput) => {
+    parentPort.on('message', async (input: SearchInput | IndexInput | ComputeChunksInput) => {
         if (input.type === 'index') {
             const output = await indexFile(input);
+            parentPort!.postMessage(output);
+        } else if (input.type === 'computeChunks') {
+            const output = await computeChunks(input);
             parentPort!.postMessage(output);
         } else {
             const output = await searchFile(input);
