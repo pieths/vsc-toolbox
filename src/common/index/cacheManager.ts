@@ -8,6 +8,7 @@ import picomatch from 'picomatch';
 import { FileIndex } from './fileIndex';
 import { ThreadPool } from './threadPool';
 import { IndexInput } from './types';
+import { LlamaServer } from './llamaServer';
 import { log, warn, error } from '../logger';
 
 /**
@@ -23,6 +24,7 @@ export class CacheManager {
     private ctagsPath: string = 'ctags';
     private cacheDir: string = '';
     private threadPool: ThreadPool | null = null;
+    private llamaServer: LlamaServer | null = null;
 
     /**
      * Normalize a file path for use as a cache key.
@@ -42,17 +44,20 @@ export class CacheManager {
      * @param fileExtensions - List of file extensions to include (e.g., '.cc', '.h')
      * @param ctagsPath - Path to the ctags executable
      * @param threadPool - Thread pool manager for indexing operations
+     * @param llamaServer - Llama server instance for computing embeddings
      */
     async initialize(
         includePaths: string[],
         fileExtensions: string[],
         ctagsPath: string,
-        threadPool: ThreadPool
+        threadPool: ThreadPool,
+        llamaServer: LlamaServer
     ): Promise<void> {
         this.includePaths = includePaths;
         this.fileExtensions = fileExtensions.map(ext => ext.toLowerCase());
         this.ctagsPath = ctagsPath;
         this.threadPool = threadPool;
+        this.llamaServer = llamaServer;
         this.indexingComplete = false;
 
         // Compute cache directory once from first workspace folder
@@ -133,11 +138,6 @@ export class CacheManager {
                     lastYield = Date.now();
                 }
             }
-
-            // Wait briefly before indexing to allow VS Code and other extensions
-            // to finish any post-startup file modifications that would trigger
-            // unnecessary re-indexing (e.g., formatOnSave, insertFinalNewline).
-            await new Promise(resolve => setTimeout(resolve, 10000));
 
             // Index all discovered files with ctags
             const allFiles = Array.from(this.cache.values());

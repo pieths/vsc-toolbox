@@ -88,13 +88,13 @@ export class ContentIndex {
     /**
      * Initialize the file index system.
      * Reads configuration from VS Code settings, starts worker threads,
-     * cache manager, and file watcher.
+     * cache manager, llama server and file watcher.
      * Returns immediately - indexing happens in the background.
      * Use isReady() to check if indexing is complete.
      *
      * @param context - VS Code extension context for registering disposables
      */
-    initialize(context: vscode.ExtensionContext): void {
+    async initialize(context: vscode.ExtensionContext): Promise<void> {
         if (this.initialized) {
             log('ContentIndex: Already initialized, skipping');
             return;
@@ -107,59 +107,63 @@ export class ContentIndex {
 
         this.initialized = true; // Mark as initialized immediately to prevent re-entry
 
-        const config = getConfig();
-        const { workerThreads, includePaths, fileExtensions, ctagsPath } = config;
+        try {
+            const config = getConfig();
+            const { workerThreads, includePaths, fileExtensions, ctagsPath } = config;
 
-        // Create status bar item for indexing progress
-        this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-        this.statusBarItem.text = "$(sync~spin) VSC Toolbox: Indexing...";
-        this.statusBarItem.tooltip = "VSC Toolbox: Content index is building";
-        this.statusBarItem.show();
+            // Create components
+            this.threadPool = new ThreadPool(workerThreads);
+            this.fileWatcher = new FileWatcher(this.cacheManager, includePaths, fileExtensions);
 
-        // Initialize llama server for embeddings
-        this.llamaServer.initialize(context);
+            // Initialize llama server for embeddings
+            this.llamaServer.initialize(context);
+            await this.llamaServer.start();
 
-        // Create components
-        this.threadPool = new ThreadPool(workerThreads);
-        this.fileWatcher = new FileWatcher(this.cacheManager, includePaths, fileExtensions);
+            // Register for cleanup
+            context.subscriptions.push({
+                dispose: () => this.dispose()
+            });
 
-        // Register for cleanup
-        context.subscriptions.push({
-            dispose: () => this.dispose()
-        });
+            // Listen for configuration changes
+            context.subscriptions.push(
+                vscode.workspace.onDidChangeConfiguration(e => {
+                    if (e.affectsConfiguration('vscToolbox.contentIndex')) {
+                        this.handleConfigChange();
+                    }
+                })
+            );
 
-        // Listen for configuration changes
-        context.subscriptions.push(
-            vscode.workspace.onDidChangeConfiguration(e => {
-                if (e.affectsConfiguration('vscToolbox.contentIndex')) {
-                    this.handleConfigChange();
-                }
-            })
-        );
+            // Wait briefly before indexing to allow VS Code and other extensions
+            // to finish any post-startup file modifications that would trigger
+            // unnecessary re-indexing (e.g., formatOnSave, insertFinalNewline).
+            await new Promise(resolve => setTimeout(resolve, 10000));
 
-        // Start background indexing (fire-and-forget, non-blocking)
-        this.cacheManager.initialize(includePaths, fileExtensions, ctagsPath, this.threadPool).then(async () => {
+            // Create status bar item for indexing progress
+            this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+            this.statusBarItem.text = "$(sync~spin) VSC Toolbox: Indexing...";
+            this.statusBarItem.tooltip = "VSC Toolbox: Content index is building";
+            this.statusBarItem.show();
+
+            // Start background indexing
+            await this.cacheManager.initialize(
+                includePaths,
+                fileExtensions,
+                ctagsPath,
+                this.threadPool,
+                this.llamaServer
+            );
+
             const fileCount = this.cacheManager.getFileCount();
-            // Hide status bar and show temporary notification
             this.statusBarItem?.dispose();
             this.statusBarItem = null;
             vscode.window.showInformationMessage(`VSC Toolbox: Content index: Indexed ${fileCount} files`);
             log('ContentIndex: Indexing complete');
-
-            // Start llama-server for embeddings (downloads model on first run)
-            const started = await this.llamaServer.start();
-            if (started) {
-                log('ContentIndex: LlamaServer started');
-            } else {
-                warn('ContentIndex: LlamaServer failed to start (embeddings unavailable)');
-            }
-        }).catch(err => {
-            // Hide status bar and show error notification
+        } catch (err) {
             this.statusBarItem?.dispose();
             this.statusBarItem = null;
             vscode.window.showErrorMessage(`VSC Toolbox: Content index failed: ${err}`);
             error(`ContentIndex: Indexing failed - ${err}`);
-        });
+        }
     }
 
     /**
