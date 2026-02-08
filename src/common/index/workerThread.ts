@@ -240,6 +240,7 @@ async function indexFile(input: IndexInput): Promise<IndexOutput> {
         if (fs.existsSync(input.tagsPath)) {
             // If modifying this line format, also update the
             // HASH_LINE_LEN and HASH_OFFSET constants above
+            // and update the same values in FileIndex.isValid().
             fs.appendFileSync(input.tagsPath, `{"_type": "sha256", "hash": "${hash}"}\n`);
         } else {
             return {
