@@ -345,13 +345,18 @@ export class CacheManager {
 
     /**
      * Invalidate cache for a specific file.
-     * Cleans up any associated tags file.
      *
      * @param filePath - Absolute file path to invalidate
      */
     invalidate(filePath: string): void {
         const fileIndex = this.cache.get(this.normalizePath(filePath));
         if (fileIndex) {
+            // FileWatcher.handleChange can fire even if there were no
+            // actual content changes to the file. Validate that there were
+            // actual changes before re-indexing to avoid unnecessary work.
+            if (!fileIndex.isValid()) {
+                this.indexFiles([fileIndex]);
+            }
             fileIndex.invalidate();
         }
     }

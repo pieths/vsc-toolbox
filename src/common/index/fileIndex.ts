@@ -242,7 +242,6 @@ export class FileIndex {
 
     /**
      * Clear cached tags for this file.
-     * File deletion is fire-and-forget since worker overwrites anyway.
      */
     invalidate(): void {
         tagsCache.delete(this.tagsPath);
