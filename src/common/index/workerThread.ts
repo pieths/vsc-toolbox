@@ -704,6 +704,9 @@ async function computeChunks(input: ComputeChunksInput): Promise<ComputeChunksOu
  * @param input - Search embeddings input with shared vector buffer, query, and slot list
  * @returns Output with the top-K most similar slot indices and their scores
  */
+// TODO: add a new worker task which normalizes all vectors to unit length
+// which can be run at indexing time to speed up cosine similarity search
+// (only dot product needed at query time).
 function searchEmbeddings(input: SearchEmbeddingsInput): SearchEmbeddingsOutput {
     try {
         const { vectors: sab, dims, queryVector, slots, topK } = input;
