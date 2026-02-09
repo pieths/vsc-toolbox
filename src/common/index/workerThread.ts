@@ -289,7 +289,7 @@ const CPP_EXTENSIONS = new Set([
 // TODO: should prototype be removed? It's creating a lot of one liners.
 const CHUNK_CONTAINER_KINDS = new Set([
     'class', 'struct', 'union', 'function',
-    'method', 'enum', 'interface', 'prototype'
+    'method', 'enum', 'interface'
 ]);
 
 /** Minimal tag entry used for chunking */
