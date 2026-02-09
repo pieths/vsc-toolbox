@@ -419,7 +419,7 @@ export class CacheManager {
 
         const chunks = chunkOutput.chunks;
         const texts = chunks.map(c => c.text);
-        const vectors = await this.llamaServer!.embedBatch(texts);
+        const vectors = await this.llamaServer!.embedBatch(texts, true);
 
         if (!vectors) {
             warn(`Content index: Failed to embed ${chunkOutput.filePath}`);

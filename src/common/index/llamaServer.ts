@@ -29,6 +29,8 @@ interface ModelConfig {
     cpuArgs: string[];
     /** Prefix to prepend to user queries before embedding (empty string if none needed) */
     queryPrefix: string;
+    /** Prefix to prepend to documents/passages during indexing (empty string if none needed) */
+    indexPrefix: string;
 }
 
 /**
@@ -55,6 +57,7 @@ const MODELS: ModelConfig[] = [
             '--rope-scaling', 'yarn', '--rope-freq-scale', '0.75',
         ],
         queryPrefix: 'search_query: ',
+        indexPrefix: '',
     },
     {
         // nomic-embed-text-v1.5 Q4_K_M: ~50% smaller, ~2x faster than Q8_0.
@@ -71,6 +74,7 @@ const MODELS: ModelConfig[] = [
             '--rope-scaling', 'yarn', '--rope-freq-scale', '0.75',
         ],
         queryPrefix: 'search_query: ',
+        indexPrefix: '',
     },
     {
         // nomic-embed-code Q4_K_M: 7B code embedding model, ~4.4 GB.
@@ -88,6 +92,7 @@ const MODELS: ModelConfig[] = [
             '--pooling', 'last',
         ],
         queryPrefix: 'Represent this query for searching relevant code: ',
+        indexPrefix: '',
     },
     {
         // CodeRankEmbed Q4_K_M: 137M code retrieval model, ~90 MB.
@@ -106,6 +111,7 @@ const MODELS: ModelConfig[] = [
             '--rope-scaling', 'yarn', '--rope-freq-scale', '0.75',
         ],
         queryPrefix: 'Represent this query for searching relevant code: ',
+        indexPrefix: '',
     },
     {
         // CodeRankEmbed Q8_0: 137M code retrieval model, ~146 MB.
@@ -124,6 +130,7 @@ const MODELS: ModelConfig[] = [
             '--rope-scaling', 'yarn', '--rope-freq-scale', '0.75',
         ],
         queryPrefix: 'Represent this query for searching relevant code: ',
+        indexPrefix: '',
     },
     {
         // jina-embeddings-v2-base-code Q8_0: 161M code embedding model, ~173 MB.
@@ -141,6 +148,47 @@ const MODELS: ModelConfig[] = [
             '-b', '4096', '-ub', '4096',
         ],
         queryPrefix: '',
+        indexPrefix: '',
+    },
+    {
+        // jina-code-embeddings-0.5b Q8_0: 0.5B code embedding model, ~531 MB.
+        // Qwen2.5-Coder-0.5B backbone, decoder architecture — requires --pooling last.
+        // 32768 token context (recommended ≤ 8192), 896 dimensions (Matryoshka: 64-896).
+        // Trained on code generation data. 15+ languages including C++.
+        // Uses task-specific instruction prefixes (nl2code task shown here).
+        name: 'jina-code-embeddings-0.5b (Q8_0)',
+        url: 'https://huggingface.co/jinaai/jina-code-embeddings-0.5b-GGUF/resolve/main/jina-code-embeddings-0.5b-Q8_0.gguf',
+        sha256: '',
+        filename: 'jina-code-embeddings-0.5b-Q8_0.gguf',
+        dimensions: 896,
+        parallelSlots: { cpu: 8 },
+        cpuArgs: [
+            '-c', String(8 * 2048),   // 2048 tokens/slot
+            '-b', '2048', '-ub', '2048',
+            '--pooling', 'last',
+        ],
+        queryPrefix: 'Find the most relevant code snippet given the following query:\n',
+        indexPrefix: 'Candidate code snippet:\n',
+    },
+    {
+        // jina-code-embeddings-1.5b Q8_0: 1.5B code embedding model, ~1.65 GB.
+        // Qwen2.5-Coder-1.5B backbone, decoder architecture — requires --pooling last.
+        // 32768 token context (recommended ≤ 8192), 1536 dimensions (Matryoshka: 128-1536).
+        // SOTA on 25 code retrieval benchmarks (NeurIPS 2025). 15+ languages including C++.
+        // Uses task-specific instruction prefixes (nl2code task shown here).
+        name: 'jina-code-embeddings-1.5b (Q8_0)',
+        url: 'https://huggingface.co/jinaai/jina-code-embeddings-1.5b-GGUF/resolve/main/jina-code-embeddings-1.5b-Q8_0.gguf',
+        sha256: '',
+        filename: 'jina-code-embeddings-1.5b-Q8_0.gguf',
+        dimensions: 1536,
+        parallelSlots: { cpu: 4 },
+        cpuArgs: [
+            '-c', String(4 * 2048),   // 2048 tokens/slot
+            '-b', '2048', '-ub', '2048',
+            '--pooling', 'last',
+        ],
+        queryPrefix: 'Find the most relevant code snippet given the following query:\n',
+        indexPrefix: 'Candidate code snippet:\n',
     },
 ];
 
@@ -176,7 +224,7 @@ interface HealthResponse {
 export class LlamaServer {
     private serverProcess: ChildProcess | null = null;
     private port = 8384;
-    private model: ModelConfig = MODELS[2];
+    private model: ModelConfig = MODELS[7];
     private parallelSlots = this.model.parallelSlots.cpu;
     private modelPath: string = '';
     private serverExePath: string = '';
@@ -521,18 +569,22 @@ export class LlamaServer {
      * Compute the embedding vector for a single text.
      *
      * @param text - The text to embed
+     * @param forIndexing - If true, prepend the model's indexPrefix instead of leaving text as-is
      * @returns The embedding vector as a Float32Array, or null on error
      */
-    async embed(text: string): Promise<Float32Array | null> {
+    async embed(text: string, forIndexing?: boolean): Promise<Float32Array | null> {
         if (!this.ready) {
             warn('LlamaServer.embed() called but server is not ready');
             return null;
         }
 
         try {
+            const input = forIndexing && this.model.indexPrefix
+                ? this.model.indexPrefix + text
+                : text;
             const response = await this.httpPost(
                 `http://127.0.0.1:${this.port}/v1/embeddings`,
-                { input: text }
+                { input }
             );
 
             const data = JSON.parse(response) as EmbeddingResponse;
@@ -554,9 +606,10 @@ export class LlamaServer {
      * blocking on the slowest item (Head-of-Line blocking mitigation).
      *
      * @param texts - Array of texts to embed
+     * @param forIndexing - If true, prepend the model's indexPrefix to each text
      * @returns Array of embedding vectors (Float32Array), or null on error
      */
-    async embedBatch(texts: string[]): Promise<Float32Array[] | null> {
+    async embedBatch(texts: string[], forIndexing?: boolean): Promise<Float32Array[] | null> {
         if (!this.ready) {
             warn('LlamaServer.embedBatch() called but server is not ready');
             return null;
@@ -589,7 +642,7 @@ export class LlamaServer {
                     const i = index++;
                     active++;
 
-                    this.embed(texts[i])
+                    this.embed(texts[i], forIndexing)
                         .then((vec) => {
                             if (vec) {
                                 results[i] = vec;
