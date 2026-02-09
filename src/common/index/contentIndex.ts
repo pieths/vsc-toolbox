@@ -499,7 +499,8 @@ export class ContentIndex {
             return [];
         }
 
-        const queryVector = await this.llamaServer.embed(query);
+        const prefixedQuery = this.llamaServer.getQueryPrefix() + query;
+        const queryVector = await this.llamaServer.embed(prefixedQuery);
         if (!queryVector) {
             warn('ContentIndex: Failed to embed query');
             return [];

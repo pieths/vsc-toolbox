@@ -27,6 +27,8 @@ interface ModelConfig {
     parallelSlots: { cpu: number };
     /** CPU-specific llama-server CLI args (context, batch size, rope, pooling, etc.) */
     cpuArgs: string[];
+    /** Prefix to prepend to user queries before embedding (empty string if none needed) */
+    queryPrefix: string;
 }
 
 /**
@@ -52,6 +54,7 @@ const MODELS: ModelConfig[] = [
             '-b', '2048', '-ub', '2048',
             '--rope-scaling', 'yarn', '--rope-freq-scale', '0.75',
         ],
+        queryPrefix: 'search_query: ',
     },
     {
         // nomic-embed-text-v1.5 Q4_K_M: ~50% smaller, ~2x faster than Q8_0.
@@ -67,6 +70,7 @@ const MODELS: ModelConfig[] = [
             '-b', '2048', '-ub', '2048',
             '--rope-scaling', 'yarn', '--rope-freq-scale', '0.75',
         ],
+        queryPrefix: 'search_query: ',
     },
     {
         // nomic-embed-code Q4_K_M: 7B code embedding model, ~4.4 GB.
@@ -79,10 +83,11 @@ const MODELS: ModelConfig[] = [
         dimensions: 768,
         parallelSlots: { cpu: 2 },
         cpuArgs: [
-            '-c', String(2 * 2048),   // 2048 tokens/slot
-            '-b', '2048', '-ub', '2048',
+            '-c', String(2 * 4096),   // 4096 tokens/slot
+            '-b', '4096', '-ub', '4096',
             '--pooling', 'last',
         ],
+        queryPrefix: 'Represent this query for searching relevant code: ',
     },
     {
         // CodeRankEmbed Q4_K_M: 137M code retrieval model, ~90 MB.
@@ -100,6 +105,7 @@ const MODELS: ModelConfig[] = [
             '-b', '2048', '-ub', '2048',
             '--rope-scaling', 'yarn', '--rope-freq-scale', '0.75',
         ],
+        queryPrefix: 'Represent this query for searching relevant code: ',
     },
     {
         // CodeRankEmbed Q8_0: 137M code retrieval model, ~146 MB.
@@ -117,6 +123,7 @@ const MODELS: ModelConfig[] = [
             '-b', '2048', '-ub', '2048',
             '--rope-scaling', 'yarn', '--rope-freq-scale', '0.75',
         ],
+        queryPrefix: 'Represent this query for searching relevant code: ',
     },
     {
         // jina-embeddings-v2-base-code Q8_0: 161M code embedding model, ~173 MB.
@@ -133,6 +140,7 @@ const MODELS: ModelConfig[] = [
             '-c', String(16 * 4096),  // 4096 tokens/slot
             '-b', '4096', '-ub', '4096',
         ],
+        queryPrefix: '',
     },
 ];
 
@@ -168,7 +176,7 @@ interface HealthResponse {
 export class LlamaServer {
     private serverProcess: ChildProcess | null = null;
     private port = 8384;
-    private model: ModelConfig = MODELS[5]; // jina-embeddings-v2-base-code (Q8_0)
+    private model: ModelConfig = MODELS[2];
     private parallelSlots = this.model.parallelSlots.cpu;
     private modelPath: string = '';
     private serverExePath: string = '';
@@ -210,6 +218,14 @@ export class LlamaServer {
      */
     getDimensions(): number {
         return this.model.dimensions;
+    }
+
+    /**
+     * Get the query prefix for the current model.
+     * This prefix should be prepended to user queries before embedding.
+     */
+    getQueryPrefix(): string {
+        return this.model.queryPrefix;
     }
 
     /**
