@@ -272,13 +272,13 @@
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "search-embeddings",
         "userDescription": "Semantic search across indexed content using embeddings",
-        "modelDescription": "Perform semantic search across indexed content using embedding vectors. Takes a natural language or code query and returns the nearest 30 matching chunks ranked by cosine similarity. Each result includes the file path, line range, similarity score, and the actual source lines. Use this for finding semantically related code or content even when exact keywords don't match.",
+        "modelDescription": "Perform semantic search across indexed content using embedding vectors. Takes a natural language or code query and returns the nearest 30 matching chunks ranked by cosine similarity. Each result includes the file path, line range, similarity score, and the actual source lines. Use this for finding semantically related code or content even when exact keywords don't match. Query quality significantly impacts results — craft detailed, specific queries rather than short or vague ones.",
         "inputSchema": {
           "type": "object",
           "properties": {
             "query": {
               "type": "string",
-              "description": "Natural language or code query to search for semantically similar content."
+              "description": "A detailed search query to find semantically similar code. For best results: (1) Describe the specific behavior or purpose of the code you're looking for, as if writing a docstring or code comment — e.g. 'skip VP9 and AV1 codecs from hardware secure CDM capability check when feature flag is disabled' rather than 'VP9 codec stuff'. (2) Include likely identifier names, variable names, class names, or function names when known — e.g. 'kHardwareSecureDecryptionVp9 FeatureList IsEnabled VideoCodec'. (3) Combine both approaches for best coverage — e.g. 'check if VP9 profile is supported for hardware decoding kVP9 VP9PROFILE_MIN GetSupportedVideoDecoderConfigs'. Avoid single-word or overly generic queries like 'video' or 'codec support'."
             }
           },
           "required": [
