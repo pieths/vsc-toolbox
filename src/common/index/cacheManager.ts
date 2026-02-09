@@ -4,11 +4,13 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as crypto from 'crypto';
 import picomatch from 'picomatch';
 import { FileIndex } from './fileIndex';
 import { ThreadPool } from './threadPool';
-import { IndexInput } from './types';
+import { IndexInput, ComputeChunksInput } from './types';
 import { LlamaServer } from './llamaServer';
+import { VectorCache } from './vectorCache';
 import { log, warn, error } from '../logger';
 
 /**
@@ -25,6 +27,7 @@ export class CacheManager {
     private cacheDir: string = '';
     private threadPool: ThreadPool | null = null;
     private llamaServer: LlamaServer | null = null;
+    private vectorCache: VectorCache | null = null;
 
     /**
      * Normalize a file path for use as a cache key.
@@ -65,6 +68,12 @@ export class CacheManager {
         this.cacheDir = workspaceFolder
             ? path.join(workspaceFolder.uri.fsPath, '.cache', 'vsctoolbox', 'index')
             : '';
+
+        // Try to restore the vector cache from disk, or create a fresh one
+        if (this.cacheDir) {
+            this.vectorCache = await VectorCache.load(this.cacheDir) ?? new VectorCache(this.cacheDir);
+            log(`Content index: VectorCache allocated ${this.vectorCache.allocatedBytes.toLocaleString()} bytes`);
+        }
 
         // Ensure cache directory and a-z subdirectories exist
         if (this.cacheDir) {
@@ -139,7 +148,7 @@ export class CacheManager {
                 }
             }
 
-            // Index all discovered files with ctags
+            // Index all discovered files
             const allFiles = Array.from(this.cache.values());
             await this.indexFiles(allFiles);
 
@@ -262,7 +271,6 @@ export class CacheManager {
 
         const startTime = Date.now();
         const outputs = await this.threadPool.indexAll(inputs);
-        const elapsed = Date.now() - startTime;
 
         let successCount = 0;
         for (const output of outputs) {
@@ -271,9 +279,135 @@ export class CacheManager {
             }
         }
 
+        await this.computeEmbeddings(toIndex);
+        const elapsed = Date.now() - startTime;
+
         if (successCount > 0) {
             log(`Content index: Indexed ${successCount} files in ${elapsed}ms`);
         }
+    }
+
+    /**
+     * Compute embeddings for the given files.
+     * Processes files in batches: for each batch, computes chunks via worker
+     * threads, then sends the chunk texts to the llama server for embedding.
+     *
+     * @param files - Array of FileIndex instances to compute embeddings for
+     */
+    private async computeEmbeddings(files: FileIndex[]): Promise<void> {
+        if (files.length === 0) {
+            return;
+        }
+
+        if (!this.threadPool) {
+            warn('Content index: Cannot compute embeddings - thread pool not set');
+            return;
+        }
+
+        if (!this.llamaServer || !this.llamaServer.isReady()) {
+            warn('Content index: Cannot compute embeddings - llama server not ready');
+            return;
+        }
+        const batchSize = 50;
+        const startTime = Date.now();
+        let totalChunks = 0;
+        let totalVectors = 0;
+        let totalFiles = 0;
+
+        // Skip files whose content hasn't changed since last embedding
+        files = await this.filterUnchangedFiles(files);
+
+        if (files.length === 0) {
+            return;
+        }
+
+        log(`Content index: Starting embedding for ${files.length} files`);
+
+        for (let i = 0; i < files.length; i += batchSize) {
+            const batch = files.slice(i, i + batchSize);
+
+            // 1. Compute chunks for this batch via worker threads
+            const chunkInputs: ComputeChunksInput[] = batch.map(fi => ({
+                type: 'computeChunks' as const,
+                filePath: fi.getFilePath(),
+                ctagsPath: fi.getTagsPath(),
+            }));
+
+            const chunkOutputs = await this.threadPool.computeChunksAll(chunkInputs);
+
+            // 2. For each file's chunks, get embeddings from llama server
+            for (const chunkOutput of chunkOutputs) {
+                if (chunkOutput.error) {
+                    warn(`Content index: Chunk error for ${chunkOutput.filePath}: ${chunkOutput.error}`);
+                    continue;
+                }
+
+                if (chunkOutput.chunks.length === 0) {
+                    continue;
+                }
+
+                totalChunks += chunkOutput.chunks.length;
+
+                const texts = chunkOutput.chunks.map(c => c.text);
+                const vectors = await this.llamaServer.embedBatch(texts);
+
+                if (vectors) {
+                    totalVectors += vectors.length;
+                    totalFiles++;
+
+                    // Add vectors to the vector cache
+                    const ranges = chunkOutput.chunks.map(c => ({
+                        startLine: c.startLine,
+                        endLine: c.endLine,
+                    }));
+                    this.vectorCache?.add(chunkOutput.filePath, chunkOutput.sha256, ranges, vectors);
+                } else {
+                    warn(`Content index: Failed to embed ${chunkOutput.filePath}`);
+                }
+            }
+
+            log(`Content index: Embedding progress: ${Math.min(i + batchSize, files.length)}/${files.length} files`);
+        }
+
+        await this.vectorCache?.save();
+
+        const elapsed = Date.now() - startTime;
+        log(`Content index: Embedding complete: ${totalVectors} vectors from ${totalChunks} chunks across ${totalFiles} files in ${elapsed}ms`);
+    }
+
+    /**
+     * Filter out files whose content hasn't changed since their embeddings
+     * were last computed. Compares the current file's SHA-256 hash against
+     * the hash stored in the vector cache.
+     *
+     * @param files - Array of FileIndex instances to check
+     * @returns Filtered array containing only files that need re-embedding
+     */
+    private async filterUnchangedFiles(files: FileIndex[]): Promise<FileIndex[]> {
+        if (!this.vectorCache || files.length === 0) {
+            return files;
+        }
+
+        const originalCount = files.length;
+        const filtered: FileIndex[] = [];
+
+        for (const fi of files) {
+            const entry = this.vectorCache.getFileEntry(fi.getFilePath());
+            if (entry) {
+                try {
+                    const buf = await fs.promises.readFile(fi.getFilePath());
+                    const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
+                    if (sha256 === entry.sha256) {
+                        continue; // unchanged — skip re-embedding
+                    }
+                } catch {
+                    // File unreadable — include it so the error surfaces later
+                }
+            }
+            filtered.push(fi);
+        }
+
+        return filtered;
     }
 
     /**
