@@ -265,6 +265,26 @@
             "query"
           ]
         }
+      },
+      {
+        "name": "searchEmbeddings",
+        "displayName": "Search Embeddings",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "search-embeddings",
+        "userDescription": "Semantic search across indexed content using embeddings",
+        "modelDescription": "Perform semantic search across indexed content using embedding vectors. Takes a natural language or code query and returns the nearest 30 matching chunks ranked by cosine similarity. Each result includes the file path, line range, similarity score, and the actual source lines. Use this for finding semantically related code or content even when exact keywords don't match.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Natural language or code query to search for semantically similar content."
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
       }
     ]
   },

@@ -9,4 +9,11 @@
  */
 
 export { ContentIndex } from './contentIndex';
-export { SearchResult, SearchResults, FunctionDetails, ContainerDetails, FileLineRef } from './types';
+export {
+    SearchResult,
+    SearchResults,
+    FunctionDetails,
+    ContainerDetails,
+    FileLineRef,
+    NearestEmbeddingResult,
+} from './types';

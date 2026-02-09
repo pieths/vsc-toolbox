@@ -90,6 +90,9 @@ export class TestLanguageModelToolCommand {
             case 'contentSearch':
                 return this.getContentSearchInput();
 
+            case 'searchEmbeddings':
+                return this.getSearchEmbeddingsInput();
+
             default:
                 vscode.window.showErrorMessage(`No input handler for tool: ${toolName}`);
                 return undefined;
@@ -214,5 +217,29 @@ export class TestLanguageModelToolCommand {
         });
 
         return { query, include: include || undefined, exclude: exclude || undefined, filter: filter || undefined };
+    }
+
+    /**
+     * Get input for searchEmbeddings tool
+     */
+    private async getSearchEmbeddingsInput(): Promise<any | undefined> {
+        // Use current selection as default query if available
+        const editor = vscode.window.activeTextEditor;
+        const selection = editor?.selection;
+        const selectedText = selection && !selection.isEmpty
+            ? editor.document.getText(selection)
+            : '';
+
+        const query = await vscode.window.showInputBox({
+            prompt: 'Enter a natural language or code query for embedding search',
+            placeHolder: 'e.g., how to parse JSON, authentication flow',
+            value: selectedText,
+        });
+
+        if (!query) {
+            return undefined;
+        }
+
+        return { query };
     }
 }
