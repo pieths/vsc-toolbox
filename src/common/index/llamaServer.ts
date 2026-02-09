@@ -224,7 +224,7 @@ interface HealthResponse {
 export class LlamaServer {
     private serverProcess: ChildProcess | null = null;
     private port = 8384;
-    private model: ModelConfig = MODELS[7];
+    private model: ModelConfig = MODELS[2];
     private parallelSlots = this.model.parallelSlots.cpu;
     private modelPath: string = '';
     private serverExePath: string = '';
