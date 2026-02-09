@@ -279,6 +279,9 @@ const MAX_CHUNK_LINES = 150;
 /** Number of overlapping lines between consecutive chunks (~20% of chunk size) */
 const CHUNK_OVERLAP_LINES = 15;
 
+/** Minimum character length for a chunk to be kept (filters out trivial chunks) */
+const MIN_CHUNK_CHARS = 75;
+
 /** C/C++ file extensions that use ctags-based chunking */
 const CPP_EXTENSIONS = new Set([
     '.c', '.cc', '.cpp', '.cxx',
@@ -508,7 +511,8 @@ function splitIntoChunks(
         const chunkEnd = Math.min(current + maxLines - 1, endLine);
         const text = lines.slice(current - 1, chunkEnd).join('\n');
 
-        if (text.trim()) {
+        const trimmed = text.trim();
+        if (trimmed && trimmed.length >= MIN_CHUNK_CHARS) {
             chunks.push({ startLine: current, endLine: chunkEnd, text });
         }
 
