@@ -8,7 +8,7 @@ import * as crypto from 'crypto';
 import picomatch from 'picomatch';
 import { FileIndex } from './fileIndex';
 import { ThreadPool } from './threadPool';
-import { IndexInput, ComputeChunksInput } from './types';
+import { IndexInput, ComputeChunksInput, ComputeChunksOutput } from './types';
 import { LlamaServer } from './llamaServer';
 import { VectorCache } from './vectorCache';
 import { log, warn, error } from '../logger';
@@ -337,32 +337,12 @@ export class CacheManager {
 
             // 2. For each file's chunks, get embeddings from llama server
             for (const chunkOutput of chunkOutputs) {
-                if (chunkOutput.error) {
-                    warn(`Content index: Chunk error for ${chunkOutput.filePath}: ${chunkOutput.error}`);
-                    continue;
-                }
-
-                if (chunkOutput.chunks.length === 0) {
-                    continue;
-                }
-
                 totalChunks += chunkOutput.chunks.length;
 
-                const texts = chunkOutput.chunks.map(c => c.text);
-                const vectors = await this.llamaServer.embedBatch(texts);
-
-                if (vectors) {
-                    totalVectors += vectors.length;
+                const vectors = await this.computeEmbeddingsForFile(chunkOutput);
+                if (vectors > 0) {
+                    totalVectors += vectors;
                     totalFiles++;
-
-                    // Add vectors to the vector cache
-                    const ranges = chunkOutput.chunks.map(c => ({
-                        startLine: c.startLine,
-                        endLine: c.endLine,
-                    }));
-                    this.vectorCache?.add(chunkOutput.filePath, chunkOutput.sha256, ranges, vectors);
-                } else {
-                    warn(`Content index: Failed to embed ${chunkOutput.filePath}`);
                 }
             }
 
@@ -408,6 +388,59 @@ export class CacheManager {
         }
 
         return filtered;
+    }
+
+    /**
+     * Compute and store embeddings for a single file's chunk output.
+     * Filters out any failed embeddings (undefined slots from partial failures)
+     * so that partial results are still cached.
+     *
+     * @param chunkOutput - The chunking result for a single file
+     * @returns Number of vectors successfully stored
+     */
+    private async computeEmbeddingsForFile(
+        chunkOutput: ComputeChunksOutput,
+    ): Promise<number> {
+        if (chunkOutput.error) {
+            warn(`Content index: Chunk error for ${chunkOutput.filePath}: ${chunkOutput.error}`);
+            return 0;
+        }
+
+        if (chunkOutput.chunks.length === 0) {
+            return 0;
+        }
+
+        const chunks = chunkOutput.chunks;
+        const texts = chunks.map(c => c.text);
+        const vectors = await this.llamaServer!.embedBatch(texts);
+
+        if (!vectors) {
+            warn(`Content index: Failed to embed ${chunkOutput.filePath}`);
+            return 0;
+        }
+
+        // Filter out any failed embeddings (undefined slots from partial failures)
+        const validRanges = [];
+        const validVectors = [];
+        for (let i = 0; i < vectors.length; i++) {
+            if (vectors[i]) {
+                validRanges.push({
+                    startLine: chunks[i].startLine,
+                    endLine: chunks[i].endLine
+                });
+                validVectors.push(vectors[i]);
+            }
+        }
+
+        if (validVectors.length < vectors.length) {
+            warn(`Content index: ${vectors.length - validVectors.length}/${vectors.length} embeddings failed for ${chunkOutput.filePath}`);
+        }
+
+        if (validVectors.length > 0) {
+            this.vectorCache?.add(chunkOutput.filePath, chunkOutput.sha256, validRanges, validVectors);
+        }
+
+        return validVectors.length;
     }
 
     /**
