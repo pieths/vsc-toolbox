@@ -130,8 +130,8 @@ const MODELS: ModelConfig[] = [
         dimensions: 768,
         parallelSlots: { cpu: 16 },
         cpuArgs: [
-            '-c', String(16 * 2048),  // 2048 tokens/slot
-            '-b', '2048', '-ub', '2048',
+            '-c', String(16 * 4096),  // 4096 tokens/slot
+            '-b', '4096', '-ub', '4096',
         ],
     },
 ];
