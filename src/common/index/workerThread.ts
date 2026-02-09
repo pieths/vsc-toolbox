@@ -273,37 +273,6 @@ async function indexFile(input: IndexInput): Promise<IndexOutput> {
 
 // ── Chunking constants and helpers ──────────────────────────────────────────
 
-// TODO: add lines above container to fix scenarios like this:
-//
-// // Returns an "ext-profile" feature query (with ending comma) for a video codec.
-// // Returns an empty string if "ext-profile" is not needed.
-// std::string GetExtProfile(VideoCodec codec) {
-//   if (codec == VideoCodec::kDolbyVision)
-//     return "ext-profile=dvhe.05,";
-//
-//   return "";
-// }
-//
-// Produced this output:
-//
-// ── chunk 4 (lines 177-179) ──
-// file: D:\cs\src\media\mojo\services\media_foundation_service.cc
-//
-//
-// // Returns an "ext-profile" feature query (with ending comma) for a video codec.
-// // Returns an empty string if "ext-profile" is not needed.
-//
-// ── chunk 5 (lines 180-185) ──
-// file: D:\cs\src\media\mojo\services\media_foundation_service.cc
-// function: media::(anonymous namespace)::GetExtProfile
-//
-// std::string GetExtProfile(VideoCodec codec) {
-// if (codec == VideoCodec::kDolbyVision)
-//     return "ext-profile=dvhe.05,";
-//
-// return "";
-// }
-
 /** Maximum number of lines per chunk for embedding */
 const MAX_CHUNK_LINES = 150;
 
@@ -473,6 +442,46 @@ function findTopLevelRanges(tags: TagEntry[]): ContainerRange[] {
 }
 
 /**
+ * Expand container ranges upward to absorb non-empty lines immediately
+ * preceding each container (e.g. comments above a function definition).
+ *
+ * For each range, walk upward from its start line. As long as the
+ * preceding line is non-empty (not whitespace-only) and not already
+ * covered by a previous container range, absorb it into the current
+ * container by moving its startLine up.
+ *
+ * Ranges are assumed to be sorted in document order and non-overlapping
+ * (as produced by findTopLevelRanges).
+ *
+ * @param ranges - Array of container ranges (modified in place)
+ * @param lines - Array of all lines in the file (0-based index)
+ */
+function expandRangesToIncludePrecedingLines(
+    ranges: ContainerRange[],
+    lines: string[],
+): void {
+    for (let i = 0; i < ranges.length; i++) {
+        const range = ranges[i];
+        // The lowest line we can claim is one past the previous container's
+        // end, or line 1 if this is the first container.
+        const lowerBound = i > 0 ? ranges[i - 1].endLine + 1 : 1;
+
+        let candidate = range.startLine - 1; // 1-based line above current start
+        while (candidate >= lowerBound) {
+            // lines array is 0-based, so lines[candidate - 1]
+            if (!lines[candidate - 1].trim()) {
+                break; // hit an empty/whitespace-only line – stop
+            }
+            candidate--;
+        }
+
+        // candidate is now one below the first non-empty line we should keep,
+        // or it stopped at an empty line. Start from the line after candidate.
+        range.startLine = candidate + 1;
+    }
+}
+
+/**
  * Split a line range into chunks of at most `maxLines` lines with overlap.
  * Empty (whitespace-only) chunks are discarded.
  * When the remaining lines fit in a single chunk, no overlap is added.
@@ -586,6 +595,7 @@ function computeChunksWithCtags(
 ): ComputeChunksOutput {
     const totalLines = lines.length;
     const topLevelRanges = findTopLevelRanges(tags);
+    expandRangesToIncludePrecedingLines(topLevelRanges, lines);
     const chunks: Chunk[] = [];
 
     let cursor = 1; // 1-based current line
