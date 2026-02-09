@@ -183,6 +183,8 @@ export interface ComputeChunksOutput {
     type: 'computeChunks';
     /** Absolute file path that was processed */
     filePath: string;
+    /** SHA-256 hex digest of the file contents that were chunked */
+    sha256: string;
     /** Array of text chunks extracted from the file */
     chunks: Chunk[];
     /** Error message if chunking failed */

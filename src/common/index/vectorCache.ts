@@ -70,6 +70,8 @@ export interface LineRange {
 export interface FileVectorEntries {
     /** Absolute path of the source file */
     filePath: string;
+    /** SHA-256 hex digest of the file contents at the time vectors were computed */
+    sha256: string;
     /** Index of the first slot in the SAB belonging to this file */
     startSlot: number;
     /** Line ranges for each vector (index 0 → startSlot, index 1 → startSlot+1, …) */
@@ -94,6 +96,8 @@ interface PersistedMetadata {
 interface PersistedFileEntry {
     /** Absolute path */
     filePath: string;
+    /** SHA-256 hex digest of the file contents at the time vectors were computed */
+    sha256: string;
     /** [startLine, endLine] tuples — one per vector, in slot order */
     ranges: [number, number][];
 }
@@ -194,11 +198,12 @@ export class VectorCache {
      * cache they are removed first (full replacement).
      *
      * @param filePath  Absolute path of the source file
+     * @param sha256    SHA-256 hex digest of the file contents used to produce the vectors
      * @param ranges    Line ranges that were embedded (one per vector)
      * @param vectors   Array of embedding vectors, one Float32Array per range (each must be `dims` floats)
      * @returns         The slot index of the first vector written
      */
-    add(filePath: string, ranges: LineRange[], vectors: Float32Array[]): number {
+    add(filePath: string, sha256: string, ranges: LineRange[], vectors: Float32Array[]): number {
         if (vectors.length !== ranges.length) {
             throw new Error(
                 `Count mismatch: ${ranges.length} ranges but ${vectors.length} vectors`
@@ -234,6 +239,7 @@ export class VectorCache {
             this.liveEntryCount -= (oldCount - slotsNeeded);
 
             // Update the entry in-place
+            existing.sha256 = sha256;
             existing.ranges = ranges.slice();
 
             return startSlot;
@@ -250,6 +256,7 @@ export class VectorCache {
         // Create the per-file entry (single filePath string, one ranges array)
         const fileEntry: FileVectorEntries = {
             filePath,
+            sha256,
             startSlot,
             ranges: ranges.slice(),  // own copy so caller can't mutate
         };
@@ -364,6 +371,7 @@ export class VectorCache {
 
                 files.push({
                     filePath: fileEntry.filePath,
+                    sha256: fileEntry.sha256,
                     ranges: fileEntry.ranges.map(r => [r.startLine, r.endLine]),
                 });
 
@@ -458,6 +466,7 @@ export class VectorCache {
 
                 const fileEntry: FileVectorEntries = {
                     filePath: pf.filePath,
+                    sha256: pf.sha256,
                     startSlot: slot,
                     ranges,
                 };

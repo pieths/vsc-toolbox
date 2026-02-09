@@ -125,6 +125,7 @@ export class ThreadPool {
                     task.resolve({
                         type: 'computeChunks',
                         filePath: task.input.filePath,
+                        sha256: '',
                         chunks: [],
                         error: error.message
                     });
@@ -306,6 +307,7 @@ export class ThreadPool {
             return Promise.resolve({
                 type: 'computeChunks',
                 filePath: input.filePath,
+                sha256: '',
                 chunks: [],
                 error: 'Thread pool has been disposed'
             });
@@ -328,6 +330,7 @@ export class ThreadPool {
             return inputs.map(input => ({
                 type: 'computeChunks' as const,
                 filePath: input.filePath,
+                sha256: '',
                 chunks: [],
                 error: 'Thread pool has been disposed'
             }));
@@ -406,6 +409,7 @@ export class ThreadPool {
                 task.resolve({
                     type: 'computeChunks',
                     filePath: task.input.filePath,
+                    sha256: '',
                     chunks: [],
                     error: 'Thread pool disposed'
                 });
