@@ -12,6 +12,7 @@ import {
     ContentIndexConfig,
     FileLineRef,
     FunctionDetails,
+    NearestEmbeddingResult,
     SearchInput,
     SearchResult,
     SearchResults
@@ -473,5 +474,37 @@ export class ContentIndex {
         }
 
         return fileIndex.getFullyQualifiedName(name, location);
+    }
+
+    /**
+     * Search the embedding index for text chunks most similar to a query string.
+     *
+     * @param query - Natural language or code query to search for
+     * @param topK - Maximum number of results to return (default 50)
+     * @returns Array of nearest embedding results ordered from most to least similar
+     */
+    async searchEmbeddings(query: string, topK: number = 50): Promise<NearestEmbeddingResult[]> {
+        if (!this.initialized) {
+            warn('ContentIndex: Not initialized');
+            return [];
+        }
+
+        if (!this.cacheManager.isReady()) {
+            warn('ContentIndex: Index not ready');
+            return [];
+        }
+
+        if (!this.llamaServer.isReady()) {
+            warn('ContentIndex: Llama server not ready');
+            return [];
+        }
+
+        const queryVector = await this.llamaServer.embed(query);
+        if (!queryVector) {
+            warn('ContentIndex: Failed to embed query');
+            return [];
+        }
+
+        return this.cacheManager.getNearestEmbeddings(queryVector, topK);
     }
 }

@@ -2,13 +2,20 @@
 // SPDX-License-Identifier: MIT
 
 import * as vscode from 'vscode';
+import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
 import picomatch from 'picomatch';
 import { FileIndex } from './fileIndex';
 import { ThreadPool } from './threadPool';
-import { IndexInput, ComputeChunksInput, ComputeChunksOutput } from './types';
+import {
+    IndexInput,
+    ComputeChunksInput,
+    ComputeChunksOutput,
+    SearchEmbeddingsInput,
+    NearestEmbeddingResult,
+} from './types';
 import { LlamaServer } from './llamaServer';
 import { VectorCache } from './vectorCache';
 import { log, warn, error } from '../logger';
@@ -585,5 +592,97 @@ export class CacheManager {
      */
     getFileExtensions(): string[] {
         return this.fileExtensions;
+    }
+
+    /**
+     * Search the vector cache for the nearest embeddings to a query vector.
+     * Splits work across all available CPU cores via the thread pool.
+     *
+     * @param queryVector - Embedding vector for the query (Float32Array of length `dims`)
+     * @param topK - Maximum number of results to return
+     * @returns Array of { filePath, startLine, endLine } ordered from most to least similar
+     */
+    async getNearestEmbeddings(
+        queryVector: Float32Array,
+        topK: number,
+    ): Promise<NearestEmbeddingResult[]> {
+        if (!this.vectorCache || !this.threadPool) {
+            return [];
+        }
+
+        // Collect all live slot indices from every file in the vector cache
+        // TODO: should this be a method in VectorCache?
+        const allSlots: number[] = [];
+        for (const filePath of this.vectorCache.getFilePaths()) {
+            const entry = this.vectorCache.getFileEntry(filePath);
+            if (!entry) continue;
+            for (let i = 0; i < entry.ranges.length; i++) {
+                allSlots.push(entry.startSlot + i);
+            }
+        }
+
+        if (allSlots.length === 0) {
+            return [];
+        }
+
+        // Split slots into consecutive groups, one per CPU core.
+        // Consecutive assignment keeps each worker's slots closer together
+        // in the SharedArrayBuffer, improving memory access locality.
+        const numGroups = Math.min(os.cpus().length, allSlots.length);
+        const baseSize = Math.floor(allSlots.length / numGroups);
+        const remainder = allSlots.length % numGroups;
+        const groups: number[][] = [];
+        let offset = 0;
+        for (let g = 0; g < numGroups; g++) {
+            const size = baseSize + (g < remainder ? 1 : 0);
+            groups.push(allSlots.slice(offset, offset + size));
+            offset += size;
+        }
+
+        // Build a SearchEmbeddingsInput for each group, sharing the same SAB
+        const sab = this.vectorCache.buffer;
+        const dims = this.vectorCache.dims;
+        const inputs: SearchEmbeddingsInput[] = groups.map(slots => ({
+            type: 'searchEmbeddings' as const,
+            vectors: sab,
+            dims,
+            queryVector,
+            slots,
+            topK,
+        }));
+
+        // Fan out to worker threads
+        const outputs = await this.threadPool.searchEmbeddingsAll(inputs);
+
+        // Merge results from all workers and pick the overall top-K
+        const merged: { slot: number; score: number }[] = [];
+        for (const output of outputs) {
+            if (output.error) {
+                warn(`Content index: Embedding search error: ${output.error}`);
+                continue;
+            }
+            for (let i = 0; i < output.slots.length; i++) {
+                merged.push({ slot: output.slots[i], score: output.scores[i] });
+            }
+        }
+
+        merged.sort((a, b) => b.score - a.score);
+        const topResults = merged.slice(0, topK);
+
+        // Resolve each slot back to file path + line range
+        const results: NearestEmbeddingResult[] = [];
+        for (const { slot, score } of topResults) {
+            const entry = this.vectorCache.getSlotEntry(slot);
+            if (entry) {
+                results.push({
+                    filePath: entry.fileEntry.filePath,
+                    startLine: entry.range.startLine,
+                    endLine: entry.range.endLine,
+                    score,
+                });
+            }
+        }
+
+        return results;
     }
 }

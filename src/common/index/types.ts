@@ -235,6 +235,20 @@ export interface SearchEmbeddingsOutput {
 }
 
 /**
+ * A single result from a nearest-embedding search.
+ */
+export interface NearestEmbeddingResult {
+    /** Absolute file path of the matching chunk */
+    filePath: string;
+    /** 1-based start line of the matching chunk */
+    startLine: number;
+    /** 1-based end line of the matching chunk (inclusive) */
+    endLine: number;
+    /** Cosine similarity score (higher is more similar) */
+    score: number;
+}
+
+/**
  * Configuration for the content index functionality
  */
 export interface ContentIndexConfig {
