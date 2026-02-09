@@ -49,6 +49,12 @@ const GROWTH_FACTOR = 1.2;
  */
 const PERSIST_VERSION = 1;
 
+/** File name for the raw vector data on disk */
+const VECTORS_BIN_FILENAME = 'vectors.bin';
+
+/** File name for the metadata JSON on disk */
+const VECTORS_METADATA_FILENAME = 'vectors.metadata.json';
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 /** Line range that a single embedded chunk spans. */
@@ -105,7 +111,7 @@ interface PersistedFileEntry {
 // ── VectorCache ─────────────────────────────────────────────────────────────
 
 export class VectorCache {
-    /** Directory used for persistence (vectors.bin + metadata.json) */
+    /** Directory used for persistence */
     private readonly dir: string;
 
     /** Path to the raw vector data file */
@@ -150,14 +156,14 @@ export class VectorCache {
     /**
      * Create a new VectorCache.
      *
-     * @param dir        Directory for persistence (vectors.bin + vectors_metadata.json)
+     * @param dir        Directory for persistence
      * @param dims       Embedding dimensionality (default 768)
      * @param capacity   Initial number of vector slots to allocate
      */
     constructor(dir: string, dims: number = DEFAULT_DIMS, capacity: number = DEFAULT_INITIAL_CAPACITY) {
         this.dir = dir;
-        this.vectorsPath = path.join(dir, 'vectors.bin');
-        this.metadataPath = path.join(dir, 'vectors_metadata.json');
+        this.vectorsPath = path.join(dir, VECTORS_BIN_FILENAME);
+        this.metadataPath = path.join(dir, VECTORS_METADATA_FILENAME);
         this.embeddingDims = dims;
         this.slotCapacity = capacity;
         this.sab = new SharedArrayBuffer(capacity * dims * BYTES_PER_FLOAT);
@@ -343,9 +349,7 @@ export class VectorCache {
     // ── Persistence ─────────────────────────────────────────────────────────
 
     /**
-     * Write the cache to disk.  Two files are created:
-     *   <dir>/vectors.bin   — raw Float32 vector data (only live slots, compacted)
-     *   <dir>/vectors_metadata.json — metadata map + housekeeping
+     * Write the cache to disk.
      *
      * The save is compacted: dead slots are removed and surviving vectors are
      * packed contiguously. This means the on-disk representation is always
@@ -425,14 +429,14 @@ export class VectorCache {
      * Load a previously saved cache from disk. Returns a new VectorCache
      * instance. If the files don't exist or are incompatible, returns null.
      *
-     * @param dir   Directory that contains vectors.bin and metadata.json
+     * @param dir   Directory that contains vector data and metadata files
      * @param dims  Expected embedding dimensionality (must match persisted data)
      * @returns     A populated VectorCache, or null if loading failed
      */
     static async load(dir: string, dims: number = DEFAULT_DIMS): Promise<VectorCache | null> {
         try {
             // Read metadata first to validate before allocating memory
-            const metadataPath = path.join(dir, 'vectors_metadata.json');
+            const metadataPath = path.join(dir, VECTORS_METADATA_FILENAME);
             const metadataRaw = await fs.promises.readFile(metadataPath, 'utf8');
             const metadata: PersistedMetadata = JSON.parse(metadataRaw);
 
