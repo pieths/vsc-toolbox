@@ -7,4 +7,3 @@
 !LICENSE
 !out/**
 !bin/win_x64/llama.cpp/**
-!node_modules/picomatch/**
