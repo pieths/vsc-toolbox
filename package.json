@@ -62,7 +62,12 @@
         "vscToolbox.logLevel": {
           "type": "string",
           "default": "info",
-          "enum": ["debug", "info", "warn", "error"],
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
           "enumDescriptions": [
             "Show all messages including debug",
             "Show info, warning, and error messages",
