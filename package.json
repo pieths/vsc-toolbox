@@ -312,6 +312,7 @@
     "typescript": "^5.2.0"
   },
   "dependencies": {
+    "@lancedb/lancedb": "^0.26.2",
     "picomatch": "^4.0.3"
   }
 }

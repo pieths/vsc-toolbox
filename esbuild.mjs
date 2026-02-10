@@ -21,7 +21,7 @@ const extensionConfig = {
     ...sharedOptions,
     entryPoints: ['src/extension.ts'],
     outfile: 'out/extension.js',
-    external: ['vscode'],
+    external: ['vscode', '@lancedb/lancedb-win32-x64-msvc'],
 };
 
 // Worker thread — must be a separate file (loaded by new Worker())

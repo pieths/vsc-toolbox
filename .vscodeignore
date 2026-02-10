@@ -5,5 +5,7 @@
 !package.json
 !README.md
 !LICENSE
+!THIRD_PARTY_NOTICES
 !out/**
 !bin/win_x64/llama.cpp/**
+!node_modules/@lancedb/lancedb-win32-x64-msvc/**
