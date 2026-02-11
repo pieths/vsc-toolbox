@@ -801,7 +801,7 @@ export class VectorDatabase {
         const rows = vectors.map(v => {
             const id = this.nextVectorId++;
             ids.push(id);
-            return { id, vector: v };
+            return { id, vector: Array.from(v) };
         });
 
         if (!this.vectorsTable) {
