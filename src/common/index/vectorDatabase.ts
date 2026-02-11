@@ -983,4 +983,255 @@ export class VectorDatabase {
         }
         return maxId + 1;
     }
+
+    /**
+     * Scan all tables for referential integrity violations and optionally
+     * delete orphaned rows.
+     *
+     * Detects:
+     *   1. Orphaned vectors   — Vectors with no row in Links.
+     *   2. Orphaned links     — Links whose vectorId or fileChunkId no
+     *                           longer exists.
+     *   3. Orphaned shadows   — ShadowChunks whose fileChunkId no longer
+     *                           exists.
+     *   4. Orphaned file paths — FilePaths that no FileChunk references.
+     *   5. Dangling chunks    — FileChunks whose vectorId no longer exists
+     *                           in Vectors.
+     *
+     * The check only reads lightweight id/FK columns — no vector data is
+     * loaded — so the cost is proportional to the row count, not the
+     * embedding dimension.
+     *
+     * @param repair — when `true`, delete every orphaned row that is found.
+     * @returns Summary counts of the violations detected (before repair).
+     */
+    private async checkIntegrity(repair: boolean = false): Promise<{
+        orphanedVectors: number;
+        orphanedLinks: number;
+        orphanedShadowChunks: number;
+        orphanedFilePaths: number;
+        danglingFileChunks: number;
+    }> {
+        this.ensureOpen();
+
+        const result = {
+            orphanedVectors: 0,
+            orphanedLinks: 0,
+            orphanedShadowChunks: 0,
+            orphanedFilePaths: 0,
+            danglingFileChunks: 0,
+        };
+
+        // ── Collect id sets from each table ─────────────────────────────
+
+        const vectorIds = new Set<number>();
+        if (this.vectorsTable) {
+            const rows = await this.vectorsTable
+                .query()
+                .select(['id'])
+                .toArray() as { id: number }[];
+            for (const r of rows) {
+                vectorIds.add(r.id);
+            }
+        }
+
+        const fileChunkIds = new Set<number>();
+        const fileChunkVectorIds = new Set<number>();
+        const fileChunkFilePathIds = new Set<number>();
+        if (this.fileChunksTable) {
+            const rows = await this.fileChunksTable
+                .query()
+                .select(['id', 'vectorId', 'filePathId'])
+                .toArray() as { id: number; vectorId: number; filePathId: number }[];
+            for (const r of rows) {
+                fileChunkIds.add(r.id);
+                fileChunkVectorIds.add(r.vectorId);
+                fileChunkFilePathIds.add(r.filePathId);
+            }
+        }
+
+        const linkRows: { vectorId: number; fileChunkId: number }[] = [];
+        const linkedVectorIds = new Set<number>();
+        if (this.linksTable) {
+            const rows = await this.linksTable
+                .query()
+                .select(['vectorId', 'fileChunkId'])
+                .toArray() as { vectorId: number; fileChunkId: number }[];
+            for (const r of rows) {
+                linkRows.push(r);
+                linkedVectorIds.add(r.vectorId);
+            }
+        }
+
+        const shadowRows: { vectorId: number; fileChunkId: number }[] = [];
+        if (this.shadowChunksTable) {
+            const rows = await this.shadowChunksTable
+                .query()
+                .select(['vectorId', 'fileChunkId'])
+                .toArray() as { vectorId: number; fileChunkId: number }[];
+            shadowRows.push(...rows);
+        }
+
+        const filePathIds = new Set<number>();
+        if (this.filePathsTable) {
+            const rows = await this.filePathsTable
+                .query()
+                .select(['id'])
+                .toArray() as { id: number }[];
+            for (const r of rows) {
+                filePathIds.add(r.id);
+            }
+        }
+
+        // ── 1. Orphaned vectors — in Vectors but not referenced by Links ─
+        const orphanedVectorIds: number[] = [];
+        for (const id of vectorIds) {
+            if (!linkedVectorIds.has(id)) {
+                orphanedVectorIds.push(id);
+            }
+        }
+        result.orphanedVectors = orphanedVectorIds.length;
+
+        // ── 2. Orphaned links — vectorId or fileChunkId doesn't exist ────
+        const orphanedLinkVectorIds: number[] = [];
+        const orphanedLinkChunkIds: number[] = [];
+        for (const link of linkRows) {
+            if (!vectorIds.has(link.vectorId)) {
+                orphanedLinkVectorIds.push(link.vectorId);
+            }
+            if (!fileChunkIds.has(link.fileChunkId)) {
+                orphanedLinkChunkIds.push(link.fileChunkId);
+            }
+        }
+        result.orphanedLinks = orphanedLinkVectorIds.length + orphanedLinkChunkIds.length;
+
+        // ── 3. Orphaned shadow chunks — fileChunkId doesn't exist ────────
+        const orphanedShadowVectorIds: number[] = [];
+        for (const shadow of shadowRows) {
+            if (!fileChunkIds.has(shadow.fileChunkId)) {
+                orphanedShadowVectorIds.push(shadow.vectorId);
+            }
+        }
+        result.orphanedShadowChunks = orphanedShadowVectorIds.length;
+
+        // ── 4. Orphaned file paths — no FileChunk references them ────────
+        const orphanedFilePathIds: number[] = [];
+        for (const id of filePathIds) {
+            if (!fileChunkFilePathIds.has(id)) {
+                orphanedFilePathIds.push(id);
+            }
+        }
+        result.orphanedFilePaths = orphanedFilePathIds.length;
+
+        // ── 5. Dangling file chunks — vectorId not in Vectors ────────────
+        const danglingChunkIds: number[] = [];
+        for (const vid of fileChunkVectorIds) {
+            if (!vectorIds.has(vid)) {
+                danglingChunkIds.push(vid);
+            }
+        }
+        result.danglingFileChunks = danglingChunkIds.length;
+
+        // ── Log summary ─────────────────────────────────────────────────
+        const total = result.orphanedVectors
+            + result.orphanedLinks
+            + result.orphanedShadowChunks
+            + result.orphanedFilePaths
+            + result.danglingFileChunks;
+
+        if (total === 0) {
+            log('VectorDatabase: integrity check passed — no orphans found');
+            return result;
+        }
+
+        warn(
+            `VectorDatabase: integrity check found ${total} issue(s): ` +
+            `${result.orphanedVectors} orphaned vector(s), ` +
+            `${result.orphanedLinks} orphaned link(s), ` +
+            `${result.orphanedShadowChunks} orphaned shadow chunk(s), ` +
+            `${result.orphanedFilePaths} orphaned file path(s), ` +
+            `${result.danglingFileChunks} dangling file chunk(s)`
+        );
+
+        if (!repair) {
+            return result;
+        }
+
+        // ── Repair ──────────────────────────────────────────────────────
+
+        // Delete orphaned vectors
+        if (this.vectorsTable && orphanedVectorIds.length > 0) {
+            const idList = orphanedVectorIds.join(', ');
+            await this.vectorsTable.delete(`id IN (${idList})`);
+        }
+
+        // Delete orphaned links (by dangling vectorId)
+        if (this.linksTable && orphanedLinkVectorIds.length > 0) {
+            const idList = orphanedLinkVectorIds.join(', ');
+            await this.linksTable.delete(`vectorId IN (${idList})`);
+        }
+
+        // Delete orphaned links (by dangling fileChunkId)
+        if (this.linksTable && orphanedLinkChunkIds.length > 0) {
+            const idList = orphanedLinkChunkIds.join(', ');
+            await this.linksTable.delete(`fileChunkId IN (${idList})`);
+        }
+
+        // Delete orphaned shadow chunks and their vectors
+        if (this.shadowChunksTable && orphanedShadowVectorIds.length > 0) {
+            const chunkIdList = orphanedShadowVectorIds
+                .map(vid => {
+                    const s = shadowRows.find(r => r.vectorId === vid);
+                    return s?.fileChunkId;
+                })
+                .filter((id): id is number => id !== undefined);
+            // Delete shadow chunks whose fileChunkId is invalid
+            if (chunkIdList.length > 0) {
+                const idList = [...new Set(chunkIdList)].join(', ');
+                await this.shadowChunksTable.delete(`fileChunkId IN (${idList})`);
+            }
+            // Delete the associated vectors
+            if (this.vectorsTable) {
+                const idList = orphanedShadowVectorIds.join(', ');
+                await this.vectorsTable.delete(`id IN (${idList})`);
+            }
+            // Delete the associated links
+            if (this.linksTable) {
+                const idList = orphanedShadowVectorIds.join(', ');
+                await this.linksTable.delete(`vectorId IN (${idList})`);
+            }
+        }
+
+        // Delete orphaned file paths
+        if (this.filePathsTable && orphanedFilePathIds.length > 0) {
+            const idList = orphanedFilePathIds.join(', ');
+            await this.filePathsTable.delete(`id IN (${idList})`);
+            // Also evict from the in-memory cache
+            for (const [fp, fpId] of this.filePathCache) {
+                if (orphanedFilePathIds.includes(fpId)) {
+                    this.filePathCache.delete(fp);
+                }
+            }
+        }
+
+        // Delete dangling file chunks (those whose vectorId is missing)
+        // Use the full deleteFileChunks path so links/shadows are also cleaned up
+        if (danglingChunkIds.length > 0 && this.fileChunksTable) {
+            // Find the actual fileChunk ids (danglingChunkIds holds vectorIds)
+            const rows = await this.fileChunksTable
+                .query()
+                .select(['id', 'vectorId'])
+                .toArray() as { id: number; vectorId: number }[];
+            const danglingVectorIdSet = new Set(danglingChunkIds);
+            const chunkIdsToDelete = rows
+                .filter(r => danglingVectorIdSet.has(r.vectorId))
+                .map(r => r.id);
+            if (chunkIdsToDelete.length > 0) {
+                await this.deleteFileChunks(chunkIdsToDelete);
+            }
+        }
+
+        log(`VectorDatabase: integrity repair complete — removed ${total} orphan(s)`);
+        return result;
+    }
 }
