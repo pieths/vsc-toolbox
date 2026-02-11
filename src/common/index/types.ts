@@ -161,6 +161,14 @@ export interface Chunk {
     endLine: number;
     /** Full text content from startLine to endLine (inclusive) */
     text: string;
+    /**
+     * SHA-256 hex digest of the chunk text.
+     * Does not include the additional prefix.
+     * This is solely the hash of the text content
+     * between the startLine and endLine (inclusive)
+     * as extracted from the file.
+     */
+    sha256: string;
 }
 
 /**

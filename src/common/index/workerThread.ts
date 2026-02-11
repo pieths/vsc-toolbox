@@ -513,7 +513,8 @@ function splitIntoChunks(
 
         const trimmed = text.trim();
         if (trimmed && trimmed.length >= MIN_CHUNK_CHARS) {
-            chunks.push({ startLine: current, endLine: chunkEnd, text });
+            const sha256 = crypto.createHash('sha256').update(text).digest('hex');
+            chunks.push({ startLine: current, endLine: chunkEnd, text, sha256 });
         }
 
         // If this chunk reached the end, we're done
