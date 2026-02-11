@@ -282,6 +282,30 @@ const CHUNK_OVERLAP_LINES = 15;
 /** Minimum character length for a chunk to be kept (filters out trivial chunks) */
 const MIN_CHUNK_CHARS = 75;
 
+/**
+ * Matches lines that are purely boilerplate: closing braces (with optional
+ * namespace comments), #endif guards, and #pragma once.
+ */
+const BOILERPLATE_LINE = /^\s*(\}[;,]?\s*(\/\/.*)?|#endif\b.*|#pragma\s+once\s*)$/;
+
+/**
+ * Check whether a chunk consists entirely of boilerplate lines
+ * (closing braces, namespace-closing comments, #endif guards, blank lines).
+ * These chunks add noise to embedding search results without providing
+ * meaningful content.
+ *
+ * @param trimmedText - The trimmed (no leading/trailing whitespace) chunk text
+ * @returns true if every non-empty line matches a boilerplate pattern
+ */
+function isBoilerplateChunk(trimmedText: string): boolean {
+    if (trimmedText.length > 175) {
+        return false;
+    }
+    return trimmedText.split('\n').every(
+        line => !line.trim() || BOILERPLATE_LINE.test(line),
+    );
+}
+
 /** C/C++ file extensions that use ctags-based chunking */
 const CPP_EXTENSIONS = new Set([
     '.c', '.cc', '.cpp', '.cxx',
@@ -512,7 +536,7 @@ function splitIntoChunks(
         const text = lines.slice(current - 1, chunkEnd).join('\n');
 
         const trimmed = text.trim();
-        if (trimmed && trimmed.length >= MIN_CHUNK_CHARS) {
+        if (trimmed && trimmed.length >= MIN_CHUNK_CHARS && !isBoilerplateChunk(trimmed)) {
             const sha256 = crypto.createHash('sha256').update(text).digest('hex');
             chunks.push({ startLine: current, endLine: chunkEnd, text, sha256 });
         }
