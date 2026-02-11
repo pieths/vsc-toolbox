@@ -163,8 +163,8 @@ const MODELS: ModelConfig[] = [
         dimensions: 896,
         parallelSlots: { cpu: 8 },
         cpuArgs: [
-            '-c', String(8 * 2048),   // 2048 tokens/slot
-            '-b', '2048', '-ub', '2048',
+            '-c', String(4 * 4096),   // 4096 tokens/slot
+            '-b', '4096', '-ub', '4096',
             '--pooling', 'last',
         ],
         queryPrefix: 'Find the most relevant code snippet given the following query:\n',
@@ -183,8 +183,8 @@ const MODELS: ModelConfig[] = [
         dimensions: 1536,
         parallelSlots: { cpu: 4 },
         cpuArgs: [
-            '-c', String(4 * 2048),   // 2048 tokens/slot
-            '-b', '2048', '-ub', '2048',
+            '-c', String(4 * 4096),   // 2048 tokens/slot
+            '-b', '4096', '-ub', '4096',
             '--pooling', 'last',
         ],
         queryPrefix: 'Find the most relevant code snippet given the following query:\n',
@@ -224,7 +224,7 @@ interface HealthResponse {
 export class LlamaServer {
     private serverProcess: ChildProcess | null = null;
     private port = 8384;
-    private model: ModelConfig = MODELS[2];
+    private model: ModelConfig = MODELS[6];
     private parallelSlots = this.model.parallelSlots.cpu;
     private modelPath: string = '';
     private serverExePath: string = '';
