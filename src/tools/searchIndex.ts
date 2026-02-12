@@ -7,6 +7,12 @@ import { log } from '../common/logger';
 import { getModel, sendRequestWithReadFileAccess } from '../common/copilotUtils';
 
 /**
+ * Default maximum number of files to include in search results.
+ * Use 0 or -1 for no limit.
+ */
+const DEFAULT_MAX_FILE_RESULTS = 15;
+
+/**
  * Input parameters for the language model tool
  */
 interface SearchIndexParams {
@@ -18,6 +24,8 @@ interface SearchIndexParams {
     exclude?: string;
     /** Optional natural language filter to include or exclude results */
     filter?: string;
+    /** Optional maximum number of files to include in results. Defaults to DEFAULT_MAX_FILE_RESULTS. Use 0 or -1 for no limit. */
+    maxResults?: number;
 }
 
 /**
@@ -55,7 +63,7 @@ function formatContainerHeading(container: ContainerDetails | null): string {
  * @param query - Original search query
  * @returns Formatted Markdown string
  */
-function formatResults(resultsWithContainers: ResultWithContainer[], query: string): string {
+function formatResults(resultsWithContainers: ResultWithContainer[], query: string, maxFileResults: number): string {
     if (resultsWithContainers.length === 0) {
         return `No matches found for: \`${query}\``;
     }
@@ -73,10 +81,25 @@ function formatResults(resultsWithContainers: ResultWithContainer[], query: stri
         fileResults.sort((a, b) => a.result.line - b.result.line);
     }
 
-    let markdown = `# Search Results for \`${query}\`\n\n`;
-    markdown += `Found **${resultsWithContainers.length}** matches in **${byFile.size}** files.\n\n`;
+    const totalFiles = byFile.size;
+    const totalMatches = resultsWithContainers.length;
+    const hasLimit = maxFileResults > 0;
+    const truncated = hasLimit && totalFiles > maxFileResults;
 
+    let markdown = `# Search Results for \`${query}\`\n\n`;
+    markdown += `Found **${totalMatches}** matches in **${totalFiles}** files.`;
+    if (truncated) {
+        markdown += ` Showing first **${maxFileResults}** files.`;
+    }
+    markdown += '\n\n';
+
+    let filesShown = 0;
     for (const [filePath, fileResults] of byFile) {
+        if (hasLimit && filesShown >= maxFileResults) {
+            break;
+        }
+        filesShown++;
+
         markdown += `## ${filePath}\n\n`;
 
         // Group results by container within this file
@@ -106,6 +129,11 @@ function formatResults(resultsWithContainers: ResultWithContainer[], query: stri
 
             markdown += '\n';
         }
+    }
+
+    if (truncated) {
+        const omittedFiles = totalFiles - maxFileResults;
+        markdown += `---\n\n${omittedFiles} additional file(s) omitted. Use \`maxResults\` to increase the limit or set to 0 for no limit.\n`;
     }
 
     return markdown;
@@ -184,8 +212,11 @@ export class SearchIndexTool implements vscode.LanguageModelTool<SearchIndexPara
             const fileCount = contentIndex.getFileCount();
             log(`Content search: Query "${query}" completed in ${elapsed}ms (${results.length} matches in ${fileCount} files)`);
 
+            // Resolve maxResults: use provided value or fall back to default
+            const maxResults = options.input.maxResults ?? DEFAULT_MAX_FILE_RESULTS;
+
             // Format and return results
-            const markdown = formatResults(resultsWithContainers, query);
+            const markdown = formatResults(resultsWithContainers, query, maxResults);
 
             // Filter results using AI if a filter is provided
             const { filter } = options.input;

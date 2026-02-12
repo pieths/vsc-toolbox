@@ -216,7 +216,20 @@ export class TestLanguageModelToolCommand {
             placeHolder: 'e.g., only class methods, exclude declarations',
         });
 
-        return { query, include: include || undefined, exclude: exclude || undefined, filter: filter || undefined };
+        const maxResultsStr = await vscode.window.showInputBox({
+            prompt: 'Enter max number of files to return (default 15, 0 or -1 for no limit)',
+            placeHolder: 'e.g., 15, 50, 0',
+        });
+
+        const maxResults = maxResultsStr ? parseInt(maxResultsStr, 10) : undefined;
+
+        return {
+            query,
+            include: include || undefined,
+            exclude: exclude || undefined,
+            filter: filter || undefined,
+            maxResults: maxResults !== undefined && !isNaN(maxResults) ? maxResults : undefined,
+        };
     }
 
     /**

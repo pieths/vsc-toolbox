@@ -274,6 +274,10 @@
             "filter": {
               "type": "string",
               "description": "Optional natural language filter to include or exclude results AFTER searching. Use for complex semantic filtering that requires AI reasoning. Examples: 'only matches in class methods', 'exclude declarations', 'only call sites', 'results where the function takes a string parameter'. For simple path filtering, prefer using include/exclude instead as it's faster."
+            },
+            "maxResults": {
+              "type": "number",
+              "description": "Maximum number of files to include in results. Default is 15. Use 0 or -1 for no limit. The total match count is always reported in the summary line regardless of this limit."
             }
           },
           "required": [
