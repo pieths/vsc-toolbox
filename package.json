@@ -126,13 +126,23 @@
           "default": [],
           "description": "List of directory paths to include in the index. Only files in these directories (and subdirectories) will be indexed. Empty = index all workspace files."
         },
+        "vscToolbox.contentIndex.excludePatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "List of picomatch glob patterns to exclude from the index. Files matching any pattern will not be indexed. Supports brace expansion for compact notation. Example: 'd:/cs/src/chrome/{fuchsia,mac,linux}/**' excludes the fuchsia, mac, and linux subdirectories under chrome."
+        },
         "vscToolbox.contentIndex.fileExtensions": {
           "type": "array",
           "items": {
             "type": "string"
           },
           "default": [
+            ".c",
             ".cc",
+            ".cpp",
             ".h",
             ".md"
           ],

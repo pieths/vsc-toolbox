@@ -11,6 +11,7 @@ import { IndexInput, NearestEmbeddingResult } from './types';
 import { LlamaServer } from './llamaServer';
 import { VectorDatabase } from './vectorDatabase';
 import { EmbeddingProcessor } from './embeddingProcessor';
+import { PathFilter } from './pathFilter';
 import { log, warn, error } from '../logger';
 
 /**
@@ -21,8 +22,7 @@ export class CacheManager {
     private cache: Map<string, FileIndex> = new Map();
     private indexingComplete: boolean = false;
     private indexingPromise: Promise<void> | null = null;
-    private includePaths: string[] = [];
-    private fileExtensions: string[] = ['.cc', '.h'];
+    private pathFilter: PathFilter | null = null;
     private ctagsPath: string = 'ctags';
     private cacheDir: string = '';
     private ctagsCacheDir: string = '';
@@ -45,21 +45,18 @@ export class CacheManager {
      * Initialize cache for all matching files in workspace.
      * Runs in background, non-blocking.
      *
-     * @param includePaths - List of directory paths to include (empty = all files)
-     * @param fileExtensions - List of file extensions to include (e.g., '.cc', '.h')
+     * @param pathFilter - PathFilter instance for include/exclude logic
      * @param ctagsPath - Path to the ctags executable
      * @param threadPool - Thread pool manager for indexing operations
      * @param llamaServer - Llama server instance for computing embeddings
      */
     async initialize(
-        includePaths: string[],
-        fileExtensions: string[],
+        pathFilter: PathFilter,
         ctagsPath: string,
         threadPool: ThreadPool,
         llamaServer: LlamaServer
     ): Promise<void> {
-        this.includePaths = includePaths;
-        this.fileExtensions = fileExtensions.map(ext => ext.toLowerCase());
+        this.pathFilter = pathFilter;
         this.ctagsPath = ctagsPath;
         this.threadPool = threadPool;
         this.llamaServer = llamaServer;
@@ -94,8 +91,8 @@ export class CacheManager {
             await Promise.all(subdirs.map(dir => fs.promises.mkdir(dir, { recursive: true })));
         }
 
-        log(`Content index: includePaths =\n${JSON.stringify(includePaths, null, 2)}`);
-        log(`Content index: fileExtensions =\n${JSON.stringify(this.fileExtensions, null, 2)}`);
+        log(`Content index: includePaths =\n${JSON.stringify(pathFilter.getIncludePaths(), null, 2)}`);
+        log(`Content index: fileExtensions =\n${JSON.stringify(pathFilter.getFileExtensions(), null, 2)}`);
         log(`Content index: ctagsPath = ${ctagsPath}`);
         log(`Content index: cacheDir = ${this.cacheDir}`);
 
@@ -109,20 +106,23 @@ export class CacheManager {
     private async buildInitialIndex(): Promise<void> {
         try {
             const filePaths: string[] = [];
+            const includePaths = this.pathFilter!.getIncludePaths();
 
-            if (this.includePaths.length === 0) {
+            if (includePaths.length === 0) {
                 // Fall back to workspace folders if no includePaths specified
                 const workspaceFolders = vscode.workspace.workspaceFolders;
                 if (workspaceFolders) {
+                    const fallbackPaths: string[] = [];
                     for (const folder of workspaceFolders) {
-                        this.includePaths.push(folder.uri.fsPath);
+                        fallbackPaths.push(folder.uri.fsPath);
                     }
+                    this.pathFilter!.setIncludePaths(fallbackPaths);
                 }
                 log('Content index: No includePaths configured, using workspace folders');
             }
 
             // Scan each includePath directory for matching files
-            for (const includePath of this.includePaths) {
+            for (const includePath of this.pathFilter!.getIncludePaths()) {
                 try {
                     const files = await this.findFilesInDirectory(includePath);
                     // Use concat instead of spread to avoid stack overflow with large arrays
@@ -197,10 +197,9 @@ export class CacheManager {
 
         for (const entry of entries) {
             if (entry.isFile()) {
-                const ext = path.extname(entry.name).toLowerCase();
-                if (this.fileExtensions.includes(ext)) {
-                    // entry.parentPath is available in Node 18.17+ with recursive option
-                    const fullPath = path.join(entry.parentPath || dirPath, entry.name);
+                // entry.parentPath is available in Node 18.17+ with recursive option
+                const fullPath = path.join(entry.parentPath || dirPath, entry.name);
+                if (this.pathFilter!.shouldIncludeFile(fullPath)) {
                     results.push(fullPath);
                 }
             }
@@ -374,10 +373,8 @@ export class CacheManager {
      * @param filePath - Absolute file path to add
      */
     add(filePath: string): void {
-        // Only add files with matching extensions
-        const ext = path.extname(filePath).toLowerCase();
         const normalizedPath = this.normalizePath(filePath);
-        if (!this.cache.has(normalizedPath) && this.fileExtensions.includes(ext)) {
+        if (!this.cache.has(normalizedPath) && this.pathFilter?.shouldIncludeFile(filePath)) {
             const fileIndex = new FileIndex(filePath, this.ctagsCacheDir);
             this.cache.set(normalizedPath, fileIndex);
             this.indexFiles([fileIndex]);
@@ -439,12 +436,10 @@ export class CacheManager {
      * Update configuration and rebuild the cache.
      * Triggers a full rebuild if already initialized.
      *
-     * @param includePaths - New list of directory paths to include
-     * @param fileExtensions - New list of file extensions to include
+     * @param pathFilter - New PathFilter instance
      */
-    updateConfig(includePaths: string[], fileExtensions: string[]): void {
-        this.includePaths = includePaths;
-        this.fileExtensions = fileExtensions.map(ext => ext.toLowerCase());
+    updateConfig(pathFilter: PathFilter): void {
+        this.pathFilter = pathFilter;
         this.rebuild();
     }
 
@@ -452,14 +447,14 @@ export class CacheManager {
      * Get the current include paths configuration.
      */
     getIncludePaths(): string[] {
-        return this.includePaths;
+        return this.pathFilter?.getIncludePaths() ?? [];
     }
 
     /**
      * Get the current file extensions configuration.
      */
     getFileExtensions(): string[] {
-        return this.fileExtensions;
+        return this.pathFilter?.getFileExtensions() ?? [];
     }
 
     /**

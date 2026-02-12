@@ -4,6 +4,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { CacheManager } from './cacheManager';
+import { PathFilter } from './pathFilter';
 import { log, warn } from '../logger';
 
 /**
@@ -12,8 +13,7 @@ import { log, warn } from '../logger';
  */
 export class FileWatcher implements vscode.Disposable {
     private cacheManager: CacheManager;
-    private includePaths: string[];
-    private fileExtensions: string[];
+    private pathFilter: PathFilter;
     private disposables: vscode.Disposable[] = [];
     private watchers: vscode.FileSystemWatcher[] = [];
 
@@ -21,17 +21,14 @@ export class FileWatcher implements vscode.Disposable {
      * Create a new file watcher.
      *
      * @param cacheManager - Cache manager to update on file changes
-     * @param includePaths - List of directory paths to include
-     * @param fileExtensions - List of file extensions to include
+     * @param pathFilter - PathFilter instance for include/exclude logic
      */
     constructor(
         cacheManager: CacheManager,
-        includePaths: string[],
-        fileExtensions: string[]) {
+        pathFilter: PathFilter) {
 
         this.cacheManager = cacheManager;
-        this.includePaths = includePaths;
-        this.fileExtensions = fileExtensions.map(ext => ext.toLowerCase());
+        this.pathFilter = pathFilter;
 
         this.createWatchers();
     }
@@ -54,7 +51,7 @@ export class FileWatcher implements vscode.Disposable {
         log('FileWatcher: Watching all workspace files');
 
         // Create additional watchers only for external paths
-        for (const includePath of this.includePaths) {
+        for (const includePath of this.pathFilter.getIncludePaths()) {
             if (!this.isPathInWorkspace(includePath)) {
                 this.createWatcherForExternalPath(includePath, extPattern);
             }
@@ -66,12 +63,13 @@ export class FileWatcher implements vscode.Disposable {
      * @returns Glob pattern like ".{cc,h,md}" or empty string if no extensions
      */
     private buildExtensionPattern(): string {
-        if (this.fileExtensions.length === 0) {
+        const fileExtensions = this.pathFilter.getFileExtensions();
+        if (fileExtensions.length === 0) {
             return '';
         }
 
         // Remove leading dots and join with commas
-        const exts = this.fileExtensions.map(ext => ext.replace(/^\./, '')).join(',');
+        const exts = fileExtensions.map(ext => ext.replace(/^\./,  '')).join(',');
         return `.{${exts}}`;
     }
 
@@ -125,31 +123,13 @@ export class FileWatcher implements vscode.Disposable {
     }
 
     /**
-     * Check if a file path should be included based on includePaths config.
+     * Check if a file path should be included based on PathFilter config.
      *
      * @param filePath - Absolute file path to check
      * @returns true if file should be included
      */
     private shouldInclude(filePath: string): boolean {
-        // Only include files with matching extensions
-        const ext = path.extname(filePath).toLowerCase();
-        if (!this.fileExtensions.includes(ext)) {
-            return false;
-        }
-
-        // If no include paths specified, include all matching files
-        if (this.includePaths.length === 0) {
-            return true;
-        }
-
-        // Normalize and lowercase for case-insensitive comparison (Windows)
-        const normalizedPath = path.normalize(filePath).toLowerCase();
-
-        // Check if file is under any of the include paths
-        return this.includePaths.some(includePath => {
-            const normalizedInclude = path.normalize(includePath).toLowerCase();
-            return normalizedPath.startsWith(normalizedInclude);
-        });
+        return this.pathFilter.shouldIncludeFile(filePath);
     }
 
     /**
@@ -207,12 +187,10 @@ export class FileWatcher implements vscode.Disposable {
     /**
      * Update configuration and recreate watchers.
      *
-     * @param includePaths - New list of directory paths to include
-     * @param fileExtensions - New list of file extensions to include
+     * @param pathFilter - New PathFilter instance
      */
-    updateConfig(includePaths: string[], fileExtensions: string[]): void {
-        this.includePaths = includePaths;
-        this.fileExtensions = fileExtensions.map(ext => ext.toLowerCase());
+    updateConfig(pathFilter: PathFilter): void {
+        this.pathFilter = pathFilter;
         this.createWatchers();
     }
 
@@ -220,14 +198,14 @@ export class FileWatcher implements vscode.Disposable {
      * Get the current include paths configuration.
      */
     getIncludePaths(): string[] {
-        return this.includePaths;
+        return this.pathFilter.getIncludePaths();
     }
 
     /**
      * Get the current file extensions configuration.
      */
     getFileExtensions(): string[] {
-        return this.fileExtensions;
+        return this.pathFilter.getFileExtensions();
     }
 
     /**

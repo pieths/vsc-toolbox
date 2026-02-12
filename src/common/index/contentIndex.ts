@@ -19,6 +19,7 @@ import {
 } from './types';
 import { log, warn, error } from '../logger';
 import { LlamaServer } from './llamaServer';
+import { PathFilter } from './pathFilter';
 
 /**
  * Get the content index configuration from VS Code settings.
@@ -32,10 +33,11 @@ function getConfig(): ContentIndexConfig {
     }
 
     const includePaths = config.get<string[]>('includePaths', []);
+    const excludePatterns = config.get<string[]>('excludePatterns', []);
     const fileExtensions = config.get<string[]>('fileExtensions', ['.cc', '.h']);
     const ctagsPath = config.get<string>('ctagsPath', 'ctags');
 
-    return { workerThreads, includePaths, fileExtensions, ctagsPath };
+    return { workerThreads, includePaths, excludePatterns, fileExtensions, ctagsPath };
 }
 
 /**
@@ -53,6 +55,7 @@ export class ContentIndex {
     private threadPool: ThreadPool | null = null;
     private fileWatcher: FileWatcher | null = null;
     private llamaServer: LlamaServer;
+    private pathFilter: PathFilter | null = null;
     private statusBarItem: vscode.StatusBarItem | null = null;
     private initialized: boolean = false;
     private disposed: boolean = false;
@@ -110,11 +113,12 @@ export class ContentIndex {
 
         try {
             const config = getConfig();
-            const { workerThreads, includePaths, fileExtensions, ctagsPath } = config;
+            const { workerThreads, includePaths, excludePatterns, fileExtensions, ctagsPath } = config;
 
             // Create components
             this.threadPool = new ThreadPool(workerThreads);
-            this.fileWatcher = new FileWatcher(this.cacheManager, includePaths, fileExtensions);
+            this.pathFilter = new PathFilter(includePaths, excludePatterns, fileExtensions);
+            this.fileWatcher = new FileWatcher(this.cacheManager, this.pathFilter);
 
             // Initialize llama server for embeddings
             this.llamaServer.initialize(context);
@@ -147,8 +151,7 @@ export class ContentIndex {
 
             // Start background indexing
             await this.cacheManager.initialize(
-                includePaths,
-                fileExtensions,
+                this.pathFilter,
                 ctagsPath,
                 this.threadPool,
                 this.llamaServer
@@ -172,10 +175,11 @@ export class ContentIndex {
      * Updates cache manager and file watcher with new settings.
      */
     private handleConfigChange(): void {
-        const { includePaths, fileExtensions } = getConfig();
+        const { includePaths, excludePatterns, fileExtensions } = getConfig();
 
-        this.cacheManager.updateConfig(includePaths, fileExtensions);
-        this.fileWatcher?.updateConfig(includePaths, fileExtensions);
+        this.pathFilter = new PathFilter(includePaths, excludePatterns, fileExtensions);
+        this.cacheManager.updateConfig(this.pathFilter);
+        this.fileWatcher?.updateConfig(this.pathFilter);
         log('ContentIndex: Configuration updated');
     }
 

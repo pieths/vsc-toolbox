@@ -262,6 +262,8 @@ export interface ContentIndexConfig {
     workerThreads: number;
     /** List of directory paths to include in search (empty = all workspace files) */
     includePaths: string[];
+    /** Picomatch glob patterns to exclude from the index */
+    excludePatterns: string[];
     /** List of file extensions to include (e.g., '.cc', '.h') */
     fileExtensions: string[];
     /** Path to the ctags executable */
