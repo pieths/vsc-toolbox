@@ -655,7 +655,6 @@ function computeChunksWithCtags(
     return {
         type: 'computeChunks',
         filePath: input.filePath,
-        sha256: '',
         chunks,
     };
 }
@@ -678,7 +677,6 @@ function computeChunksSimple(
     return {
         type: 'computeChunks',
         filePath: input.filePath,
-        sha256: '',
         chunks,
     };
 }
@@ -694,7 +692,6 @@ function computeChunksSimple(
 async function computeChunks(input: ComputeChunksInput): Promise<ComputeChunksOutput> {
     try {
         const contentBuffer = await fs.promises.readFile(input.filePath);
-        const sha256 = crypto.createHash('sha256').update(contentBuffer).digest('hex');
         const content = contentBuffer.toString('utf8');
         const lines = content.split('\n');
 
@@ -707,23 +704,18 @@ async function computeChunks(input: ComputeChunksInput): Promise<ComputeChunksOu
                 const tags = parseContainerTags(tagsContent);
 
                 if (tags.length > 0) {
-                    const result = computeChunksWithCtags(input, lines, tags);
-                    result.sha256 = sha256;
-                    return result;
+                    return computeChunksWithCtags(input, lines, tags);
                 }
             } catch {
                 // Tags file missing or unreadable – fall through to simple chunking
             }
         }
 
-        const result = computeChunksSimple(input, lines);
-        result.sha256 = sha256;
-        return result;
+        return computeChunksSimple(input, lines);
     } catch (error) {
         return {
             type: 'computeChunks',
             filePath: input.filePath,
-            sha256: '',
             chunks: [],
             error: error instanceof Error ? error.message : String(error),
         };
