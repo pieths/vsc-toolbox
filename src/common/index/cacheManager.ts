@@ -25,6 +25,7 @@ export class CacheManager {
     private fileExtensions: string[] = ['.cc', '.h'];
     private ctagsPath: string = 'ctags';
     private cacheDir: string = '';
+    private ctagsCacheDir: string = '';
     private threadPool: ThreadPool | null = null;
     private llamaServer: LlamaServer | null = null;
     private vectorDatabase: VectorDatabase | null = null;
@@ -84,11 +85,12 @@ export class CacheManager {
             this.threadPool,
         );
 
-        // Ensure cache directory and a-z subdirectories exist
-        if (this.cacheDir) {
+        // Ensure ctags cache directory and a-z subdirectories exist
+        this.ctagsCacheDir = this.cacheDir ? path.join(this.cacheDir, 'ctags') : '';
+        if (this.ctagsCacheDir) {
             const alphabet = 'abcdefghijklmnopqrstuvwxyz';
             // Create a subdirectory for each letter plus '_' for non-alpha filenames
-            const subdirs = [...alphabet, '_'].map(ch => path.join(this.cacheDir, ch));
+            const subdirs = [...alphabet, '_'].map(ch => path.join(this.ctagsCacheDir, ch));
             await Promise.all(subdirs.map(dir => fs.promises.mkdir(dir, { recursive: true })));
         }
 
@@ -145,7 +147,7 @@ export class CacheManager {
                 // Create FileIndex instances for each file
                 // isValid() handles cache restoration automatically via mtime comparison
                 for (const filePath of batch) {
-                    const fileIndex = new FileIndex(filePath, this.cacheDir);
+                    const fileIndex = new FileIndex(filePath, this.ctagsCacheDir);
                     this.cache.set(this.normalizePath(filePath), fileIndex);
                 }
 
@@ -376,7 +378,7 @@ export class CacheManager {
         const ext = path.extname(filePath).toLowerCase();
         const normalizedPath = this.normalizePath(filePath);
         if (!this.cache.has(normalizedPath) && this.fileExtensions.includes(ext)) {
-            const fileIndex = new FileIndex(filePath, this.cacheDir);
+            const fileIndex = new FileIndex(filePath, this.ctagsCacheDir);
             this.cache.set(normalizedPath, fileIndex);
             this.indexFiles([fileIndex]);
             log(`Content index: Added new file ${filePath}`);
