@@ -535,6 +535,30 @@ export class VectorDatabase {
         }
     }
 
+    // ── Update ──────────────────────────────────────────────────────────────
+
+    /**
+     * Update the start and end line numbers for multiple FileChunks.
+     *
+     * Only the line metadata is changed — the vector, links, and shadow
+     * chunks remain untouched.
+     *
+     * @param updates — array of objects with the FileChunk `id` and new line numbers.
+     */
+    async updateFileChunkLines(updates: { id: number; startLine: number; endLine: number }[]): Promise<void> {
+        if (updates.length === 0 || !this.fileChunksTable) {
+            return;
+        }
+        this.ensureOpen();
+
+        for (const { id, startLine, endLine } of updates) {
+            await this.fileChunksTable.update({
+                where: `id = ${id}`,
+                values: { startLine, endLine },
+            });
+        }
+    }
+
     // ── Search ──────────────────────────────────────────────────────────────
 
     /**

@@ -2,22 +2,15 @@
 // SPDX-License-Identifier: MIT
 
 import * as vscode from 'vscode';
-import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
-import * as crypto from 'crypto';
 import picomatch from 'picomatch';
 import { FileIndex } from './fileIndex';
 import { ThreadPool } from './threadPool';
-import {
-    IndexInput,
-    ComputeChunksInput,
-    ComputeChunksOutput,
-    SearchEmbeddingsInput,
-    NearestEmbeddingResult,
-} from './types';
+import { IndexInput, NearestEmbeddingResult } from './types';
 import { LlamaServer } from './llamaServer';
-import { VectorCache } from './vectorCache';
+import { VectorDatabase } from './vectorDatabase';
+import { EmbeddingProcessor } from './embeddingProcessor';
 import { log, warn, error } from '../logger';
 
 /**
@@ -34,7 +27,8 @@ export class CacheManager {
     private cacheDir: string = '';
     private threadPool: ThreadPool | null = null;
     private llamaServer: LlamaServer | null = null;
-    private vectorCache: VectorCache | null = null;
+    private vectorDatabase: VectorDatabase | null = null;
+    private embeddingProcessor: EmbeddingProcessor | null = null;
 
     /**
      * Normalize a file path for use as a cache key.
@@ -76,11 +70,19 @@ export class CacheManager {
             ? path.join(workspaceFolder.uri.fsPath, '.cache', 'vsctoolbox', 'index')
             : '';
 
-        // Try to restore the vector cache from disk, or create a fresh one
+        // Open (or create) the vector database
         if (this.cacheDir) {
-            this.vectorCache = await VectorCache.load(this.cacheDir) ?? new VectorCache(this.cacheDir);
-            log(`Content index: VectorCache allocated ${this.vectorCache.allocatedBytes.toLocaleString()} bytes`);
+            const dbPath = path.join(this.cacheDir, 'vectordb');
+            this.vectorDatabase = new VectorDatabase(dbPath, this.llamaServer.getDimensions());
+            await this.vectorDatabase.open();
+            log(`Content index: VectorDatabase opened at ${dbPath}`);
         }
+
+        this.embeddingProcessor = new EmbeddingProcessor(
+            this.vectorDatabase,
+            this.llamaServer,
+            this.threadPool,
+        );
 
         // Ensure cache directory and a-z subdirectories exist
         if (this.cacheDir) {
@@ -296,8 +298,8 @@ export class CacheManager {
 
     /**
      * Compute embeddings for the given files.
-     * Processes files in batches: for each batch, computes chunks via worker
-     * threads, then sends the chunk texts to the llama server for embedding.
+     * Delegates to {@link EmbeddingProcessor} which handles batching, diffing
+     * against the database, embedding, and persistence.
      *
      * @param files - Array of FileIndex instances to compute embeddings for
      */
@@ -306,148 +308,12 @@ export class CacheManager {
             return;
         }
 
-        if (!this.threadPool) {
-            warn('Content index: Cannot compute embeddings - thread pool not set');
+        if (!this.embeddingProcessor) {
+            warn('Content index: Cannot compute embeddings - not initialized');
             return;
         }
 
-        if (!this.llamaServer || !this.llamaServer.isReady()) {
-            warn('Content index: Cannot compute embeddings - llama server not ready');
-            return;
-        }
-        const batchSize = 50;
-        const startTime = Date.now();
-        let totalChunks = 0;
-        let totalVectors = 0;
-        let totalFiles = 0;
-
-        // Skip files whose content hasn't changed since last embedding
-        files = await this.filterUnchangedFiles(files);
-
-        if (files.length === 0) {
-            return;
-        }
-
-        log(`Content index: Starting embedding for ${files.length} files`);
-
-        for (let i = 0; i < files.length; i += batchSize) {
-            const batch = files.slice(i, i + batchSize);
-
-            // 1. Compute chunks for this batch via worker threads
-            const chunkInputs: ComputeChunksInput[] = batch.map(fi => ({
-                type: 'computeChunks' as const,
-                filePath: fi.getFilePath(),
-                ctagsPath: fi.getTagsPath(),
-            }));
-
-            const chunkOutputs = await this.threadPool.computeChunksAll(chunkInputs);
-
-            // 2. For each file's chunks, get embeddings from llama server
-            for (const chunkOutput of chunkOutputs) {
-                totalChunks += chunkOutput.chunks.length;
-
-                const vectors = await this.computeEmbeddingsForFile(chunkOutput);
-                if (vectors > 0) {
-                    totalVectors += vectors;
-                    totalFiles++;
-                }
-            }
-
-            log(`Content index: Embedding progress: ${Math.min(i + batchSize, files.length)}/${files.length} files`);
-        }
-
-        await this.vectorCache?.save();
-
-        const elapsed = Date.now() - startTime;
-        log(`Content index: Embedding complete: ${totalVectors} vectors from ${totalChunks} chunks across ${totalFiles} files in ${elapsed}ms`);
-    }
-
-    /**
-     * Filter out files whose content hasn't changed since their embeddings
-     * were last computed. Compares the current file's SHA-256 hash against
-     * the hash stored in the vector cache.
-     *
-     * @param files - Array of FileIndex instances to check
-     * @returns Filtered array containing only files that need re-embedding
-     */
-    private async filterUnchangedFiles(files: FileIndex[]): Promise<FileIndex[]> {
-        if (!this.vectorCache || files.length === 0) {
-            return files;
-        }
-
-        const originalCount = files.length;
-        const filtered: FileIndex[] = [];
-
-        for (const fi of files) {
-            const entry = this.vectorCache.getFileEntry(fi.getFilePath());
-            if (entry) {
-                try {
-                    const buf = await fs.promises.readFile(fi.getFilePath());
-                    const sha256 = crypto.createHash('sha256').update(buf).digest('hex');
-                    if (sha256 === entry.sha256) {
-                        continue; // unchanged — skip re-embedding
-                    }
-                } catch {
-                    // File unreadable — include it so the error surfaces later
-                }
-            }
-            filtered.push(fi);
-        }
-
-        return filtered;
-    }
-
-    /**
-     * Compute and store embeddings for a single file's chunk output.
-     * Filters out any failed embeddings (undefined slots from partial failures)
-     * so that partial results are still cached.
-     *
-     * @param chunkOutput - The chunking result for a single file
-     * @returns Number of vectors successfully stored
-     */
-    private async computeEmbeddingsForFile(
-        chunkOutput: ComputeChunksOutput,
-    ): Promise<number> {
-        if (chunkOutput.error) {
-            warn(`Content index: Chunk error for ${chunkOutput.filePath}: ${chunkOutput.error}`);
-            return 0;
-        }
-
-        if (chunkOutput.chunks.length === 0) {
-            return 0;
-        }
-
-        const chunks = chunkOutput.chunks;
-        const texts = chunks.map(c => c.text);
-        const vectors = await this.llamaServer!.embedBatch(texts, true);
-
-        if (!vectors) {
-            warn(`Content index: Failed to embed ${chunkOutput.filePath}`);
-            return 0;
-        }
-
-        // Filter out any failed embeddings (undefined slots from partial failures)
-        const validRanges = [];
-        const validVectors = [];
-        for (let i = 0; i < vectors.length; i++) {
-            if (vectors[i]) {
-                validRanges.push({
-                    startLine: chunks[i].startLine,
-                    endLine: chunks[i].endLine
-                });
-                validVectors.push(vectors[i]);
-            }
-        }
-
-        if (validVectors.length < vectors.length) {
-            warn(`Content index: ${vectors.length - validVectors.length}/${vectors.length} embeddings failed for ${chunkOutput.filePath}`);
-        }
-
-        if (validVectors.length > 0) {
-            this.vectorCache?.add(chunkOutput.filePath, chunkOutput.sha256, validRanges, validVectors);
-        }
-
-        return validVectors.length;
+        await this.embeddingProcessor.run(files);
     }
 
     /**
@@ -595,94 +461,29 @@ export class CacheManager {
     }
 
     /**
-     * Search the vector cache for the nearest embeddings to a query vector.
-     * Splits work across all available CPU cores via the thread pool.
+     * Search the vector database for the nearest embeddings to a query vector.
      *
      * @param queryVector - Embedding vector for the query (Float32Array of length `dims`)
      * @param topK - Maximum number of results to return
-     * @returns Array of { filePath, startLine, endLine } ordered from most to least similar
+     * @returns Array of { filePath, startLine, endLine, score } ordered from most to least similar
      */
     async getNearestEmbeddings(
         queryVector: Float32Array,
         topK: number,
     ): Promise<NearestEmbeddingResult[]> {
-        if (!this.vectorCache || !this.threadPool) {
+        if (!this.vectorDatabase) {
             return [];
         }
 
-        // Collect all live slot indices from every file in the vector cache
-        // TODO: should this be a method in VectorCache?
-        const allSlots: number[] = [];
-        for (const filePath of this.vectorCache.getFilePaths()) {
-            const entry = this.vectorCache.getFileEntry(filePath);
-            if (!entry) continue;
-            for (let i = 0; i < entry.ranges.length; i++) {
-                allSlots.push(entry.startSlot + i);
-            }
-        }
+        const hits = await this.vectorDatabase.getNearestFileChunks(queryVector, topK);
 
-        if (allSlots.length === 0) {
-            return [];
-        }
-
-        // Split slots into consecutive groups, one per CPU core.
-        // Consecutive assignment keeps each worker's slots closer together
-        // in the SharedArrayBuffer, improving memory access locality.
-        const numGroups = Math.min(os.cpus().length, allSlots.length);
-        const baseSize = Math.floor(allSlots.length / numGroups);
-        const remainder = allSlots.length % numGroups;
-        const groups: number[][] = [];
-        let offset = 0;
-        for (let g = 0; g < numGroups; g++) {
-            const size = baseSize + (g < remainder ? 1 : 0);
-            groups.push(allSlots.slice(offset, offset + size));
-            offset += size;
-        }
-
-        // Build a SearchEmbeddingsInput for each group, sharing the same SAB
-        const sab = this.vectorCache.buffer;
-        const dims = this.vectorCache.dims;
-        const inputs: SearchEmbeddingsInput[] = groups.map(slots => ({
-            type: 'searchEmbeddings' as const,
-            vectors: sab,
-            dims,
-            queryVector,
-            slots,
-            topK,
+        // Convert cosine distance (0 = identical, 2 = opposite) to
+        // cosine similarity score (1 = identical, -1 = opposite)
+        return hits.map(hit => ({
+            filePath: hit.filePath,
+            startLine: hit.startLine,
+            endLine: hit.endLine,
+            score: 1 - hit._distance,
         }));
-
-        // Fan out to worker threads
-        const outputs = await this.threadPool.searchEmbeddingsAll(inputs);
-
-        // Merge results from all workers and pick the overall top-K
-        const merged: { slot: number; score: number }[] = [];
-        for (const output of outputs) {
-            if (output.error) {
-                warn(`Content index: Embedding search error: ${output.error}`);
-                continue;
-            }
-            for (let i = 0; i < output.slots.length; i++) {
-                merged.push({ slot: output.slots[i], score: output.scores[i] });
-            }
-        }
-
-        merged.sort((a, b) => b.score - a.score);
-        const topResults = merged.slice(0, topK);
-
-        // Resolve each slot back to file path + line range
-        const results: NearestEmbeddingResult[] = [];
-        for (const { slot, score } of topResults) {
-            const entry = this.vectorCache.getSlotEntry(slot);
-            if (entry) {
-                results.push({
-                    filePath: entry.fileEntry.filePath,
-                    startLine: entry.range.startLine,
-                    endLine: entry.range.endLine,
-                    score,
-                });
-            }
-        }
-
-        return results;
     }
 }
