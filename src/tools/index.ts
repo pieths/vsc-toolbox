@@ -4,7 +4,7 @@
 import * as vscode from 'vscode';
 import { GetWorkspaceSymbolTool } from './getWorkspaceSymbol';
 import { GetDocumentSymbolReferencesTool } from './getDocumentSymbolReferences';
-import { ContentSearchTool } from './contentSearch';
+import { SearchIndexTool } from './searchIndex';
 import { SearchEmbeddingsTool } from './searchEmbeddings';
 
 /**
@@ -23,6 +23,6 @@ export interface ToolRegistryEntry {
 export const TOOL_REGISTRY: ToolRegistryEntry[] = [
     { name: 'getWorkspaceSymbol', class: GetWorkspaceSymbolTool },
     { name: 'getDocumentSymbolReferences', class: GetDocumentSymbolReferencesTool },
-    { name: 'contentSearch', class: ContentSearchTool },
+    { name: 'searchIndex', class: SearchIndexTool },
     { name: 'searchEmbeddings', class: SearchEmbeddingsTool },
 ];

@@ -47,7 +47,7 @@ VSC Toolbox is a collection of productivity tools for VS Code that includes:
   across your entire codebase with fuzzy matching
 - **getDocumentSymbolReferences** - Find all references to a symbol at a
   specific location
-- **contentSearch** - Content search across indexed files
+- **searchIndex** - Content search across indexed files
   using worker threads, with glob pattern support
 
 ## Prerequisites
@@ -388,14 +388,14 @@ Find all references to a symbol at a specific location.
 }
 ```
 
-#### contentSearch
+#### searchIndex
 
 Content search.
 
 **Request Format:**
 ```json
 {
-  "tool": "contentSearch",
+  "tool": "searchIndex",
   "arguments": {
     "query": "HttpRequest GetHeaders"
   }
@@ -582,7 +582,7 @@ vsc-toolbox/
 │       ├── index.ts         # Tool registry
 │       ├── getWorkspaceSymbol.ts      # Workspace symbol tool
 │       ├── getDocumentSymbolReferences.ts  # References tool
-│       └── contentSearch.ts   # Content search tool
+│       └── searchIndex.ts     # Search index tool
 ├── out/                     # Compiled JavaScript (generated)
 ├── node_modules/            # Dependencies (generated)
 ├── package.json             # Extension manifest and dependencies

@@ -269,11 +269,3 @@ export interface ContentIndexConfig {
     /** Path to the ctags executable */
     ctagsPath: string;
 }
-
-/**
- * Input parameters for the language model tool
- */
-export interface ContentSearchParams {
-    /** Search query with space-separated OR terms and glob wildcards */
-    query: string;
-}

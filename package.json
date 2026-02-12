@@ -250,10 +250,10 @@
         }
       },
       {
-        "name": "contentSearch",
-        "displayName": "Content Search",
+        "name": "searchIndex",
+        "displayName": "Search Index",
         "canBeReferencedInPrompt": true,
-        "toolReferenceName": "content-search",
+        "toolReferenceName": "search-index",
         "userDescription": "Search for patterns across indexed content",
         "modelDescription": "Search for patterns across indexed content. Supports glob patterns (* and ?) and AND operations (space-separated terms). Returns matching lines grouped by file with line numbers. Use this for fast full-text search across large codebases.",
         "inputSchema": {

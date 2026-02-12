@@ -87,8 +87,8 @@ export class TestLanguageModelToolCommand {
             case 'getDocumentSymbolReferences':
                 return this.getTextDocumentReferencesInput();
 
-            case 'contentSearch':
-                return this.getContentSearchInput();
+            case 'searchIndex':
+                return this.getSearchIndexInput();
 
             case 'searchEmbeddings':
                 return this.getSearchEmbeddingsInput();
@@ -181,9 +181,9 @@ export class TestLanguageModelToolCommand {
     }
 
     /**
-     * Get input for contentSearch tool
+     * Get input for searchIndex tool
      */
-    private async getContentSearchInput(): Promise<any | undefined> {
+    private async getSearchIndexInput(): Promise<any | undefined> {
         // Use current selection as default query if available
         const editor = vscode.window.activeTextEditor;
         const selection = editor?.selection;

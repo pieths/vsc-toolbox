@@ -9,7 +9,7 @@ import { getModel, sendRequestWithReadFileAccess } from '../common/copilotUtils'
 /**
  * Input parameters for the language model tool
  */
-interface ContentSearchParams {
+interface SearchIndexParams {
     /** Search query with space-separated OR terms and glob wildcards */
     query: string;
     /** Optional comma-separated glob patterns to include only matching file paths */
@@ -112,14 +112,14 @@ function formatResults(resultsWithContainers: ResultWithContainer[], query: stri
 }
 
 /**
- * ContentSearchTool is a VS Code Language Model Tool that provides
+ * SearchIndexTool is a VS Code Language Model Tool that provides
  * content search functionality using the ContentIndex.
  */
-export class ContentSearchTool implements vscode.LanguageModelTool<ContentSearchParams> {
+export class SearchIndexTool implements vscode.LanguageModelTool<SearchIndexParams> {
     constructor(_context: vscode.ExtensionContext) { }
 
     async invoke(
-        options: vscode.LanguageModelToolInvocationOptions<ContentSearchParams>,
+        options: vscode.LanguageModelToolInvocationOptions<SearchIndexParams>,
         token: vscode.CancellationToken
     ): Promise<vscode.LanguageModelToolResult> {
         const startTime = Date.now();
