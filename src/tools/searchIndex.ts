@@ -101,7 +101,7 @@ function formatResults(resultsWithContainers: ResultWithContainer[], query: stri
 
             for (const item of containerResults) {
                 const escapedText = item.result.text.replace(/`/g, '\\`');
-                markdown += `- ${item.result.line}: \`${escapedText}\`\n`;
+                markdown += `${item.result.line}: \`${escapedText}\`\n`;
             }
 
             markdown += '\n';
