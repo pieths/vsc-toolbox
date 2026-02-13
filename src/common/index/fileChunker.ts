@@ -98,14 +98,28 @@ interface ContainerRange {
     signature?: string;
 }
 
+/** Result of parsing a ctags JSON file */
+interface ParsedTags {
+    /** Container tag entries with line ranges */
+    tags: TagEntry[];
+    /**
+     * 1-based line number of the first tag of any kind in the file,
+     * or undefined if the file contains no tags at all.
+     */
+    firstTagLine: number | undefined;
+}
+
 /**
- * Parse a ctags JSON file and return container entries that have an end line.
+ * Parse a ctags JSON file and return container entries
+ * that have an end line, along with the line number of
+ * the very first tag (of any kind) in the file.
  *
  * @param tagsContent - Raw content of the ctags JSON file
- * @returns Array of tag entries with line ranges
+ * @returns Parsed container tags and the first-tag line number
  */
-function parseContainerTags(tagsContent: string): TagEntry[] {
+function parseContainerTags(tagsContent: string): ParsedTags {
     const tags: TagEntry[] = [];
+    let firstTagLine: number | undefined;
 
     for (const line of tagsContent.split('\n')) {
         if (!line.trim()) continue;
@@ -117,6 +131,18 @@ function parseContainerTags(tagsContent: string): TagEntry[] {
         try {
             const entry = JSON.parse(line);
             if (entry._type !== 'tag') continue;
+
+            // Track the earliest tag line across all tag kinds.
+            // Everything before this first tag will be filtered out.
+            // Usually just copyright, includes and namespaces. There
+            // might be some useful defines or comments before the first
+            // tag but for now this is a simple heuristic to skip large
+            // untagged preambles that are usually not relevant for search
+            // and just add noise.
+            if (firstTagLine === undefined || entry.line < firstTagLine) {
+                firstTagLine = entry.line;
+            }
+
             if (entry.end === undefined) continue;
             if (!CHUNK_CONTAINER_KINDS.has(entry.kind)) continue;
 
@@ -134,7 +160,7 @@ function parseContainerTags(tagsContent: string): TagEntry[] {
         }
     }
 
-    return tags;
+    return { tags, firstTagLine };
 }
 
 // Regex for replacing anonymous namespace markers (compiled once)
@@ -375,14 +401,22 @@ function prependPrefixes(
 function computeChunksWithCtags(
     input: ComputeChunksInput,
     lines: string[],
-    tags: TagEntry[],
+    parsedTags: ParsedTags,
 ): ComputeChunksOutput {
+    const { tags, firstTagLine } = parsedTags;
     const totalLines = lines.length;
     const topLevelRanges = findTopLevelRanges(tags);
     expandRangesToIncludePrecedingLines(topLevelRanges, lines);
     const chunks: Chunk[] = [];
 
     let cursor = 1; // 1-based current line
+
+    // Skip preamble (copyright, includes, etc.) before the first tag in
+    // the file when that tag falls before the first container range.
+    if (firstTagLine !== undefined && topLevelRanges.length > 0 &&
+        firstTagLine < topLevelRanges[0].startLine) {
+        cursor = firstTagLine;
+    }
 
     for (const range of topLevelRanges) {
         // Chunk the gap before this container (includes, forward decls, etc.)
@@ -456,10 +490,10 @@ export async function computeChunks(input: ComputeChunksInput): Promise<ComputeC
             // Try to read the ctags file; fall back to simple chunking if unavailable
             try {
                 const tagsContent = await fs.promises.readFile(input.ctagsPath, 'utf8');
-                const tags = parseContainerTags(tagsContent);
+                const parsedTags = parseContainerTags(tagsContent);
 
-                if (tags.length > 0) {
-                    return computeChunksWithCtags(input, lines, tags);
+                if (parsedTags.tags.length > 0) {
+                    return computeChunksWithCtags(input, lines, parsedTags);
                 }
             } catch {
                 // Tags file missing or unreadable – fall through to simple chunking
