@@ -73,6 +73,15 @@ const CHUNK_CONTAINER_KINDS = new Set([
     'method', 'enum', 'interface'
 ]);
 
+/**
+ * Check whether a ctags entry is a preamble tag that should be
+ * ignored when computing the first meaningful tag line.
+ * Currently matches include guard macros (names ending in "_H_").
+ */
+function isPreambleTag(entry: { kind: string; name: string }): boolean {
+    return entry.kind === 'macro' && entry.name.endsWith('_H_');
+}
+
 /** Minimal tag entry used for chunking */
 interface TagEntry {
     name: string;
@@ -132,14 +141,17 @@ function parseContainerTags(tagsContent: string): ParsedTags {
             const entry = JSON.parse(line);
             if (entry._type !== 'tag') continue;
 
-            // Track the earliest tag line across all tag kinds.
+            // Track the earliest tag line across all tag kinds,
+            // excluding preamble tags (e.g. include guard macros)
+            // which appear at the top of header files.
             // Everything before this first tag will be filtered out.
             // Usually just copyright, includes and namespaces. There
             // might be some useful defines or comments before the first
             // tag but for now this is a simple heuristic to skip large
             // untagged preambles that are usually not relevant for search
             // and just add noise.
-            if (firstTagLine === undefined || entry.line < firstTagLine) {
+            if (!isPreambleTag(entry) &&
+                (firstTagLine === undefined || entry.line < firstTagLine)) {
                 firstTagLine = entry.line;
             }
 
