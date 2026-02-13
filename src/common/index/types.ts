@@ -198,49 +198,6 @@ export interface ComputeChunksOutput {
 }
 
 /**
- * Input data sent to a worker thread for searching embeddings
- * via cosine similarity against a shared vector buffer.
- *
- * The `vectors` field is a SharedArrayBuffer and is transferred by
- * reference (zero-copy) to the worker thread.
- */
-export interface SearchEmbeddingsInput {
-    /** Discriminator for message type */
-    type: 'searchEmbeddings';
-    /** SharedArrayBuffer holding all embedding vectors contiguously (Float32 layout) */
-    vectors: SharedArrayBuffer;
-    /** Embedding dimensionality (number of floats per vector) */
-    dims: number;
-    /** The query embedding vector (one Float32Array of length `dims`) */
-    queryVector: Float32Array;
-    /** Slot indices into `vectors` that should be compared against the query */
-    slots: number[];
-    /** Maximum number of top results to return */
-    topK: number;
-}
-
-/**
- * Output data returned from a worker thread after an embedding search
- */
-export interface SearchEmbeddingsOutput {
-    /** Discriminator for message type */
-    type: 'searchEmbeddings';
-    /**
-     * Slot indices of the top-K most similar vectors, sorted from
-     * most similar (highest cosine similarity) to least similar.
-     * May contain fewer than `topK` entries if fewer slots were provided.
-     */
-    slots: number[];
-    /**
-     * Cosine similarity scores corresponding to each returned slot
-     * (same order as `slots`).
-     */
-    scores: number[];
-    /** Error message if the search failed */
-    error?: string;
-}
-
-/**
  * A single result from a nearest-embedding search.
  */
 export interface NearestEmbeddingResult {

@@ -11,8 +11,6 @@ import {
     IndexStatus,
     ComputeChunksInput,
     ComputeChunksOutput,
-    SearchEmbeddingsInput,
-    SearchEmbeddingsOutput,
 } from './types';
 import { log, error } from '../logger';
 
@@ -46,17 +44,7 @@ interface QueuedComputeChunksTask {
     reject: (error: Error) => void;
 }
 
-/**
- * Represents an embedding search task in the queue waiting to be processed
- */
-interface QueuedSearchEmbeddingsTask {
-    type: 'searchEmbeddings';
-    input: SearchEmbeddingsInput;
-    resolve: (output: SearchEmbeddingsOutput) => void;
-    reject: (error: Error) => void;
-}
-
-type QueuedTask = QueuedSearchTask | QueuedIndexTask | QueuedComputeChunksTask | QueuedSearchEmbeddingsTask;
+type QueuedTask = QueuedSearchTask | QueuedIndexTask | QueuedComputeChunksTask;
 
 /**
  * ThreadPool manages a pool of worker threads for parallel content
@@ -93,7 +81,7 @@ export class ThreadPool {
 
         const worker = new Worker(workerPath);
 
-        worker.on('message', (output: SearchOutput | IndexOutput | ComputeChunksOutput | SearchEmbeddingsOutput) => {
+        worker.on('message', (output: SearchOutput | IndexOutput | ComputeChunksOutput) => {
             // Get the task that was being processed
             const task = this.workerTaskMap.get(worker);
             this.workerTaskMap.delete(worker);
@@ -104,8 +92,6 @@ export class ThreadPool {
                     task.resolve(output as IndexOutput);
                 } else if (task.type === 'computeChunks') {
                     task.resolve(output as ComputeChunksOutput);
-                } else if (task.type === 'searchEmbeddings') {
-                    task.resolve(output as SearchEmbeddingsOutput);
                 } else {
                     task.resolve(output as SearchOutput);
                 }
@@ -140,13 +126,6 @@ export class ThreadPool {
                         type: 'computeChunks',
                         filePath: task.input.filePath,
                         chunks: [],
-                        error: error.message
-                    });
-                } else if (task.type === 'searchEmbeddings') {
-                    task.resolve({
-                        type: 'searchEmbeddings',
-                        slots: [],
-                        scores: [],
                         error: error.message
                     });
                 } else {
@@ -358,51 +337,6 @@ export class ThreadPool {
     }
 
     /**
-     * Submit an embedding search task to the pool.
-     *
-     * The SharedArrayBuffer in the input is transferred by reference
-     * (zero-copy) to the worker thread, which is the standard behaviour
-     * for SharedArrayBuffer with worker_threads.
-     *
-     * @param input - Embedding search input with shared vector buffer, query, and slot list
-     * @returns Promise that resolves with the top-K most similar slot indices
-     */
-    submitSearchEmbeddings(input: SearchEmbeddingsInput): Promise<SearchEmbeddingsOutput> {
-        if (this.disposed) {
-            return Promise.resolve({
-                type: 'searchEmbeddings',
-                slots: [],
-                scores: [],
-                error: 'Thread pool has been disposed'
-            });
-        }
-
-        return new Promise((resolve, reject) => {
-            this.taskQueue.push({ type: 'searchEmbeddings', input, resolve, reject });
-            this.processNextTask();
-        });
-    }
-
-    /**
-     * Run multiple embedding search tasks in parallel.
-     *
-     * @param inputs - Array of embedding search inputs to process
-     * @returns Promise that resolves with all embedding search results
-     */
-    async searchEmbeddingsAll(inputs: SearchEmbeddingsInput[]): Promise<SearchEmbeddingsOutput[]> {
-        if (this.disposed) {
-            return inputs.map(() => ({
-                type: 'searchEmbeddings' as const,
-                slots: [],
-                scores: [],
-                error: 'Thread pool has been disposed'
-            }));
-        }
-
-        return Promise.all(inputs.map(input => this.submitSearchEmbeddings(input)));
-    }
-
-    /**
      * Search multiple files in parallel.
      *
      * @param inputs - Array of search inputs to process
@@ -473,13 +407,6 @@ export class ThreadPool {
                     type: 'computeChunks',
                     filePath: task.input.filePath,
                     chunks: [],
-                    error: 'Thread pool disposed'
-                });
-            } else if (task.type === 'searchEmbeddings') {
-                task.resolve({
-                    type: 'searchEmbeddings',
-                    slots: [],
-                    scores: [],
                     error: 'Thread pool disposed'
                 });
             } else {

@@ -22,8 +22,6 @@ import type {
     IndexInput,
     IndexOutput,
     ComputeChunksInput,
-    SearchEmbeddingsInput,
-    SearchEmbeddingsOutput,
 } from './types';
 import { computeChunks } from './fileChunker';
 
@@ -269,117 +267,14 @@ async function indexFile(input: IndexInput): Promise<IndexOutput> {
     }
 }
 
-// ── Embedding search ────────────────────────────────────────────────────────
-
-/**
- * Search a set of embedding vectors for the top-K most similar to a query
- * vector using cosine similarity.
- *
- * The `input.vectors` SharedArrayBuffer is received by reference (zero-copy)
- * because `SharedArrayBuffer` is explicitly designed for cross-thread sharing
- * without structured-clone copying.
- *
- * @param input - Search embeddings input with shared vector buffer, query, and slot list
- * @returns Output with the top-K most similar slot indices and their scores
- */
-// TODO: add a new worker task which normalizes all vectors to unit length
-// which can be run at indexing time to speed up cosine similarity search
-// (only dot product needed at query time).
-function searchEmbeddings(input: SearchEmbeddingsInput): SearchEmbeddingsOutput {
-    try {
-        const { vectors: sab, dims, queryVector, slots, topK } = input;
-
-        if (queryVector.length !== dims) {
-            return {
-                type: 'searchEmbeddings',
-                slots: [],
-                scores: [],
-                error: `Query vector length (${queryVector.length}) does not match dims (${dims})`,
-            };
-        }
-
-        if (slots.length === 0) {
-            return { type: 'searchEmbeddings', slots: [], scores: [] };
-        }
-
-        const allVectors = new Float32Array(sab);
-
-        // Pre-compute query magnitude
-        let queryMagSq = 0;
-        for (let d = 0; d < dims; d++) {
-            queryMagSq += queryVector[d] * queryVector[d];
-        }
-        const queryMag = Math.sqrt(queryMagSq);
-
-        if (queryMag === 0) {
-            return {
-                type: 'searchEmbeddings',
-                slots: [],
-                scores: [],
-                error: 'Query vector has zero magnitude',
-            };
-        }
-
-        // Compute cosine similarity for every requested slot
-        // but only keep the top K results to return.
-        const k = Math.min(topK, slots.length);
-
-        // Simple approach: collect all (slot, score) pairs, then partial-sort.
-        // For typical topK << slots.length this is efficient enough and avoids
-        // the complexity of a heap implementation.
-        const scored: { slot: number; score: number }[] = new Array(slots.length);
-
-        for (let i = 0; i < slots.length; i++) {
-            const slot = slots[i];
-            const offset = slot * dims;
-
-            let dot = 0;
-            let vecMagSq = 0;
-            for (let d = 0; d < dims; d++) {
-                const v = allVectors[offset + d];
-                dot += queryVector[d] * v;
-                vecMagSq += v * v;
-            }
-
-            const vecMag = Math.sqrt(vecMagSq);
-            const score = vecMag > 0 ? dot / (queryMag * vecMag) : 0;
-            scored[i] = { slot, score };
-        }
-
-        // Full sort descending, then take the first k elements.
-        // A partial sort (e.g. min-heap) would be faster for small k
-        // relative to n, but the simplicity here is fine for now.
-        scored.sort((a, b) => b.score - a.score);
-
-        const topSlots = new Array<number>(k);
-        const topScores = new Array<number>(k);
-        for (let i = 0; i < k; i++) {
-            topSlots[i] = scored[i].slot;
-            topScores[i] = scored[i].score;
-        }
-
-        return { type: 'searchEmbeddings', slots: topSlots, scores: topScores };
-    } catch (error) {
-        return {
-            type: 'searchEmbeddings',
-            slots: [],
-            scores: [],
-            error: error instanceof Error ? error.message : String(error),
-        };
-    }
-}
-
 // Listen for messages from the main thread
 if (parentPort) {
-    parentPort.on('message', async (input: SearchInput | IndexInput | ComputeChunksInput | SearchEmbeddingsInput) => {
+    parentPort.on('message', async (input: SearchInput | IndexInput | ComputeChunksInput) => {
         if (input.type === 'index') {
             const output = await indexFile(input);
             parentPort!.postMessage(output);
         } else if (input.type === 'computeChunks') {
             const output = await computeChunks(input);
-            parentPort!.postMessage(output);
-        } else if (input.type === 'searchEmbeddings') {
-            const output = searchEmbeddings(input);
             parentPort!.postMessage(output);
         } else {
             const output = await searchFile(input);
