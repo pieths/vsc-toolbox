@@ -283,14 +283,26 @@ const CHUNK_OVERLAP_LINES = 15;
 const MIN_CHUNK_CHARS = 75;
 
 /**
- * Matches lines that are purely boilerplate: closing braces (with optional
- * namespace comments), #endif guards, and #pragma once.
+ * Check whether a single line is purely boilerplate that adds no meaningful
+ * content for embedding search (e.g. closing braces, preprocessor guards,
+ * standalone comments).
+ *
+ * @param trimmedLine - The trimmed (no leading/trailing whitespace) line text
+ * @returns true if the line matches a known boilerplate pattern
  */
-const BOILERPLATE_LINE = /^\s*(\}[;,]?\s*(\/\/.*)?|#endif\b.*|#pragma\s+once\s*)$/;
+function isBoilerplateLine(trimmedLine: string): boolean {
+    if (!trimmedLine) return true;                                      // blank line
+    if (trimmedLine.startsWith('//')) return true;                      // comment
+    if (/^\}[;,]?\s*(\/\/.*)?$/.test(trimmedLine)) return true;        // closing brace
+    if (trimmedLine.startsWith('#endif')) return true;                  // #endif guard
+    if (trimmedLine.startsWith('#pragma once')) return true;            // #pragma once
+    if (/^#(if|ifdef|ifndef|elif|else)\b/.test(trimmedLine)) return true; // preprocessor conditional
+    return false;
+}
 
 /**
  * Check whether a chunk consists entirely of boilerplate lines
- * (closing braces, namespace-closing comments, #endif guards, blank lines).
+ * (closing braces, comments, preprocessor guards, blank lines).
  * These chunks add noise to embedding search results without providing
  * meaningful content.
  *
@@ -298,11 +310,11 @@ const BOILERPLATE_LINE = /^\s*(\}[;,]?\s*(\/\/.*)?|#endif\b.*|#pragma\s+once\s*)
  * @returns true if every non-empty line matches a boilerplate pattern
  */
 function isBoilerplateChunk(trimmedText: string): boolean {
-    if (trimmedText.length > 175) {
+    if (trimmedText.length > 200) {
         return false;
     }
     return trimmedText.split('\n').every(
-        line => !line.trim() || BOILERPLATE_LINE.test(line),
+        line => isBoilerplateLine(line.trim()),
     );
 }
 
