@@ -24,9 +24,11 @@ interface ModelConfig {
     /** Number of embedding dimensions */
     dimensions: number;
     /** Number of parallel slots (-np). Also used as the concurrency limit for embedBatch(). */
-    parallelSlots: { cpu: number };
+    parallelSlots: { cpu: number; gpu: number };
     /** CPU-specific llama-server CLI args (context, batch size, rope, pooling, etc.) */
     cpuArgs: string[];
+    /** GPU-specific llama-server CLI args (typically higher batch sizes) */
+    gpuArgs: string[];
     /** Prefix to prepend to user queries before embedding (empty string if none needed) */
     queryPrefix: string;
     /** Prefix to prepend to documents/passages during indexing (empty string if none needed) */
@@ -50,11 +52,18 @@ const MODELS: ModelConfig[] = [
         sha256: '3e24342164b3d94991ba9692fdc0dd08e3fd7362e0aacc396a9a5c54a544c3b7',
         filename: 'nomic-embed-text-v1.5.Q8_0.gguf',
         dimensions: 768,
-        parallelSlots: { cpu: 16 },
+        parallelSlots: { cpu: 16, gpu: 64 },
         cpuArgs: [
             '-c', String(16 * 2048),  // 2048 tokens/slot
             '-b', '2048', '-ub', '2048',
             '--rope-scaling', 'yarn', '--rope-freq-scale', '0.75',
+        ],
+        gpuArgs: [
+            '-c', String(64 * 2048),  // 2048 tokens/slot, more slots on GPU
+            '-b', '2048', '-ub', '2048',
+            '--rope-scaling', 'yarn', '--rope-freq-scale', '0.75',
+            '-ngl', '99',             // Offload all layers to GPU
+            '--flash-attn', 'on',     // Use Flash Attention for efficiency
         ],
         queryPrefix: 'search_query: ',
         indexPrefix: '',
@@ -67,11 +76,17 @@ const MODELS: ModelConfig[] = [
         sha256: 'd4e388894e09cf3816e8b0896d81d265b55e7a9fff9ab03fe8bf4ef5e11295ac',
         filename: 'nomic-embed-text-v1.5.Q4_K_M.gguf',
         dimensions: 768,
-        parallelSlots: { cpu: 16 },
+        parallelSlots: { cpu: 16, gpu: 64 },
         cpuArgs: [
             '-c', String(16 * 2048),  // 2048 tokens/slot
             '-b', '2048', '-ub', '2048',
             '--rope-scaling', 'yarn', '--rope-freq-scale', '0.75',
+        ],
+        gpuArgs: [
+            '-c', String(64 * 2048),  // 2048 tokens/slot, more slots on GPU
+            '-b', '2048', '-ub', '2048',
+            '--rope-scaling', 'yarn', '--rope-freq-scale', '0.75',
+            '-ngl', '99',
         ],
         queryPrefix: 'search_query: ',
         indexPrefix: '',
@@ -85,11 +100,18 @@ const MODELS: ModelConfig[] = [
         sha256: '',
         filename: 'nomic-embed-code.Q4_K_M.gguf',
         dimensions: 768,
-        parallelSlots: { cpu: 2 },
+        parallelSlots: { cpu: 2, gpu: 8 },
         cpuArgs: [
             '-c', String(2 * 4096),   // 4096 tokens/slot
             '-b', '4096', '-ub', '4096',
             '--pooling', 'last',
+        ],
+        gpuArgs: [
+            '-c', String(8 * 4096),   // 4096 tokens/slot, more slots on GPU
+            '-b', '4096', '-ub', '4096',
+            '--pooling', 'last',
+            '-ngl', '99',
+            '--flash-attn', 'on',
         ],
         queryPrefix: 'Represent this query for searching relevant code: ',
         indexPrefix: '',
@@ -104,11 +126,18 @@ const MODELS: ModelConfig[] = [
         sha256: '',
         filename: 'coderankembed-q4_k_m.gguf',
         dimensions: 768,
-        parallelSlots: { cpu: 16 },
+        parallelSlots: { cpu: 16, gpu: 64 },
         cpuArgs: [
             '-c', String(16 * 2048),  // 2048 tokens/slot
             '-b', '2048', '-ub', '2048',
             '--rope-scaling', 'yarn', '--rope-freq-scale', '0.75',
+        ],
+        gpuArgs: [
+            '-c', String(64 * 2048),  // 2048 tokens/slot, more slots on GPU
+            '-b', '2048', '-ub', '2048',
+            '--rope-scaling', 'yarn', '--rope-freq-scale', '0.75',
+            '-ngl', '99',
+            '--flash-attn', 'on',
         ],
         queryPrefix: 'Represent this query for searching relevant code: ',
         indexPrefix: '',
@@ -123,11 +152,18 @@ const MODELS: ModelConfig[] = [
         sha256: '',
         filename: 'coderankembed-q8_0.gguf',
         dimensions: 768,
-        parallelSlots: { cpu: 16 },
+        parallelSlots: { cpu: 16, gpu: 64 },
         cpuArgs: [
             '-c', String(16 * 2048),  // 2048 tokens/slot
             '-b', '2048', '-ub', '2048',
             '--rope-scaling', 'yarn', '--rope-freq-scale', '0.75',
+        ],
+        gpuArgs: [
+            '-c', String(64 * 2048),  // 2048 tokens/slot, more slots on GPU
+            '-b', '2048', '-ub', '2048',
+            '--rope-scaling', 'yarn', '--rope-freq-scale', '0.75',
+            '-ngl', '99',
+            '--flash-attn', 'on',
         ],
         queryPrefix: 'Represent this query for searching relevant code: ',
         indexPrefix: '',
@@ -142,10 +178,16 @@ const MODELS: ModelConfig[] = [
         sha256: '',
         filename: 'jina-embeddings-v2-base-code-Q8_0.gguf',
         dimensions: 768,
-        parallelSlots: { cpu: 16 },
+        parallelSlots: { cpu: 16, gpu: 32 },
         cpuArgs: [
             '-c', String(16 * 4096),  // 4096 tokens/slot
             '-b', '4096', '-ub', '4096',
+        ],
+        gpuArgs: [
+            '-c', String(32 * 4096),  // 4096 tokens/slot
+            '-b', '4096', '-ub', '4096',
+            '-ngl', '99',
+            '--flash-attn', 'on',
         ],
         queryPrefix: '',
         indexPrefix: '',
@@ -161,11 +203,18 @@ const MODELS: ModelConfig[] = [
         sha256: '',
         filename: 'jina-code-embeddings-0.5b-Q8_0.gguf',
         dimensions: 896,
-        parallelSlots: { cpu: 8 },
+        parallelSlots: { cpu: 8, gpu: 16 },
         cpuArgs: [
             '-c', String(4 * 4096),   // 4096 tokens/slot
             '-b', '4096', '-ub', '4096',
             '--pooling', 'last',
+        ],
+        gpuArgs: [
+            '-c', String(16 * 4096),  // 4096 tokens/slot
+            '-b', '4096', '-ub', '4096',
+            '--pooling', 'last',
+            '-ngl', '99',
+            '--flash-attn', 'on',
         ],
         queryPrefix: 'Find the most relevant code snippet given the following query:\n',
         indexPrefix: 'Candidate code snippet:\n',
@@ -181,11 +230,18 @@ const MODELS: ModelConfig[] = [
         sha256: '',
         filename: 'jina-code-embeddings-1.5b-Q8_0.gguf',
         dimensions: 1536,
-        parallelSlots: { cpu: 4 },
+        parallelSlots: { cpu: 4, gpu: 8 },
         cpuArgs: [
-            '-c', String(4 * 4096),   // 2048 tokens/slot
+            '-c', String(4 * 4096),   // 4096 tokens/slot
             '-b', '4096', '-ub', '4096',
             '--pooling', 'last',
+        ],
+        gpuArgs: [
+            '-c', String(8 * 4096),   // 4096 tokens/slot
+            '-b', '4096', '-ub', '4096',
+            '--pooling', 'last',
+            '-ngl', '99',
+            '--flash-attn', 'on',
         ],
         queryPrefix: 'Find the most relevant code snippet given the following query:\n',
         indexPrefix: 'Candidate code snippet:\n',
@@ -228,6 +284,7 @@ export class LlamaServer {
     private parallelSlots = this.model.parallelSlots.cpu;
     private modelPath: string = '';
     private serverExePath: string = '';
+    private cudaAvailable = false;
     private starting = false;
     private ready = false;
     private httpAgent: http.Agent;
@@ -251,6 +308,12 @@ export class LlamaServer {
             context.extensionPath, 'bin', 'win_x64', 'llama.cpp', 'llama-server.exe'
         );
 
+        // Check if CUDA is available (ggml-cuda.dll present alongside server)
+        const cudaDllPath = path.join(
+            context.extensionPath, 'bin', 'win_x64', 'llama.cpp', 'ggml-cuda.dll'
+        );
+        this.cudaAvailable = fs.existsSync(cudaDllPath);
+
         // Model is stored in globalStorageUri (persists across extension updates)
         this.modelPath = path.join(
             context.globalStorageUri.fsPath, 'models', this.model.filename
@@ -258,6 +321,7 @@ export class LlamaServer {
 
         log(`LlamaServer initialized (not started)`);
         log(`  Server Path: ${this.serverExePath}`);
+        log(`  CUDA Available: ${this.cudaAvailable}`);
         log(`  Model Path:  ${this.modelPath}`);
     }
 
@@ -477,17 +541,26 @@ export class LlamaServer {
                 return false;
             }
 
-            // Start server process
-            log(`Starting llama-server on port ${this.port}...`);
-            this.serverProcess = spawn(this.serverExePath, [
+            // Select device-specific settings
+            const useGpu = this.cudaAvailable && this.model.gpuArgs.length > 0;
+            const deviceArgs = useGpu ? this.model.gpuArgs : this.model.cpuArgs;
+            this.parallelSlots = useGpu ? this.model.parallelSlots.gpu : this.model.parallelSlots.cpu;
+
+            // Build command line args
+            const args = [
                 '-m', this.modelPath,
                 '--embedding',
                 '--port', String(this.port),
-                '-np', String(this.model.parallelSlots.cpu),
-                '-t', '16',                  // Use physical cores (16 for 9950X)
                 '--log-disable',
-                ...this.model.cpuArgs,
-            ], {
+                '-np', String(this.parallelSlots),
+                '-t', '16',                  // CPU threads (used for non-GPU layers)
+                ...deviceArgs,
+            ];
+
+            // Start server process
+            log(`Starting llama-server on port ${this.port} (${useGpu ? 'GPU' : 'CPU'} mode)...`);
+            log(`  Args: ${args.join(' ')}`);
+            this.serverProcess = spawn(this.serverExePath, args, {
                 stdio: ['pipe', 'pipe', 'pipe'],
                 windowsHide: true,
             });
@@ -514,7 +587,7 @@ export class LlamaServer {
             // Wait for server to become ready
             const started = await this.waitForReady(30000);
             if (started) {
-                log(`llama-server started (port=${this.port}, slots=${this.parallelSlots})`);
+                log(`llama-server started (port=${this.port}, slots=${this.parallelSlots}, mode=${useGpu ? 'GPU' : 'CPU'})`);
             } else {
                 logError('llama-server failed to start within timeout');
                 this.stop();
