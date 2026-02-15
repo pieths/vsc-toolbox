@@ -246,6 +246,60 @@ const MODELS: ModelConfig[] = [
         queryPrefix: 'Find the most relevant code snippet given the following query:\n',
         indexPrefix: 'Candidate code snippet:\n',
     },
+    {
+        // Qwen3-Embedding-4B Q4_K_M: 4B general + code embedding model, ~2.5 GB.
+        // #3 on MTEB Code benchmark (80.07 retrieval score). Apache 2.0 license.
+        // Qwen3 architecture — requires --pooling last.
+        // 32K context, 2560 dimensions (configurable 32-2560).
+        // Instruction-aware: queries benefit from task-specific prefix.
+        name: 'Qwen3-Embedding-4B (Q4_K_M)',
+        url: 'https://huggingface.co/Qwen/Qwen3-Embedding-4B-GGUF/resolve/main/Qwen3-Embedding-4B-Q4_K_M.gguf',
+        sha256: '',
+        filename: 'Qwen3-Embedding-4B-Q4_K_M.gguf',
+        dimensions: 2560,
+        parallelSlots: { cpu: 4, gpu: 4 },
+        cpuArgs: [
+            '-c', String(4 * 4096),   // 4096 tokens/slot
+            '-b', '4096', '-ub', '4096',
+            '--pooling', 'last',
+        ],
+        gpuArgs: [
+            '-c', String(4 * 4096),   // 4096 tokens/slot
+            '-b', '4096', '-ub', '4096',
+            '--pooling', 'last',
+            '-ngl', '99',
+            '--flash-attn', 'on',
+        ],
+        queryPrefix: 'Instruct: Given a code search query, retrieve relevant code snippets that answer the query\nQuery: ',
+        indexPrefix: '',
+    },
+    {
+        // Qwen3-Embedding-0.6B Q8_0: 0.6B general + code embedding model, ~639 MB.
+        // Smallest Qwen3 embedding model. Apache 2.0 license.
+        // Qwen3 architecture — requires --pooling last.
+        // 32K context, 1024 dimensions (configurable 32-1024).
+        // Instruction-aware: queries benefit from task-specific prefix.
+        name: 'Qwen3-Embedding-0.6B (Q8_0)',
+        url: 'https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf',
+        sha256: '',
+        filename: 'Qwen3-Embedding-0.6B-Q8_0.gguf',
+        dimensions: 1024,
+        parallelSlots: { cpu: 8, gpu: 8 },
+        cpuArgs: [
+            '-c', String(8 * 2048),   // 2048 tokens/slot
+            '-b', '2048', '-ub', '2048',
+            '--pooling', 'last',
+        ],
+        gpuArgs: [
+            '-c', String(8 * 2048),  // 2048 tokens/slot
+            '-b', '2048', '-ub', '2048',
+            '--pooling', 'last',
+            '-ngl', '99',
+            '--flash-attn', 'on',
+        ],
+        queryPrefix: 'Instruct: Given a code search query, retrieve relevant code snippets that answer the query\nQuery: ',
+        indexPrefix: '',
+    },
 ];
 
 /**
