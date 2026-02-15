@@ -69,7 +69,7 @@ export class FileWatcher implements vscode.Disposable {
         }
 
         // Remove leading dots and join with commas
-        const exts = fileExtensions.map(ext => ext.replace(/^\./,  '')).join(',');
+        const exts = fileExtensions.map(ext => ext.replace(/^\./, '')).join(',');
         return `.{${exts}}`;
     }
 
