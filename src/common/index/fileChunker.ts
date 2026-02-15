@@ -424,9 +424,9 @@ function computeChunksWithCtags(
     let cursor = 1; // 1-based current line
 
     // Skip preamble (copyright, includes, etc.) before the first tag in
-    // the file when that tag falls before the first container range.
+    // the file when that tag falls at or before the first container range.
     if (firstTagLine !== undefined && topLevelRanges.length > 0 &&
-        firstTagLine < topLevelRanges[0].startLine) {
+        firstTagLine <= topLevelRanges[0].startLine) {
         cursor = firstTagLine;
     }
 
