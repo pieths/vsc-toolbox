@@ -200,6 +200,15 @@ export interface ComputeChunksOutput {
 }
 
 /**
+ * Log message sent from a worker thread to the main thread.
+ */
+export interface WorkerLogMessage {
+    type: 'log';
+    level: 'debug' | 'info' | 'warn' | 'error';
+    message: string;
+}
+
+/**
  * A single result from a nearest-embedding search.
  */
 export interface NearestEmbeddingResult {

@@ -11,8 +11,9 @@ import {
     IndexStatus,
     ComputeChunksInput,
     ComputeChunksOutput,
+    WorkerLogMessage,
 } from './types';
-import { log, error } from '../logger';
+import { debug, log, warn, error } from '../logger';
 
 /**
  * Represents a search task in the queue waiting to be processed
@@ -81,7 +82,27 @@ export class ThreadPool {
 
         const worker = new Worker(workerPath);
 
-        worker.on('message', (output: SearchOutput | IndexOutput | ComputeChunksOutput) => {
+        type WorkerMessage =
+            | SearchOutput
+            | IndexOutput
+            | ComputeChunksOutput
+            | WorkerLogMessage;
+
+        worker.on('message', (msg: WorkerMessage) => {
+            // Handle log messages from the worker (no task resolution)
+            if (msg.type === 'log') {
+                const text = `[Worker] ${msg.message}`;
+                switch (msg.level) {
+                    case 'debug': debug(text); break;
+                    case 'info':  log(text); break;
+                    case 'warn':  warn(text); break;
+                    case 'error': error(text); break;
+                }
+                return;
+            }
+
+            const output = msg as SearchOutput | IndexOutput | ComputeChunksOutput;
+
             // Get the task that was being processed
             const task = this.workerTaskMap.get(worker);
             this.workerTaskMap.delete(worker);

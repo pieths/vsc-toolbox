@@ -22,10 +22,19 @@ import type {
     IndexInput,
     IndexOutput,
     ComputeChunksInput,
+    WorkerLogMessage,
 } from './types';
 import { computeChunks } from './fileChunker';
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Send a log message from this worker thread to the main thread.
+ * The ThreadPool will forward it to the extension logger.
+ */
+function workerLog(level: WorkerLogMessage['level'], message: string): void {
+    parentPort?.postMessage({ type: 'log', level, message } satisfies WorkerLogMessage);
+}
 
 // Global error handlers to prevent worker crashes
 process.on('uncaughtException', (error) => {
