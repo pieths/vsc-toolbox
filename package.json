@@ -327,6 +327,7 @@
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.26.2",
-    "picomatch": "^4.0.3"
+    "picomatch": "^4.0.3",
+    "web-tree-sitter": "^0.26.5"
   }
 }

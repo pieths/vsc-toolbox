@@ -61,6 +61,15 @@ if ($LASTEXITCODE -eq 0) {
 }
 Write-Host ""
 
+# Download tree-sitter WASM grammars
+Write-Host "Downloading tree-sitter WASM grammars..." -ForegroundColor Yellow
+$tsWasmScript = Join-Path $PSScriptRoot "scripts\download_tree_sitter_wasm.ps1"
+& $tsWasmScript
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: Failed to download tree-sitter WASM grammars!" -ForegroundColor Red
+    exit 1
+}
+
 # Download llama.cpp binaries if not present
 $llamaDir = Join-Path $PSScriptRoot "bin\win_x64\llama.cpp"
 $llamaServerExe = Join-Path $llamaDir "llama-server.exe"
