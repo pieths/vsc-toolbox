@@ -101,6 +101,8 @@ export interface LineResult {
  * Output data returned from a worker thread
  */
 export interface SearchOutput {
+    /** Discriminator for message type */
+    type: 'search';
     /** Absolute file path that was searched */
     filePath: string;
     /** Array of search results */

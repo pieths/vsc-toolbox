@@ -92,7 +92,7 @@ export class ThreadPool {
                     task.resolve(output as IndexOutput);
                 } else if (task.type === 'computeChunks') {
                     task.resolve(output as ComputeChunksOutput);
-                } else {
+                } else if (task.type === 'search') {
                     task.resolve(output as SearchOutput);
                 }
             }
@@ -128,8 +128,9 @@ export class ThreadPool {
                         chunks: [],
                         error: error.message
                     });
-                } else {
+                } else if (task.type === 'search') {
                     task.resolve({
+                        type: 'search',
                         filePath: task.input.filePath,
                         results: [],
                         error: error.message
@@ -214,6 +215,7 @@ export class ThreadPool {
     private submitSearch(input: SearchInput): Promise<SearchOutput> {
         if (this.disposed) {
             return Promise.resolve({
+                type: 'search',
                 filePath: input.filePath,
                 results: [],
                 error: 'Thread pool has been disposed'
@@ -345,6 +347,7 @@ export class ThreadPool {
     async searchAll(inputs: SearchInput[]): Promise<SearchOutput[]> {
         if (this.disposed) {
             return inputs.map(input => ({
+                type: 'search' as const,
                 filePath: input.filePath,
                 results: [],
                 error: 'Thread pool has been disposed'
@@ -409,8 +412,9 @@ export class ThreadPool {
                     chunks: [],
                     error: 'Thread pool disposed'
                 });
-            } else {
+            } else if (task.type === 'search') {
                 task.resolve({
+                    type: 'search',
                     filePath: task.input.filePath,
                     results: [],
                     error: 'Thread pool disposed'

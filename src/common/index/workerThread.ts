@@ -117,7 +117,7 @@ async function searchFile(input: SearchInput): Promise<SearchOutput> {
 
         // If no patterns provided, return empty results
         if (!input.regexPatterns || input.regexPatterns.length === 0) {
-            return { filePath: input.filePath, results: [] };
+            return { type: 'search', filePath: input.filePath, results: [] };
         }
 
         // Collect results for each pattern
@@ -128,7 +128,7 @@ async function searchFile(input: SearchInput): Promise<SearchOutput> {
 
             // If any pattern has no matches, the file doesn't match (AND semantics)
             if (patternResults.length === 0) {
-                return { filePath: input.filePath, results: [] };
+                return { type: 'search', filePath: input.filePath, results: [] };
             }
 
             allPatternResults.push(patternResults);
@@ -150,9 +150,10 @@ async function searchFile(input: SearchInput): Promise<SearchOutput> {
         // Sort by line number
         mergedResults.sort((a, b) => a.line - b.line);
 
-        return { filePath: input.filePath, results: mergedResults };
+        return { type: 'search', filePath: input.filePath, results: mergedResults };
     } catch (error) {
         return {
+            type: 'search',
             filePath: input.filePath,
             results: [],
             error: error instanceof Error ? error.message : String(error)
@@ -276,7 +277,7 @@ if (parentPort) {
         } else if (input.type === 'computeChunks') {
             const output = await computeChunks(input);
             parentPort!.postMessage(output);
-        } else {
+        } else if (input.type === 'search') {
             const output = await searchFile(input);
             parentPort!.postMessage(output);
         }
