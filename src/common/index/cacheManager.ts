@@ -135,7 +135,7 @@ export class CacheManager {
                 }
             }
 
-            log(`Content index: Total files to add: ${filePaths.length}`);
+            log(`Content index: Found ${filePaths.length} files...`);
 
             // Process files in batches to stay responsive
             const batchSize = 500;
@@ -147,8 +147,13 @@ export class CacheManager {
                 // Create FileIndex instances for each file
                 // isValid() handles cache restoration automatically via mtime comparison
                 for (const filePath of batch) {
+                    const key = this.normalizePath(filePath);
+                    if (this.cache.has(key)) {
+                        log(`Content index: Duplicate path: "${filePath}" (existing: "${this.cache.get(key)!.getFilePath()}")`);
+                        continue;
+                    }
                     const fileIndex = new FileIndex(filePath, this.ctagsCacheDir);
-                    this.cache.set(this.normalizePath(filePath), fileIndex);
+                    this.cache.set(key, fileIndex);
                 }
 
                 // Yield to event loop every 50ms to stay responsive
