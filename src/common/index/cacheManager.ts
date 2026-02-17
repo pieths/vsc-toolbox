@@ -444,6 +444,27 @@ export class CacheManager {
     }
 
     /**
+     * Dispose of all resources held by this CacheManager.
+     * Closes the vector database and clears internal state.
+     */
+    async dispose(): Promise<void> {
+        if (this.vectorDatabase) {
+            await this.vectorDatabase.close();
+            this.vectorDatabase = null;
+        }
+
+        this.embeddingProcessor = null;
+        this.threadPool = null;
+        this.llamaServer = null;
+        this.pathFilter = null;
+        this.cache.clear();
+        this.indexingComplete = false;
+        this.indexingPromise = null;
+
+        log('Content index: CacheManager disposed');
+    }
+
+    /**
      * Get the current include paths configuration.
      */
     getIncludePaths(): string[] {

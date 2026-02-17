@@ -52,6 +52,7 @@ function getConfig(): ContentIndexConfig {
 export class ContentIndex {
     private static instance: ContentIndex | null = null;
 
+    private context: vscode.ExtensionContext | null = null;
     private cacheManager: CacheManager;
     private threadPool: ThreadPool | null = null;
     private fileWatcher: FileWatcher | null = null;
@@ -83,9 +84,9 @@ export class ContentIndex {
     /**
      * Reset the singleton instance (useful for testing).
      */
-    static resetInstance(): void {
+    static async resetInstance(): Promise<void> {
         if (ContentIndex.instance) {
-            ContentIndex.instance.dispose();
+            await ContentIndex.instance.dispose();
             ContentIndex.instance = null;
         }
     }
@@ -110,40 +111,58 @@ export class ContentIndex {
             return;
         }
 
+        this.context = context;
+
+        // Register for cleanup (once)
+        context.subscriptions.push({
+            dispose: () => this.dispose()
+        });
+
+        // Listen for configuration changes (once)
+        context.subscriptions.push(
+            vscode.workspace.onDidChangeConfiguration(e => {
+                if (e.affectsConfiguration('vscToolbox.contentIndex')) {
+                    this.handleConfigChange();
+                }
+            })
+        );
+
+        // Wait briefly before indexing to allow VS Code and other extensions
+        // to finish any post-startup file modifications that would trigger
+        // unnecessary re-indexing (e.g., formatOnSave, insertFinalNewline).
+        await new Promise(resolve => setTimeout(resolve, 10000));
+
+        await this.startComponents();
+    }
+
+    /**
+     * Create and start all owned components (cache manager, thread pool,
+     * file watcher, llama server, path filter) and run initial indexing.
+     * Called by initialize() on first startup and by reset() on restart.
+     */
+    private async startComponents(): Promise<void> {
+        if (!this.context) {
+            error('ContentIndex: No context available, cannot start components');
+            return;
+        }
+
         this.initialized = true; // Mark as initialized immediately to prevent re-entry
 
         try {
             const config = getConfig();
             const { workerThreads, includePaths, excludePatterns, fileExtensions, ctagsPath } = config;
 
-            // Create components
-            const nodePath = path.join(context.extensionPath, 'bin', 'win_x64', 'node', 'node.exe');
+            // Create fresh components
+            // (cacheManager and llamaServer are already fresh from the
+            // constructor or from stopComponents if this is a reset)
+            const nodePath = path.join(this.context.extensionPath, 'bin', 'win_x64', 'node', 'node.exe');
             this.threadPool = new ThreadPool(workerThreads, nodePath);
             this.pathFilter = new PathFilter(includePaths, excludePatterns, fileExtensions);
             this.fileWatcher = new FileWatcher(this.cacheManager, this.pathFilter);
 
             // Initialize llama server for embeddings
-            this.llamaServer.initialize(context);
+            this.llamaServer.initialize(this.context);
             await this.llamaServer.start();
-
-            // Register for cleanup
-            context.subscriptions.push({
-                dispose: () => this.dispose()
-            });
-
-            // Listen for configuration changes
-            context.subscriptions.push(
-                vscode.workspace.onDidChangeConfiguration(e => {
-                    if (e.affectsConfiguration('vscToolbox.contentIndex')) {
-                        this.handleConfigChange();
-                    }
-                })
-            );
-
-            // Wait briefly before indexing to allow VS Code and other extensions
-            // to finish any post-startup file modifications that would trigger
-            // unnecessary re-indexing (e.g., formatOnSave, insertFinalNewline).
-            await new Promise(resolve => setTimeout(resolve, 10000));
 
             // Create status bar item for indexing progress
             this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -170,6 +189,51 @@ export class ContentIndex {
             vscode.window.showErrorMessage(`VSC Toolbox: Content index failed: ${err}`);
             error(`ContentIndex: Indexing failed - ${err}`);
         }
+    }
+
+    /**
+     * Tear down all owned components without marking the instance as disposed.
+     * Called by dispose() for final cleanup and by reset() before restarting.
+     */
+    private async stopComponents(): Promise<void> {
+        this.initialized = false;
+
+        this.fileWatcher?.dispose();
+        this.fileWatcher = null;
+
+        this.threadPool?.dispose();
+        this.threadPool = null;
+
+        this.llamaServer.stop();
+
+        this.pathFilter = null;
+
+        this.statusBarItem?.dispose();
+        this.statusBarItem = null;
+
+        // Dispose the old cache manager (closes vector database, etc.)
+        // before replacing with a fresh instance
+        await this.cacheManager.dispose();
+        this.cacheManager = new CacheManager();
+
+        log('ContentIndex: Components stopped');
+    }
+
+    /**
+     * Tear down all components and rebuild the index from scratch.
+     * Useful when a configuration change requires a full restart
+     * (e.g., enabling/disabling embeddings).
+     */
+    private async reset(): Promise<void> {
+        if (this.disposed) {
+            warn('ContentIndex: Cannot reset a disposed instance');
+            return;
+        }
+
+        log('ContentIndex: Resetting...');
+        this.stopComponents();
+        await this.startComponents();
+        log('ContentIndex: Reset complete');
     }
 
     /**
@@ -326,24 +390,14 @@ export class ContentIndex {
     /**
      * Clean up all resources.
      */
-    dispose(): void {
+    async dispose(): Promise<void> {
         if (this.disposed) {
             return;
         }
 
         this.disposed = true;
-        this.initialized = false;
-
-        this.fileWatcher?.dispose();
-        this.fileWatcher = null;
-
-        this.threadPool?.dispose();
-        this.threadPool = null;
-
-        this.llamaServer.stop();
-
-        this.statusBarItem?.dispose();
-        this.statusBarItem = null;
+        await this.stopComponents();
+        this.context = null;
 
         log('ContentIndex: Disposed');
     }
