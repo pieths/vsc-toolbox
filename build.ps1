@@ -4,7 +4,7 @@ $ErrorActionPreference = "Stop"
 
 # Header
 Write-Host "================================================" -ForegroundColor Cyan
-Write-Host "  VSC Toolbox - Setup Script" -ForegroundColor Cyan
+Write-Host "  VSC Toolbox - Build Script" -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host ""
 
