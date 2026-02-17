@@ -61,6 +61,7 @@ export class ContentIndex {
     private statusBarItem: vscode.StatusBarItem | null = null;
     private initialized: boolean = false;
     private disposed: boolean = false;
+    private configChangeNotificationShown: boolean = false;
 
     /**
      * Private constructor - use getInstance() instead.
@@ -231,22 +232,35 @@ export class ContentIndex {
         }
 
         log('ContentIndex: Resetting...');
-        this.stopComponents();
+        await this.stopComponents();
         await this.startComponents();
         log('ContentIndex: Reset complete');
     }
 
     /**
      * Handle configuration changes.
-     * Updates cache manager and file watcher with new settings.
+     * Shows a notification asking the user whether to restart the index.
+     * Only one notification is shown at a time; subsequent changes while
+     * a notification is visible are silently absorbed.
      */
     private handleConfigChange(): void {
-        const { includePaths, excludePatterns, fileExtensions } = getConfig();
+        if (this.configChangeNotificationShown) {
+            return; // Already showing a notification
+        }
 
-        this.pathFilter = new PathFilter(includePaths, excludePatterns, fileExtensions);
-        this.cacheManager.updateConfig(this.pathFilter);
-        this.fileWatcher?.updateConfig(this.pathFilter);
-        log('ContentIndex: Configuration updated');
+        this.configChangeNotificationShown = true;
+
+        vscode.window.showInformationMessage(
+            'VSC Toolbox: Content index settings have changed. Restart the index?',
+            'Yes', 'No'
+        ).then(selection => {
+            this.configChangeNotificationShown = false;
+            if (selection === 'Yes') {
+                this.reset().catch(err => {
+                    error(`ContentIndex: Reset after config change failed - ${err}`);
+                });
+            }
+        });
     }
 
     /**
