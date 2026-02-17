@@ -8,35 +8,35 @@ Write-Host "  VSC Toolbox - Setup Script" -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Check Node.js
-Write-Host "Checking for Node.js..." -ForegroundColor Yellow
-try {
-    $nodeVersion = & node --version
-    if ($?) {
-        Write-Host "Node.js found: $nodeVersion" -ForegroundColor Green
-    } else {
-        throw "Node.js not found"
-    }
-} catch {
-    Write-Host "ERROR: Node.js is not installed!" -ForegroundColor Red
-    Write-Host "Please download from: https://nodejs.org/" -ForegroundColor Red
+# Download Node.js portable if not present
+$nodeScript = Join-Path $PSScriptRoot "scripts\download_node.ps1"
+& $nodeScript
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: Failed to download Node.js!" -ForegroundColor Red
     exit 1
 }
-Write-Host ""
 
-# Check npm
-Write-Host "Checking for npm..." -ForegroundColor Yellow
-try {
-    $npmVersion = & npm --version
-    if ($?) {
-        Write-Host "npm found: $npmVersion" -ForegroundColor Green
-    } else {
-        throw "npm not found"
-    }
-} catch {
-    Write-Host "ERROR: npm is not installed!" -ForegroundColor Red
+# Add local Node.js to PATH for this session (avoid duplicating on repeated runs)
+$nodeLocalDir = Join-Path $PSScriptRoot "node_local"
+if ($env:Path -notlike "*$nodeLocalDir*") {
+    $env:Path = "$nodeLocalDir;$env:Path"
+}
+
+# Verify Node.js
+Write-Host "Checking for Node.js..." -ForegroundColor Yellow
+$nodeVersion = & node --version
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: Node.js is not working!" -ForegroundColor Red
     exit 1
 }
+Write-Host "Node.js found: $nodeVersion" -ForegroundColor Green
+
+$npmVersion = & npm --version
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: npm is not working!" -ForegroundColor Red
+    exit 1
+}
+Write-Host "npm found: $npmVersion" -ForegroundColor Green
 Write-Host ""
 
 # Install dependencies
