@@ -14,7 +14,7 @@ import * as fs from 'fs';
 import * as crypto from 'crypto';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { IndexStatus } from './types';
+import { IndexStatus } from '../types';
 import type {
     SearchInput,
     LineResult,
@@ -23,8 +23,8 @@ import type {
     IndexOutput,
     ComputeChunksInput,
     WorkerLogMessage,
-} from './types';
-import { computeChunks } from './fileChunker';
+} from '../types';
+import { computeChunks } from '../fileChunker';
 
 const execFileAsync = promisify(execFile);
 

@@ -51,7 +51,7 @@ const extensionConfig = {
 // real value so the emscripten bootstrap can resolve paths correctly.
 const workerConfig = {
     ...sharedOptions,
-    entryPoints: ['src/common/index/workerThread.ts'],
+    entryPoints: ['src/common/index/workers/workerThread.ts'],
     outfile: 'out/workerThread.js',
     define: {
         'import.meta.url': 'importMetaUrl',
@@ -62,18 +62,29 @@ const workerConfig = {
     plugins: [copyWasmPlugin],
 };
 
+// Worker host — child process that owns worker threads.
+// Does NOT need the import.meta.url shim (only the worker thread needs it
+// for web-tree-sitter's Emscripten bootstrap).
+const workerHostConfig = {
+    ...sharedOptions,
+    entryPoints: ['src/common/index/workers/workerHost.ts'],
+    outfile: 'out/workerHost.js',
+};
+
 async function main() {
     if (watch) {
-        const [ctx1, ctx2] = await Promise.all([
+        const [ctx1, ctx2, ctx3] = await Promise.all([
             esbuild.context(extensionConfig),
             esbuild.context(workerConfig),
+            esbuild.context(workerHostConfig),
         ]);
-        await Promise.all([ctx1.watch(), ctx2.watch()]);
+        await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch()]);
         console.log('[watch] build started');
     } else {
         await Promise.all([
             esbuild.build(extensionConfig),
             esbuild.build(workerConfig),
+            esbuild.build(workerHostConfig),
         ]);
         console.log('build complete');
     }

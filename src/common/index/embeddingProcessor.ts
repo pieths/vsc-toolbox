@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import { FileIndex } from './fileIndex';
-import { ThreadPool } from './threadPool';
+import { ThreadPool } from './workers/threadPool';
 import { Chunk, ComputeChunksInput } from './types';
 import { LlamaServer } from './llamaServer';
 import { VectorDatabase } from './vectorDatabase';

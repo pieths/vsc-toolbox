@@ -6,7 +6,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import picomatch from 'picomatch';
 import { FileIndex } from './fileIndex';
-import { ThreadPool } from './threadPool';
+import { ThreadPool } from './workers/threadPool';
 import { IndexInput, NearestEmbeddingResult } from './types';
 import { LlamaServer } from './llamaServer';
 import { VectorDatabase } from './vectorDatabase';

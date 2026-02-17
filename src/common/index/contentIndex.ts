@@ -4,7 +4,7 @@
 import * as vscode from 'vscode';
 import * as os from 'os';
 import { CacheManager } from './cacheManager';
-import { ThreadPool } from './threadPool';
+import { ThreadPool } from './workers/threadPool';
 import { FileWatcher } from './fileWatcher';
 import { parseQueryAsAnd } from '../queryParser';
 import {

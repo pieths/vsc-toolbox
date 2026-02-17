@@ -208,6 +208,37 @@ export interface WorkerLogMessage {
     message: string;
 }
 
+/** Request sent from ThreadPool to WorkerHost to initialize worker threads */
+export interface WorkerInitRequest {
+    type: 'init';
+    numThreads: number;
+}
+
+/** Response sent from WorkerHost to ThreadPool after init */
+export interface WorkerInitResponse {
+    type: 'init-ack';
+    numThreads: number;
+}
+
+/** Request sent from ThreadPool to WorkerHost to shut down */
+export interface WorkerShutdownRequest {
+    type: 'shutdown';
+}
+
+/** Task request sent from ThreadPool to WorkerHost over IPC */
+export interface WorkerTaskRequest {
+    type: 'taskRequest';
+    messageId: number;
+    payload: SearchInput | IndexInput | ComputeChunksInput;
+}
+
+/** Task response sent from WorkerHost to ThreadPool over IPC */
+export interface WorkerTaskResponse {
+    type: 'taskResponse';
+    messageId: number;
+    payload: SearchOutput | IndexOutput | ComputeChunksOutput;
+}
+
 /**
  * A single result from a nearest-embedding search.
  */
