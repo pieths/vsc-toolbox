@@ -267,4 +267,6 @@ export interface ContentIndexConfig {
     fileExtensions: string[];
     /** Path to the ctags executable */
     ctagsPath: string;
+    /** Whether to enable embedding generation and vector search */
+    enableEmbeddings: boolean;
 }

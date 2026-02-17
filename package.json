@@ -152,6 +152,11 @@
           "type": "string",
           "default": "ctags",
           "description": "Path to the ctags executable. Can be just 'ctags' if it's in your PATH, or an absolute path."
+        },
+        "vscToolbox.contentIndex.enableEmbeddings": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable embedding generation and vector/semantic search."
         }
       }
     },

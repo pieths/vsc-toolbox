@@ -49,12 +49,14 @@ export class CacheManager {
      * @param ctagsPath - Path to the ctags executable
      * @param threadPool - Thread pool manager for indexing operations
      * @param llamaServer - Llama server instance for computing embeddings
+     * @param enableEmbeddings - If true, create vector database and embedding processor
      */
     async initialize(
         pathFilter: PathFilter,
         ctagsPath: string,
         threadPool: ThreadPool,
-        llamaServer: LlamaServer
+        llamaServer: LlamaServer,
+        enableEmbeddings: boolean = false
     ): Promise<void> {
         this.pathFilter = pathFilter;
         this.ctagsPath = ctagsPath;
@@ -68,19 +70,19 @@ export class CacheManager {
             ? path.join(workspaceFolder.uri.fsPath, '.cache', 'vsctoolbox', 'index')
             : '';
 
-        // Open (or create) the vector database
-        if (this.cacheDir) {
+        // Open (or create) the vector database and embedding processor
+        if (enableEmbeddings && this.cacheDir) {
             const dbPath = path.join(this.cacheDir, 'vectordb');
             this.vectorDatabase = new VectorDatabase(dbPath, this.llamaServer.getDimensions());
             await this.vectorDatabase.open();
             log(`Content index: VectorDatabase opened at ${dbPath}`);
-        }
 
-        this.embeddingProcessor = new EmbeddingProcessor(
-            this.vectorDatabase,
-            this.llamaServer,
-            this.threadPool,
-        );
+            this.embeddingProcessor = new EmbeddingProcessor(
+                this.vectorDatabase,
+                this.llamaServer,
+                this.threadPool,
+            );
+        }
 
         // Ensure ctags cache directory and a-z subdirectories exist
         this.ctagsCacheDir = this.cacheDir ? path.join(this.cacheDir, 'ctags') : '';

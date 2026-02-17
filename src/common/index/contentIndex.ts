@@ -37,8 +37,16 @@ function getConfig(): ContentIndexConfig {
     const excludePatterns = config.get<string[]>('excludePatterns', []);
     const fileExtensions = config.get<string[]>('fileExtensions', ['.cc', '.h']);
     const ctagsPath = config.get<string>('ctagsPath', 'ctags');
+    const enableEmbeddings = config.get<boolean>('enableEmbeddings', false);
 
-    return { workerThreads, includePaths, excludePatterns, fileExtensions, ctagsPath };
+    return {
+        workerThreads,
+        includePaths,
+        excludePatterns,
+        fileExtensions,
+        ctagsPath,
+        enableEmbeddings
+    };
 }
 
 /**
@@ -151,7 +159,14 @@ export class ContentIndex {
 
         try {
             const config = getConfig();
-            const { workerThreads, includePaths, excludePatterns, fileExtensions, ctagsPath } = config;
+            const {
+                workerThreads,
+                includePaths,
+                excludePatterns,
+                fileExtensions,
+                ctagsPath,
+                enableEmbeddings
+            } = config;
 
             // Create fresh components
             // (cacheManager and llamaServer are already fresh from the
@@ -161,9 +176,11 @@ export class ContentIndex {
             this.pathFilter = new PathFilter(includePaths, excludePatterns, fileExtensions);
             this.fileWatcher = new FileWatcher(this.cacheManager, this.pathFilter);
 
-            // Initialize llama server for embeddings
-            this.llamaServer.initialize(this.context);
-            await this.llamaServer.start();
+            // Initialize llama server for embeddings (if enabled)
+            if (enableEmbeddings) {
+                this.llamaServer.initialize(this.context);
+                await this.llamaServer.start();
+            }
 
             // Create status bar item for indexing progress
             this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -176,7 +193,8 @@ export class ContentIndex {
                 this.pathFilter,
                 ctagsPath,
                 this.threadPool,
-                this.llamaServer
+                this.llamaServer,
+                enableEmbeddings
             );
 
             const fileCount = this.cacheManager.getFileCount();
