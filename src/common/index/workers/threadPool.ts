@@ -71,15 +71,18 @@ export class ThreadPool {
     private pendingIndexTasks: Map<string, Promise<IndexOutput>> = new Map();
     private disposed: boolean = false;
     private initPromise: Promise<void>;
+    private nodePath: string;
 
     /**
      * Create a new thread pool with the specified number of workers.
      * Forks a child process (WorkerHost) that owns the actual worker threads.
      *
      * @param numThreads - Number of worker threads to create in the child process
+     * @param nodePath - Absolute path to standalone Node.js binary (avoids Electron's memory limits)
      */
-    constructor(numThreads: number) {
+    constructor(numThreads: number, nodePath: string) {
         this.maxConcurrency = numThreads;
+        this.nodePath = nodePath;
         this.initPromise = this.spawnChild(numThreads);
     }
 
@@ -90,9 +93,16 @@ export class ThreadPool {
         return new Promise<void>((resolve, reject) => {
             const hostPath = path.join(__dirname, 'workerHost.js');
 
+            // fork() defaults to process.execPath which, inside VS Code's
+            // extension host, points to Electron (Code.exe). Electron caps
+            // memory at relatively conservative values. Using a standalone
+            // Node.js binary removes that limit, allowing the child process
+            // to allocate more memory if needed.
             this.childProcess = fork(hostPath, [], {
+                execPath: this.nodePath,
                 stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
-            });
+                windowsHide: true,
+            } as any);
 
             type ChildMessage = WorkerTaskResponse | WorkerLogMessage | WorkerInitResponse;
 

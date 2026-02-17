@@ -3,6 +3,7 @@
 
 import * as vscode from 'vscode';
 import * as os from 'os';
+import * as path from 'path';
 import { CacheManager } from './cacheManager';
 import { ThreadPool } from './workers/threadPool';
 import { FileWatcher } from './fileWatcher';
@@ -116,7 +117,8 @@ export class ContentIndex {
             const { workerThreads, includePaths, excludePatterns, fileExtensions, ctagsPath } = config;
 
             // Create components
-            this.threadPool = new ThreadPool(workerThreads);
+            const nodePath = path.join(context.extensionPath, 'bin', 'win_x64', 'node', 'node.exe');
+            this.threadPool = new ThreadPool(workerThreads, nodePath);
             this.pathFilter = new PathFilter(includePaths, excludePatterns, fileExtensions);
             this.fileWatcher = new FileWatcher(this.cacheManager, this.pathFilter);
 

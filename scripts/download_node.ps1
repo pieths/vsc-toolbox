@@ -25,11 +25,15 @@ $nodeDirName   = "node-$nodeVersion-win-x64"
 $nodeUrl       = "https://nodejs.org/dist/$nodeVersion/$nodeDirName.zip"
 $expectedHash  = "1054540bce22b54ec7e50ebc078ec5d090700a77657607a58f6a64df21f49fdd"
 
-# Paths (script lives in scripts/, output goes to project root)
+# Paths (script lives in scripts/, output for local dev environment goes to project root)
 $projectRoot   = Split-Path $PSScriptRoot -Parent
 $nodeLocalDir  = Join-Path $projectRoot "node_local"
 $nodeExe       = Join-Path $nodeLocalDir "node.exe"
 $zipPath       = Join-Path $projectRoot "$nodeDirName.zip"
+
+# Runtime binary path (used by the extension at runtime)
+$nodeBinDir    = Join-Path $projectRoot "bin\win_x64\node"
+$nodeBinExe    = Join-Path $nodeBinDir "node.exe"
 
 # ============================================================================
 # Header
@@ -48,6 +52,13 @@ Write-Host ""
 if (Test-Path $nodeExe) {
     $currentVersion = & $nodeExe --version 2>$null
     if ($currentVersion -eq $nodeVersion) {
+        # Ensure runtime binary is also in place
+        if (!(Test-Path $nodeBinExe)) {
+            Write-Host "Copying node.exe to bin\win_x64\node\..." -ForegroundColor Yellow
+            New-Item -ItemType Directory -Path $nodeBinDir -Force | Out-Null
+            Copy-Item (Join-Path $nodeLocalDir "node.exe") $nodeBinExe
+            Copy-Item (Join-Path $nodeLocalDir "LICENSE") (Join-Path $nodeBinDir "LICENSE")
+        }
         Write-Host "Node.js $nodeVersion already present" -ForegroundColor Green
         Write-Host "Output: $nodeLocalDir" -ForegroundColor Cyan
         Write-Host ""
@@ -125,6 +136,18 @@ if (Test-Path $extractedDir) {
 # ============================================================================
 
 Remove-Item $zipPath -Force
+
+# ============================================================================
+# Step 6: Copy runtime binary to bin\win_x64\node\
+# ============================================================================
+
+Write-Host "Copying node.exe to bin\win_x64\node\..." -ForegroundColor Yellow
+if (!(Test-Path $nodeBinDir)) {
+    New-Item -ItemType Directory -Path $nodeBinDir -Force | Out-Null
+}
+Copy-Item (Join-Path $nodeLocalDir "node.exe") $nodeBinExe -Force
+Copy-Item (Join-Path $nodeLocalDir "LICENSE") (Join-Path $nodeBinDir "LICENSE") -Force
+Write-Host "Runtime binary copied" -ForegroundColor Green
 
 # ============================================================================
 # Summary

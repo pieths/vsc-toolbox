@@ -8,5 +8,6 @@
 !THIRD_PARTY_NOTICES
 !out/**
 !bin/win_x64/llama.cpp/**
+!bin/win_x64/node/**
 !bin/tree-sitter/**
 !node_modules/@lancedb/lancedb-win32-x64-msvc/**
