@@ -220,34 +220,38 @@ export class SearchIndexTool implements vscode.LanguageModelTool<SearchIndexPara
 
             // Filter results using AI if a filter is provided
             const { filter } = options.input;
-            const model = await getModel();
             let filteredMarkdown = markdown;
-            if (model && filter) {
-                log(`Starting AI filter with criteria: "${filter}"`);
-                const filterStart = Date.now();
-                const filterPrompt = [
-                    'You are a filter.',
-                    'Given the markdown below which contains search results (starts with line `# Search Results for`),',
-                    'apply the filter criteria from the "Filter" section below to keep or remove results as specified.',
-                    'Return ONLY the filtered markdown with no additional commentary or explanation.',
-                    'Preserve the exact format and content of the remaining text.',
-                    'Do not add any additional text.',
-                    'Only remove complete sections (starting with `## ` or `### `) or individual result lines that don\'t satisfy the filter.',
-                    'If removing a full section, remove the entire section including its header.',
-                    'If the filter criteria requires information not currently present in the markdown, use the appropriate tool(s) to get the required information.',
-                    '',
-                    '# Filter',
-                    '',
-                    '```',
-                    filter,
-                    '```',
-                    '',
-                    '',
-                    markdown
-                ].join('\n');
-                filteredMarkdown = await sendRequestWithReadFileAccess(model, filterPrompt, token, 1000);
-                const filterElapsed = Date.now() - filterStart;
-                log(`AI filter completed in ${filterElapsed}ms`);
+            if (filter) {
+                // TODO: cache model to avoid the overhead
+                // of retrieving it per call (~2 seconds)
+                const model = await getModel();
+                if (model) {
+                    log(`Starting AI filter with criteria: "${filter}"`);
+                    const filterStart = Date.now();
+                    const filterPrompt = [
+                        'You are a filter.',
+                        'Given the markdown below which contains search results (starts with line `# Search Results for`),',
+                        'apply the filter criteria from the "Filter" section below to keep or remove results as specified.',
+                        'Return ONLY the filtered markdown with no additional commentary or explanation.',
+                        'Preserve the exact format and content of the remaining text.',
+                        'Do not add any additional text.',
+                        'Only remove complete sections (starting with `## ` or `### `) or individual result lines that don\'t satisfy the filter.',
+                        'If removing a full section, remove the entire section including its header.',
+                        'If the filter criteria requires information not currently present in the markdown, use the appropriate tool(s) to get the required information.',
+                        '',
+                        '# Filter',
+                        '',
+                        '```',
+                        filter,
+                        '```',
+                        '',
+                        '',
+                        markdown
+                    ].join('\n');
+                    filteredMarkdown = await sendRequestWithReadFileAccess(model, filterPrompt, token, 1000);
+                    const filterElapsed = Date.now() - filterStart;
+                    log(`AI filter completed in ${filterElapsed}ms`);
+                }
             }
 
             return new vscode.LanguageModelToolResult([
