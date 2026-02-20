@@ -5,7 +5,7 @@ import { FileIndex } from './fileIndex';
 import { ThreadPool } from './workers/threadPool';
 import { Chunk, ComputeChunksInput } from './types';
 import { LlamaServer } from './llamaServer';
-import { VectorDatabase } from './vectorDatabase';
+import { FileChunkRecord, VectorDatabase } from './vectorDatabase';
 import { log, warn } from '../logger';
 
 /**
@@ -103,15 +103,21 @@ export class EmbeddingProcessor {
      *    a metadata-only update (no re-embedding needed).
      */
     private async diff(chunkOutputs: { filePath: string; chunks: Chunk[]; error?: string }[]): Promise<void> {
+        // Batch-fetch all stored chunks in a single DB query
+        const validPaths = chunkOutputs
+            .filter(o => !o.error)
+            .map(o => o.filePath);
+        const storedChunksMap: Map<string, FileChunkRecord[]> = this.vectorDatabase
+            ? await this.vectorDatabase.getFileChunksForMultipleFiles(validPaths)
+            : new Map();
+
         for (const output of chunkOutputs) {
             if (output.error) {
                 warn(`Content index: Chunk error for ${output.filePath}: ${output.error}`);
                 continue;
             }
 
-            const storedChunks = this.vectorDatabase
-                ? await this.vectorDatabase.getFileChunksByFilePath(output.filePath)
-                : [];
+            const storedChunks = storedChunksMap.get(output.filePath) ?? [];
 
             const storedByHash = new Map(storedChunks.map(s => [s.sha256, s]));
             const newHashes = new Set(output.chunks.map(c => c.sha256));

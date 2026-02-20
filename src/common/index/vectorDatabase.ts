@@ -697,6 +697,71 @@ export class VectorDatabase {
     }
 
     /**
+     * Get all FileChunks for multiple file paths in a single query.
+     *
+     * This is significantly faster than calling {@link getFileChunksByFilePath}
+     * in a loop because it issues a single database query with an
+     * `IN (...)` clause instead of one query per file.
+     *
+     * @param filePaths — the file paths to look up.
+     * @returns A Map from filePath → array of FileChunkRecords.
+     */
+    async getFileChunksForMultipleFiles(filePaths: string[]): Promise<Map<string, FileChunkRecord[]>> {
+        const result = new Map<string, FileChunkRecord[]>();
+
+        if (!this.fileChunksTable || filePaths.length === 0) {
+            return result;
+        }
+
+        // Resolve filePaths to filePathIds, skipping unknown paths
+        const idToPath = new Map<number, string>();
+        for (const fp of filePaths) {
+            const id = this.filePathCache.get(fp);
+            if (id !== undefined) {
+                idToPath.set(id, fp);
+            }
+        }
+
+        if (idToPath.size === 0) {
+            return result;
+        }
+
+        const idList = Array.from(idToPath.keys()).join(', ');
+        const rows = await this.fileChunksTable
+            .query()
+            .select(['id', 'filePathId', 'startLine', 'endLine', 'sha256'])
+            .where(`filePathId IN (${idList})`)
+            .toArray() as {
+                id: number;
+                filePathId: number;
+                startLine: number;
+                endLine: number;
+                sha256: string;
+            }[];
+
+        for (const row of rows) {
+            const fp = idToPath.get(row.filePathId);
+            if (!fp) {
+                continue;
+            }
+            let arr = result.get(fp);
+            if (!arr) {
+                arr = [];
+                result.set(fp, arr);
+            }
+            arr.push({
+                id: row.id,
+                filePath: fp,
+                startLine: row.startLine,
+                endLine: row.endLine,
+                sha256: row.sha256,
+            });
+        }
+
+        return result;
+    }
+
+    /**
      * Get all ShadowChunks associated with a given FileChunk id.
      */
     async getShadowChunksByFileChunkId(fileChunkId: number): Promise<ShadowChunkRecord[]> {
