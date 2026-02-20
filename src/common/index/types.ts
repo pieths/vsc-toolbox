@@ -85,8 +85,8 @@ export interface SearchInput {
     type: 'search';
     /** Absolute file path to search */
     filePath: string;
-    /** Regex pattern strings to search for */
-    regexPatterns: string[];
+    /** Glob query string (space-separated AND terms with * and ? wildcards) */
+    query: string;
 }
 
 /**

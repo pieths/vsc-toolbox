@@ -7,7 +7,6 @@ import * as path from 'path';
 import { CacheManager } from './cacheManager';
 import { ThreadPool } from './workers/threadPool';
 import { FileWatcher } from './fileWatcher';
-import { parseQueryAsAnd } from '../queryParser';
 import {
     ContainerDetails,
     ContentIndexConfig,
@@ -319,26 +318,23 @@ export class ContentIndex {
             return { results: [], error: 'Search query cannot be empty' };
         }
 
-        // Parse glob query to regex pattern
-        const regexPatterns = parseQueryAsAnd(query);
-
         // Perform the search
-        const results = await this.getDocumentMatchesInternal(regexPatterns, include, exclude, token);
+        const results = await this.getDocumentMatchesInternal(query, include, exclude, token);
         return { results };
     }
 
     /**
-     * Search for content matching regex patterns.
+     * Search for content matching a glob query.
      * Internal method - use getDocumentMatches for public API.
      *
-     * @param regexPatterns - Array of regex pattern strings to search for
+     * @param query - Glob query string (space-separated AND terms with * and ? wildcards)
      * @param include - Optional comma-separated glob patterns to include only matching file paths
      * @param exclude - Optional comma-separated glob patterns to exclude matching file paths
      * @param token - Optional cancellation token
      * @returns Array of search results
      */
     private async getDocumentMatchesInternal(
-        regexPatterns: string[],
+        query: string,
         include?: string,
         exclude?: string,
         token?: vscode.CancellationToken
@@ -372,7 +368,7 @@ export class ContentIndex {
                 searchInputs.push({
                     type: 'search',
                     filePath,
-                    regexPatterns
+                    query
                 });
             }
 

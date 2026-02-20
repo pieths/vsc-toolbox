@@ -25,6 +25,7 @@ import type {
     WorkerLogMessage,
 } from '../types';
 import { computeChunks } from '../fileChunker';
+import { parseQueryAsAnd } from '../../queryParser';
 
 const execFileAsync = promisify(execFile);
 
@@ -120,19 +121,58 @@ function searchFileWithSingleRegex(content: string, regexPattern: string): LineR
  * @param input - Search input containing file path and regex patterns array
  * @returns Search output with results or error
  */
+/**
+ * Extract literal substrings from a glob term by splitting on wildcards.
+ * Returns an array of non-empty literal fragments that can be used for
+ * a fast Buffer.indexOf pre-check before the more expensive regex search.
+ *
+ * @param term - A single glob term (e.g., "foo*bar", "get?Name")
+ * @returns Array of literal fragments (e.g., ["foo", "bar"], ["get", "Name"])
+ */
+function extractLiterals(term: string): string[] {
+    return term.split(/[*?]+/).filter(s => s.length > 0);
+}
+
 async function searchFile(input: SearchInput): Promise<SearchOutput> {
     try {
-        const content = await fs.promises.readFile(input.filePath, 'utf8');
-
-        // If no patterns provided, return empty results
-        if (!input.regexPatterns || input.regexPatterns.length === 0) {
+        // Parse glob query to get individual terms and regex patterns
+        const query = input.query;
+        if (!query || !query.trim()) {
             return { type: 'search', filePath: input.filePath, results: [] };
         }
+
+        const regexPatterns = parseQueryAsAnd(query);
+        if (regexPatterns.length === 0) {
+            return { type: 'search', filePath: input.filePath, results: [] };
+        }
+
+        // Extract literal fragments from the original glob terms for fast pre-check
+        const globTerms = query.trim().split(/\s+/);
+        const literalsByTerm = globTerms.map(extractLiterals);
+
+        // Read file as Buffer first (no UTF-8 decode yet)
+        const buffer = fs.readFileSync(input.filePath);
+
+        // Fast pre-check: verify all AND terms have at least one literal present in the buffer.
+        // If any term's literals are all missing, the file can't match — skip it entirely.
+        for (const literals of literalsByTerm) {
+            if (literals.length === 0) {
+                // Term is purely wildcards (e.g., "*" or "???") — can't pre-filter, must search
+                continue;
+            }
+            const found = literals.some(lit => buffer.indexOf(lit) !== -1);
+            if (!found) {
+                return { type: 'search', filePath: input.filePath, results: [] };
+            }
+        }
+
+        // Pre-check passed — decode to string and run full regex search
+        const content = buffer.toString('utf8');
 
         // Collect results for each pattern
         const allPatternResults: LineResult[][] = [];
 
-        for (const pattern of input.regexPatterns) {
+        for (const pattern of regexPatterns) {
             const patternResults = searchFileWithSingleRegex(content, pattern);
 
             // If any pattern has no matches, the file doesn't match (AND semantics)
