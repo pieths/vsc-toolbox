@@ -41,6 +41,17 @@ interface ModelConfig {
  * Each entry includes device-specific CLI args in `cpuArgs`.
  * Shared args (-m, --embedding, --port, -np, -t, --log-disable)
  * are added by the server startup code.
+ *
+ * Configuration Reference:
+ * - `-c` (Context Size): Total RAM/VRAM buffer (slots * tokens_per_slot).
+ * - `-b` (Batch Size): Logical batch size. Limits how many tokens are processed at once across all slots.
+ *      Increase this (e.g., 16384, 32768) to improve throughput on GPUs.
+ * - `-ub` (Physical Batch Size): execution chunk size. The GPU kernels run in chunks of this size.
+ *      Ideally match `-b` for max speed, or lower it if hitting OOM.
+ *
+ * Tuning for Throughput:
+ *   High `parallelSlots` + High `-b` + High `-ub` = Max GPU utilization.
+ *   Example: slots=80, -b 32768, -ub 32768 (uses ~high VRAM).
  */
 const MODELS: ModelConfig[] = [
     {
