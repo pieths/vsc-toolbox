@@ -21,14 +21,13 @@ import type {
 import { searchFile } from './tasks/searchFileTask';
 import { indexFile } from './tasks/indexFileTask';
 import { computeChunks } from './tasks/computeChunksTask';
+import { setLogHandler, workerLog } from './workerLogger';
 
-/**
- * Send a log message from this worker thread to the main thread.
- * The ThreadPool will forward it to the extension logger.
- */
-function workerLog(level: WorkerLogMessage['level'], message: string): void {
+// Wire up the worker logger to forward messages
+// to the main thread via parentPort.
+setLogHandler((level, message) => {
     parentPort?.postMessage({ type: 'log', level, message } satisfies WorkerLogMessage);
-}
+});
 
 // Global error handlers to prevent worker crashes
 process.on('uncaughtException', (error) => {
