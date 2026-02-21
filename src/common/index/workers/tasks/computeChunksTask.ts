@@ -11,7 +11,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import type { Chunk, ComputeChunksInput, ComputeChunksOutput } from './types';
+import type { Chunk, ComputeChunksInput, ComputeChunksOutput } from '../../types';
 
 // ── Chunking constants and helpers ──────────────────────────────────────────
 
