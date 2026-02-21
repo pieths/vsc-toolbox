@@ -317,18 +317,30 @@ async function indexFile(input: IndexInput): Promise<IndexOutput> {
     }
 }
 
-// Listen for messages from the main thread
+// Listen for batch messages from WorkerHost
 if (parentPort) {
-    parentPort.on('message', async (input: SearchInput | IndexInput | ComputeChunksInput) => {
-        if (input.type === 'index') {
-            const output = await indexFile(input);
-            parentPort!.postMessage(output);
-        } else if (input.type === 'computeChunks') {
-            const output = await computeChunks(input);
-            parentPort!.postMessage(output);
-        } else if (input.type === 'search') {
-            const output = await searchFile(input);
-            parentPort!.postMessage(output);
+    parentPort.on('message', async (msg: { type: string; inputs: any[] }) => {
+        if (msg.type === 'searchBatch') {
+            const inputs = msg.inputs as SearchInput[];
+            const outputs: SearchOutput[] = [];
+            for (const input of inputs) {
+                outputs.push(await searchFile(input));
+            }
+            parentPort!.postMessage({ type: 'searchBatch', outputs });
+        } else if (msg.type === 'indexBatch') {
+            const inputs = msg.inputs as IndexInput[];
+            const outputs: IndexOutput[] = [];
+            for (const input of inputs) {
+                outputs.push(await indexFile(input));
+            }
+            parentPort!.postMessage({ type: 'indexBatch', outputs });
+        } else if (msg.type === 'computeChunksBatch') {
+            const inputs = msg.inputs as ComputeChunksInput[];
+            const outputs = [];
+            for (const input of inputs) {
+                outputs.push(await computeChunks(input));
+            }
+            parentPort!.postMessage({ type: 'computeChunksBatch', outputs });
         }
     });
 }

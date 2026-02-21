@@ -225,19 +225,61 @@ export interface WorkerShutdownRequest {
     type: 'shutdown';
 }
 
-/** Task request sent from ThreadPool to WorkerHost over IPC */
-export interface WorkerTaskRequest {
-    type: 'taskRequest';
+// ── Batch IPC messages (ThreadPool ↔ WorkerHost) ─────────────────────
+
+/** Batch search request sent from ThreadPool to WorkerHost over IPC */
+export interface SearchBatchRequest {
+    type: 'searchBatch';
     messageId: number;
-    payload: SearchInput | IndexInput | ComputeChunksInput;
+    inputs: SearchInput[];
 }
 
-/** Task response sent from WorkerHost to ThreadPool over IPC */
-export interface WorkerTaskResponse {
-    type: 'taskResponse';
+/** Batch search response sent from WorkerHost to ThreadPool over IPC */
+export interface SearchBatchResponse {
+    type: 'searchBatch';
     messageId: number;
-    payload: SearchOutput | IndexOutput | ComputeChunksOutput;
+    outputs: SearchOutput[];
 }
+
+/** Batch index request sent from ThreadPool to WorkerHost over IPC */
+export interface IndexBatchRequest {
+    type: 'indexBatch';
+    messageId: number;
+    inputs: IndexInput[];
+}
+
+/** Batch index response sent from WorkerHost to ThreadPool over IPC */
+export interface IndexBatchResponse {
+    type: 'indexBatch';
+    messageId: number;
+    outputs: IndexOutput[];
+}
+
+/** Batch compute chunks request sent from ThreadPool to WorkerHost over IPC */
+export interface ComputeChunksBatchRequest {
+    type: 'computeChunksBatch';
+    messageId: number;
+    inputs: ComputeChunksInput[];
+}
+
+/** Batch compute chunks response sent from WorkerHost to ThreadPool over IPC */
+export interface ComputeChunksBatchResponse {
+    type: 'computeChunksBatch';
+    messageId: number;
+    outputs: ComputeChunksOutput[];
+}
+
+/** Any batch request from ThreadPool to WorkerHost */
+export type WorkerBatchRequest =
+    | SearchBatchRequest
+    | IndexBatchRequest
+    | ComputeChunksBatchRequest;
+
+/** Any batch response from WorkerHost to ThreadPool */
+export type WorkerBatchResponse =
+    | SearchBatchResponse
+    | IndexBatchResponse
+    | ComputeChunksBatchResponse;
 
 /**
  * A single result from a nearest-embedding search.

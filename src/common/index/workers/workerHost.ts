@@ -5,12 +5,12 @@
  * Worker Host — child process entry point.
  *
  * This process is forked by ThreadPool and owns a pool of worker threads.
- * It relays messages between the IPC channel (to the Extension Host) and
- * the worker threads.
+ * It receives batch requests over IPC, splits work across threads,
+ * collects results, and sends a single batch response back.
  *
  * Communication:
- *   ThreadPool  ──IPC──►  WorkerHost  ──postMessage──►  Worker threads
- *   ThreadPool  ◄──IPC──  WorkerHost  ◄──postMessage──  Worker threads
+ *   ThreadPool  ──IPC (batch)──►  WorkerHost  ──postMessage (batch)──►  Worker threads
+ *   ThreadPool  ◄──IPC (batch)──  WorkerHost  ◄──postMessage (batch)──  Worker threads
  */
 
 import { Worker } from 'worker_threads';
@@ -25,31 +25,29 @@ import type {
     WorkerLogMessage,
     WorkerInitRequest,
     WorkerShutdownRequest,
-    WorkerTaskRequest,
-    WorkerTaskResponse,
+    SearchBatchRequest,
+    IndexBatchRequest,
+    ComputeChunksBatchRequest,
+    WorkerBatchRequest,
 } from '../types';
 
-type ParentMessage = WorkerInitRequest | WorkerShutdownRequest | WorkerTaskRequest;
+type ParentMessage = WorkerInitRequest | WorkerShutdownRequest | WorkerBatchRequest;
 
-type WorkerPayloadInput = SearchInput | IndexInput | ComputeChunksInput;
-type WorkerPayloadOutput = SearchOutput | IndexOutput | ComputeChunksOutput;
+type WorkerPayloadInput =
+    | { type: 'searchBatch'; inputs: SearchInput[] }
+    | { type: 'indexBatch'; inputs: IndexInput[] }
+    | { type: 'computeChunksBatch'; inputs: ComputeChunksInput[] };
+
+type WorkerPayloadOutput =
+    | { type: 'searchBatch'; outputs: SearchOutput[] }
+    | { type: 'indexBatch'; outputs: IndexOutput[] }
+    | { type: 'computeChunksBatch'; outputs: ComputeChunksOutput[] };
 
 type WorkerMessage = WorkerPayloadOutput | WorkerLogMessage;
-
-interface QueuedRequest {
-    messageId: number;
-    payload: WorkerPayloadInput;
-}
 
 // ── State ─────────────────────────────────────────────────────────────
 
 const workers: Worker[] = [];
-const idleWorkers: Worker[] = [];
-const requestQueue: QueuedRequest[] = [];
-
-/** Maps a Worker to the messageId it is currently processing. */
-const workerMessageMap = new Map<Worker, number>();
-
 let numThreads = 0;
 
 // ── Worker lifecycle ──────────────────────────────────────────────────
@@ -58,35 +56,6 @@ function createWorker(): Worker {
     const workerPath = path.join(__dirname, 'workerThread.js');
     const worker = new Worker(workerPath);
 
-    worker.on('message', (msg: WorkerMessage) => {
-        // Forward log messages straight to the parent (fire-and-forget)
-        if (msg.type === 'log') {
-            const logMsg = msg as WorkerLogMessage;
-            process.send?.({
-                type: 'log',
-                level: logMsg.level,
-                message: logMsg.message,
-            });
-            return;
-        }
-
-        const messageId = workerMessageMap.get(worker);
-        workerMessageMap.delete(worker);
-
-        if (messageId !== undefined) {
-            const response: WorkerTaskResponse = {
-                type: 'taskResponse',
-                messageId,
-                payload: msg as WorkerPayloadOutput,
-            };
-            process.send?.(response);
-        }
-
-        // Return worker to idle pool and drain queue
-        idleWorkers.push(worker);
-        drainQueue();
-    });
-
     worker.on('error', (err: Error) => {
         process.send?.({
             type: 'log',
@@ -94,27 +63,12 @@ function createWorker(): Worker {
             message: `[WorkerHost] Worker error: ${err.message}`,
         });
 
-        const messageId = workerMessageMap.get(worker);
-        workerMessageMap.delete(worker);
-
-        // Remove from arrays
-        removeWorker(worker);
-
-        // If a task was in-flight, re-queue it
-        if (messageId !== undefined) {
-            // Find the original payload — we stored it nowhere, so we must
-            // send an error response back instead. (The ThreadPool will handle it.)
-            // We can't recover the payload, so send an error response.
-            const errorResponse: WorkerTaskResponse = {
-                type: 'taskResponse',
-                messageId,
-                payload: { type: 'error', error: err.message } as any,
-            };
-            process.send?.(errorResponse);
+        // Remove and replace the crashed worker
+        const idx = workers.indexOf(worker);
+        if (idx !== -1) {
+            workers.splice(idx, 1);
         }
-
-        // Replace the crashed worker
-        createWorker();
+        workers.push(createWorker());
     });
 
     worker.on('exit', (code: number) => {
@@ -125,54 +79,156 @@ function createWorker(): Worker {
                 message: `[WorkerHost] Worker exited with code ${code}`,
             });
 
-            const messageId = workerMessageMap.get(worker);
-            workerMessageMap.delete(worker);
-
-            removeWorker(worker);
-
-            // Re-queue in-flight task if possible
-            if (messageId !== undefined) {
-                const errorResponse: WorkerTaskResponse = {
-                    type: 'taskResponse',
-                    messageId,
-                    payload: { type: 'error', error: `Worker exited with code ${code}` } as any,
-                };
-                process.send?.(errorResponse);
+            const idx = workers.indexOf(worker);
+            if (idx !== -1) {
+                workers.splice(idx, 1);
             }
-
-            // Replace the exited worker
-            createWorker();
+            workers.push(createWorker());
         }
     });
-
-    workers.push(worker);
-    idleWorkers.push(worker);
-    drainQueue();
 
     return worker;
 }
 
-function removeWorker(worker: Worker): void {
-    const idx = workers.indexOf(worker);
-    if (idx !== -1) {
-        workers.splice(idx, 1);
+// ── Batch processing ──────────────────────────────────────────────────
+
+/**
+ * Split an array into N roughly equal chunks.
+ */
+function splitIntoChunks<T>(array: T[], n: number): T[][] {
+    if (n <= 0) { return [array]; }
+    const chunks: T[][] = [];
+    const chunkSize = Math.ceil(array.length / n);
+    for (let i = 0; i < array.length; i += chunkSize) {
+        chunks.push(array.slice(i, i + chunkSize));
+    }
+    return chunks;
+}
+
+/**
+ * Dispatch a batch of search inputs across all worker threads.
+ * Each worker receives a sub-batch and returns its results.
+ */
+function handleSearchBatch(request: SearchBatchRequest): void {
+    const { messageId, inputs } = request;
+
+    if (inputs.length === 0) {
+        process.send?.({ type: 'searchBatch', messageId, outputs: [] });
+        return;
     }
 
-    const idleIdx = idleWorkers.indexOf(worker);
-    if (idleIdx !== -1) {
-        idleWorkers.splice(idleIdx, 1);
+    const chunks = splitIntoChunks(inputs, workers.length);
+    let completedWorkers = 0;
+    const allOutputs: SearchOutput[][] = new Array(chunks.length);
+
+    for (let i = 0; i < chunks.length; i++) {
+        const worker = workers[i];
+        const payload: WorkerPayloadInput = { type: 'searchBatch', inputs: chunks[i] };
+
+        const onMessage = (msg: WorkerMessage) => {
+            if (msg.type === 'log') {
+                process.send?.(msg);
+                return;
+            }
+
+            if (msg.type === 'searchBatch') {
+                worker.removeListener('message', onMessage);
+                allOutputs[i] = msg.outputs;
+                completedWorkers++;
+
+                if (completedWorkers === chunks.length) {
+                    const outputs = allOutputs.flat();
+                    process.send?.({ type: 'searchBatch', messageId, outputs });
+                }
+            }
+        };
+
+        worker.on('message', onMessage);
+        worker.postMessage(payload);
     }
 }
 
-// ── Queue processing ──────────────────────────────────────────────────
+/**
+ * Dispatch a batch of index inputs across all worker threads.
+ */
+function handleIndexBatch(request: IndexBatchRequest): void {
+    const { messageId, inputs } = request;
 
-function drainQueue(): void {
-    while (requestQueue.length > 0 && idleWorkers.length > 0) {
-        const request = requestQueue.shift()!;
-        const worker = idleWorkers.shift()!;
+    if (inputs.length === 0) {
+        process.send?.({ type: 'indexBatch', messageId, outputs: [] });
+        return;
+    }
 
-        workerMessageMap.set(worker, request.messageId);
-        worker.postMessage(request.payload);
+    const chunks = splitIntoChunks(inputs, workers.length);
+    let completedWorkers = 0;
+    const allOutputs: IndexOutput[][] = new Array(chunks.length);
+
+    for (let i = 0; i < chunks.length; i++) {
+        const worker = workers[i];
+        const payload: WorkerPayloadInput = { type: 'indexBatch', inputs: chunks[i] };
+
+        const onMessage = (msg: WorkerMessage) => {
+            if (msg.type === 'log') {
+                process.send?.(msg);
+                return;
+            }
+
+            if (msg.type === 'indexBatch') {
+                worker.removeListener('message', onMessage);
+                allOutputs[i] = msg.outputs;
+                completedWorkers++;
+
+                if (completedWorkers === chunks.length) {
+                    const outputs = allOutputs.flat();
+                    process.send?.({ type: 'indexBatch', messageId, outputs });
+                }
+            }
+        };
+
+        worker.on('message', onMessage);
+        worker.postMessage(payload);
+    }
+}
+
+/**
+ * Dispatch a batch of compute chunks inputs across all worker threads.
+ */
+function handleComputeChunksBatch(request: ComputeChunksBatchRequest): void {
+    const { messageId, inputs } = request;
+
+    if (inputs.length === 0) {
+        process.send?.({ type: 'computeChunksBatch', messageId, outputs: [] });
+        return;
+    }
+
+    const chunks = splitIntoChunks(inputs, workers.length);
+    let completedWorkers = 0;
+    const allOutputs: ComputeChunksOutput[][] = new Array(chunks.length);
+
+    for (let i = 0; i < chunks.length; i++) {
+        const worker = workers[i];
+        const payload: WorkerPayloadInput = { type: 'computeChunksBatch', inputs: chunks[i] };
+
+        const onMessage = (msg: WorkerMessage) => {
+            if (msg.type === 'log') {
+                process.send?.(msg);
+                return;
+            }
+
+            if (msg.type === 'computeChunksBatch') {
+                worker.removeListener('message', onMessage);
+                allOutputs[i] = msg.outputs;
+                completedWorkers++;
+
+                if (completedWorkers === chunks.length) {
+                    const outputs = allOutputs.flat();
+                    process.send?.({ type: 'computeChunksBatch', messageId, outputs });
+                }
+            }
+        };
+
+        worker.on('message', onMessage);
+        worker.postMessage(payload);
     }
 }
 
@@ -183,7 +239,7 @@ process.on('message', (msg: ParentMessage) => {
         // Initialize worker threads
         numThreads = msg.numThreads;
         for (let i = 0; i < numThreads; i++) {
-            createWorker();
+            workers.push(createWorker());
         }
         // Acknowledge init
         process.send?.({ type: 'init-ack', numThreads });
@@ -199,9 +255,14 @@ process.on('message', (msg: ParentMessage) => {
         return;
     }
 
-    // Normal work request
-    requestQueue.push(msg);
-    drainQueue();
+    // Batch requests
+    if (msg.type === 'searchBatch') {
+        handleSearchBatch(msg);
+    } else if (msg.type === 'indexBatch') {
+        handleIndexBatch(msg);
+    } else if (msg.type === 'computeChunksBatch') {
+        handleComputeChunksBatch(msg);
+    }
 });
 
 // ── Global error handlers ─────────────────────────────────────────────
