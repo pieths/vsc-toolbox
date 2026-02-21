@@ -8,9 +8,9 @@ import picomatch from 'picomatch';
 import { FileIndex } from './fileIndex';
 import { ThreadPool } from './workers/threadPool';
 import { IndexInput, NearestEmbeddingResult } from './types';
-import { LlamaServer } from './llamaServer';
-import { VectorDatabase } from './vectorDatabase';
-import { EmbeddingProcessor } from './embeddingProcessor';
+import { LlamaServer } from './embeddings/llamaServer';
+import { VectorDatabase } from './embeddings/vectorDatabase';
+import { EmbeddingProcessor } from './embeddings/embeddingProcessor';
 import { PathFilter } from './pathFilter';
 import { log, warn, error } from '../logger';
 

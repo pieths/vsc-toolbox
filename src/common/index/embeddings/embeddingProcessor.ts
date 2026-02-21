@@ -1,12 +1,12 @@
 // Copyright (c) 2026 Piet Hein Schouten
 // SPDX-License-Identifier: MIT
 
-import { FileIndex } from './fileIndex';
-import { ThreadPool } from './workers/threadPool';
-import { Chunk, ComputeChunksInput } from './types';
+import { FileIndex } from '../fileIndex';
+import { ThreadPool } from '../workers/threadPool';
+import { Chunk, ComputeChunksInput } from '../types';
 import { LlamaServer } from './llamaServer';
 import { FileChunkRecord, VectorDatabase } from './vectorDatabase';
-import { log, warn } from '../logger';
+import { log, warn } from '../../logger';
 
 /**
  * Method-object that encapsulates the embedding pipeline for a set of files.

@@ -17,7 +17,7 @@ import {
     SearchResults
 } from './types';
 import { log, warn, error } from '../logger';
-import { LlamaServer } from './llamaServer';
+import { LlamaServer } from './embeddings/llamaServer';
 import { PathFilter } from './pathFilter';
 
 /**

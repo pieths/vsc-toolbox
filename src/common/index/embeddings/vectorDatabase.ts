@@ -30,7 +30,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Connection, Table } from '@lancedb/lancedb';
-import { log, warn, error } from '../logger';
+import { log, warn, error } from '../../logger';
 
 // ── Public types ────────────────────────────────────────────────────────────
 

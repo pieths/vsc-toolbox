@@ -7,7 +7,7 @@ import * as fs from 'fs';
 import * as https from 'https';
 import * as http from 'http';
 import { ChildProcess, spawn } from 'child_process';
-import { log, warn, error as logError } from '../logger';
+import { log, warn, error as logError } from '../../logger';
 
 /**
  * Model configuration for the embedding model.
