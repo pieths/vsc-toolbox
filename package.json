@@ -318,7 +318,9 @@
     "watch": "node esbuild.mjs --watch",
     "package": "npm run typecheck && node esbuild.mjs --production",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src --ext ts"
+    "lint": "eslint src --ext ts",
+    "pretest": "tsc -p tsconfig.test.json",
+    "test": "node --test out-test/tests/**/*.test.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
