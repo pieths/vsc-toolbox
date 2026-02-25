@@ -79,6 +79,15 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# Download runo-search native addon
+Write-Host "Downloading runo-search native addon..." -ForegroundColor Yellow
+$runoSearchScript = Join-Path $PSScriptRoot "scripts\download_runo_search.ps1"
+& $runoSearchScript
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: Failed to download runo-search native addon!" -ForegroundColor Red
+    exit 1
+}
+
 # Success
 Write-Host "================================================" -ForegroundColor Green
 Write-Host "  Setup Complete!" -ForegroundColor Green

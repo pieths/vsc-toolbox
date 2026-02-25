@@ -9,5 +9,6 @@
 !out/**
 !bin/win_x64/llama.cpp/**
 !bin/win_x64/node/**
+!bin/win_x64/runo-search/**
 !bin/tree-sitter/**
 !node_modules/@lancedb/lancedb-win32-x64-msvc/**
