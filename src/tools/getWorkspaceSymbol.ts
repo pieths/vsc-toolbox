@@ -237,7 +237,7 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
         const qualifiedName = await ContentIndex.getInstance().getFullyQualifiedName(
             filePath,
             symbolInfo.name,
-            symbolInfo.location
+            symbolInfo.location.range.start.line
         );
         markdownLines.push('**Full Name**: `' + qualifiedName + '`');
         markdownLines.push('');

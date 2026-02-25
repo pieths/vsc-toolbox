@@ -23,9 +23,8 @@ export class CacheManager {
     private indexingComplete: boolean = false;
     private indexingPromise: Promise<void> | null = null;
     private pathFilter: PathFilter | null = null;
-    private ctagsPath: string = 'ctags';
     private cacheDir: string = '';
-    private ctagsCacheDir: string = '';
+    private symbolsCacheDir: string = '';
     private threadPool: ThreadPool | null = null;
     private llamaServer: LlamaServer | null = null;
     private vectorDatabase: VectorDatabase | null = null;
@@ -46,20 +45,17 @@ export class CacheManager {
      * Runs in background, non-blocking.
      *
      * @param pathFilter - PathFilter instance for include/exclude logic
-     * @param ctagsPath - Path to the ctags executable
      * @param threadPool - Thread pool manager for indexing operations
      * @param llamaServer - Llama server instance for computing embeddings
      * @param enableEmbeddings - If true, create vector database and embedding processor
      */
     async initialize(
         pathFilter: PathFilter,
-        ctagsPath: string,
         threadPool: ThreadPool,
         llamaServer: LlamaServer,
         enableEmbeddings: boolean = false
     ): Promise<void> {
         this.pathFilter = pathFilter;
-        this.ctagsPath = ctagsPath;
         this.threadPool = threadPool;
         this.llamaServer = llamaServer;
         this.indexingComplete = false;
@@ -84,18 +80,17 @@ export class CacheManager {
             );
         }
 
-        // Ensure ctags cache directory and a-z subdirectories exist
-        this.ctagsCacheDir = this.cacheDir ? path.join(this.cacheDir, 'ctags') : '';
-        if (this.ctagsCacheDir) {
+        // Ensure symbols cache directory and a-z subdirectories exist
+        this.symbolsCacheDir = this.cacheDir ? path.join(this.cacheDir, 'symbols') : '';
+        if (this.symbolsCacheDir) {
             const alphabet = 'abcdefghijklmnopqrstuvwxyz';
             // Create a subdirectory for each letter plus '_' for non-alpha filenames
-            const subdirs = [...alphabet, '_'].map(ch => path.join(this.ctagsCacheDir, ch));
+            const subdirs = [...alphabet, '_'].map(ch => path.join(this.symbolsCacheDir, ch));
             await Promise.all(subdirs.map(dir => fs.promises.mkdir(dir, { recursive: true })));
         }
 
         log(`Content index: includePaths =\n${JSON.stringify(pathFilter.getIncludePaths(), null, 2)}`);
         log(`Content index: fileExtensions =\n${JSON.stringify(pathFilter.getFileExtensions(), null, 2)}`);
-        log(`Content index: ctagsPath = ${ctagsPath}`);
         log(`Content index: cacheDir = ${this.cacheDir}`);
 
         this.indexingPromise = this.buildInitialIndex();
@@ -154,7 +149,7 @@ export class CacheManager {
                         log(`Content index: Duplicate path: "${filePath}" (existing: "${this.cache.get(key)!.getFilePath()}")`);
                         continue;
                     }
-                    const fileIndex = new FileIndex(filePath, this.ctagsCacheDir);
+                    const fileIndex = new FileIndex(filePath, this.symbolsCacheDir);
                     this.cache.set(key, fileIndex);
                 }
 
@@ -282,8 +277,7 @@ export class CacheManager {
         const inputs: IndexInput[] = toIndex.map(fi => ({
             type: 'index' as const,
             filePath: fi.getFilePath(),
-            ctagsPath: this.ctagsPath,
-            tagsPath: fi.getTagsPath()
+            idxPath: fi.getIdxPath()
         }));
 
         const startTime = Date.now();
@@ -291,7 +285,7 @@ export class CacheManager {
 
         let successCount = 0;
         for (const output of outputs) {
-            if (output.tagsPath && !output.error) {
+            if (output.idxPath && !output.error) {
                 successCount++;
             }
         }
@@ -382,7 +376,7 @@ export class CacheManager {
     add(filePath: string): void {
         const normalizedPath = this.normalizePath(filePath);
         if (!this.cache.has(normalizedPath) && this.pathFilter?.shouldIncludeFile(filePath)) {
-            const fileIndex = new FileIndex(filePath, this.ctagsCacheDir);
+            const fileIndex = new FileIndex(filePath, this.symbolsCacheDir);
             this.cache.set(normalizedPath, fileIndex);
             this.indexFiles([fileIndex]);
             log(`Content index: Added new file ${filePath}`);

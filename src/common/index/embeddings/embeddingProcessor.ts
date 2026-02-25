@@ -86,7 +86,7 @@ export class EmbeddingProcessor {
         const inputs: ComputeChunksInput[] = batch.map(fi => ({
             type: 'computeChunks' as const,
             filePath: fi.getFilePath(),
-            ctagsPath: fi.getTagsPath(),
+            idxPath: fi.getIdxPath(),
         }));
 
         return this.threadPool.computeChunksAll(inputs);

@@ -8,7 +8,6 @@ import { CacheManager } from './cacheManager';
 import { ThreadPool } from './workers/threadPool';
 import { FileWatcher } from './fileWatcher';
 import {
-    ContainerDetails,
     ContentIndexConfig,
     FileLineRef,
     NearestEmbeddingResult,
@@ -16,6 +15,7 @@ import {
     SearchResult,
     SearchResults
 } from './types';
+import type { IndexSymbol } from './parsers/types';
 import { log, warn, error } from '../logger';
 import { LlamaServer } from './embeddings/llamaServer';
 import { PathFilter } from './pathFilter';
@@ -34,7 +34,6 @@ function getConfig(): ContentIndexConfig {
     const includePaths = config.get<string[]>('includePaths', []);
     const excludePatterns = config.get<string[]>('excludePatterns', []);
     const fileExtensions = config.get<string[]>('fileExtensions', ['.cc', '.h']);
-    const ctagsPath = config.get<string>('ctagsPath', 'ctags');
     const enableEmbeddings = config.get<boolean>('enableEmbeddings', false);
 
     return {
@@ -42,7 +41,6 @@ function getConfig(): ContentIndexConfig {
         includePaths,
         excludePatterns,
         fileExtensions,
-        ctagsPath,
         enableEmbeddings
     };
 }
@@ -162,7 +160,6 @@ export class ContentIndex {
                 includePaths,
                 excludePatterns,
                 fileExtensions,
-                ctagsPath,
                 enableEmbeddings
             } = config;
 
@@ -189,7 +186,6 @@ export class ContentIndex {
             // Start background indexing
             await this.cacheManager.initialize(
                 this.pathFilter,
-                ctagsPath,
                 this.threadPool,
                 this.llamaServer,
                 enableEmbeddings
@@ -433,10 +429,10 @@ export class ContentIndex {
      * Get the innermost container (function, class, namespace, etc.) at a specific line.
      *
      * @param filePath - Absolute path to the source file
-     * @param line - 1-based line number to find the container for
-     * @returns ContainerDetails object, or null if not found or file not indexed
+     * @param line - 0-based line number to find the container for
+     * @returns IndexSymbol for the innermost container, or null if not found
      */
-    async getContainer(filePath: string, line: number): Promise<ContainerDetails | null> {
+    async getContainer(filePath: string, line: number): Promise<IndexSymbol | null> {
         if (!this.initialized) {
             warn('ContentIndex: Not initialized');
             return null;
@@ -461,9 +457,9 @@ export class ContentIndex {
      * Get the innermost container (function, class, namespace, etc.) for multiple locations.
      *
      * @param queries - Array of FileLineRef objects to look up
-     * @returns Array of ContainerDetails (or null) in the same order as input queries
+     * @returns Array of IndexSymbol (or null) in the same order as input queries
      */
-    async getContainers(queries: FileLineRef[]): Promise<(ContainerDetails | null)[]> {
+    async getContainers(queries: FileLineRef[]): Promise<(IndexSymbol | null)[]> {
         if (!this.initialized) {
             warn('ContentIndex: Not initialized');
             return queries.map(() => null);
@@ -490,7 +486,7 @@ export class ContentIndex {
         });
 
         // Pre-allocate results array (maintains input order)
-        const results: (ContainerDetails | null)[] = new Array(queries.length).fill(null);
+        const results: (IndexSymbol | null)[] = new Array(queries.length).fill(null);
 
         // Process each file's queries consecutively (keeps FileIndex cache hot)
         for (const [filePath, fileQueries] of queriesByFile) {
@@ -510,10 +506,10 @@ export class ContentIndex {
      *
      * @param filePath - Absolute path to the source file
      * @param name - The symbol name to look up
-     * @param location - The location of the symbol in the source file
+     * @param line - 0-based line number of the symbol
      * @returns The fully qualified name (e.g., "namespace::Class::method") or the original name if not found
      */
-    async getFullyQualifiedName(filePath: string, name: string, location: vscode.Location): Promise<string> {
+    async getFullyQualifiedName(filePath: string, name: string, line: number): Promise<string> {
         if (!this.initialized) {
             warn('ContentIndex: Not initialized');
             return name;
@@ -531,7 +527,7 @@ export class ContentIndex {
             return name;  // File not in index or couldn't be indexed
         }
 
-        return fileIndex.getFullyQualifiedName(name, location);
+        return fileIndex.getFullyQualifiedName(name, line);
     }
 
     /**

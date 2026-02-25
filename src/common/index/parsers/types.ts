@@ -144,6 +144,12 @@ export type IndexFile = [sha256: string, version: number, filePath: string, symb
  * The positions are similar to the vscode.DocumentSymbol class `range`
  * and `selectionRange` though they might differ in some aspects depending
  * on the type of the symbol.
+ * End positions use an exclusive column on an inclusive line:
+ * `endColumn` points one past the last character of the symbol, but
+ * `endLine` is the line that character sits on. For example, a symbol
+ * whose last character is at line 5, column 10 has `endLine = 5,
+ * endColumn = 11`. Line-level containment checks should use
+ * `line <= endLine`, not `line < endLine`.
  */
 export interface IndexSymbol {
     /** Symbol type tag */

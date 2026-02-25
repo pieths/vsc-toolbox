@@ -12,7 +12,8 @@ export { ContentIndex } from './contentIndex';
 export {
     SearchResult,
     SearchResults,
-    ContainerDetails,
     FileLineRef,
     NearestEmbeddingResult,
 } from './types';
+export { SymbolType, AttrKey, symbolTypeToString, CALLABLE_TYPES, CONTAINER_TYPES } from './parsers/types';
+export type { IndexSymbol } from './parsers/types';

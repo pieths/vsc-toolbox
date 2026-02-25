@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import * as vscode from 'vscode';
-import { ContentIndex, SearchResult, ContainerDetails, FileLineRef } from '../common/index';
+import { ContentIndex, SearchResult, FileLineRef, IndexSymbol, AttrKey, symbolTypeToString } from '../common/index';
 import { log } from '../common/logger';
 import { getModel, sendRequestWithReadFileAccess } from '../common/copilotUtils';
 
@@ -33,27 +33,30 @@ interface SearchIndexParams {
  */
 interface ResultWithContainer {
     result: SearchResult;
-    container: ContainerDetails | null;
+    container: IndexSymbol | null;
 }
 
 /**
  * Generate a unique key for a container (or top-level)
  */
-function getContainerKey(container: ContainerDetails | null): string {
+function getContainerKey(container: IndexSymbol | null): string {
     if (!container) {
         return '__top_level__';
     }
-    return `${container.fullyQualifiedName}:${container.startLine}-${container.endLine}`;
+    const fqn = container.attrs.get(AttrKey.FullyQualifiedName) ?? container.name;
+    return `${fqn}:${container.startLine}-${container.endLine}`;
 }
 
 /**
  * Format a container heading line
  */
-function formatContainerHeading(container: ContainerDetails | null): string {
+function formatContainerHeading(container: IndexSymbol | null): string {
     if (!container) {
         return '### [top-level]\n\n';
     }
-    return `### [in ${container.ctagsType}] ${container.fullyQualifiedName} (lines ${container.startLine}-${container.endLine})\n\n`;
+    const kind = symbolTypeToString(container.type);
+    const fqn = container.attrs.get(AttrKey.FullyQualifiedName) ?? container.name;
+    return `### [in ${kind}] ${fqn} (lines ${container.startLine + 1}-${container.endLine + 1})\n\n`;
 }
 
 /**
@@ -124,7 +127,7 @@ function formatResults(resultsWithContainers: ResultWithContainer[], query: stri
 
             for (const item of containerResults) {
                 const escapedText = item.result.text.replace(/`/g, '\\`');
-                markdown += `${item.result.line}: \`${escapedText}\`\n`;
+                markdown += `${item.result.line + 1}: \`${escapedText}\`\n`;
             }
 
             markdown += '\n';

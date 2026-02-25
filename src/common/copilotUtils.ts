@@ -6,6 +6,7 @@ import { ScopedFileCache } from './scopedFileCache';
 import { log } from './logger';
 import { parseQueryAsOr } from './queryParser';
 import { ContentIndex } from './index';
+import { symbolTypeToString, AttrKey } from './index';
 
 /**
  * Utility functions for sending text to a Copilot language model.
@@ -174,44 +175,6 @@ async function executeFileGlobTool(
 }
 
 /**
- * Convert a vscode.SymbolKind value to a readable string
- */
-function symbolKindToString(kind: number | undefined): string {
-    if (kind === undefined) {
-        return 'Unknown';
-    }
-    const kindMap: { [key: number]: string } = {
-        [vscode.SymbolKind.File]: 'File',
-        [vscode.SymbolKind.Module]: 'Module',
-        [vscode.SymbolKind.Namespace]: 'Namespace',
-        [vscode.SymbolKind.Package]: 'Package',
-        [vscode.SymbolKind.Class]: 'Class',
-        [vscode.SymbolKind.Method]: 'Method',
-        [vscode.SymbolKind.Property]: 'Property',
-        [vscode.SymbolKind.Field]: 'Field',
-        [vscode.SymbolKind.Constructor]: 'Constructor',
-        [vscode.SymbolKind.Enum]: 'Enum',
-        [vscode.SymbolKind.Interface]: 'Interface',
-        [vscode.SymbolKind.Function]: 'Function',
-        [vscode.SymbolKind.Variable]: 'Variable',
-        [vscode.SymbolKind.Constant]: 'Constant',
-        [vscode.SymbolKind.String]: 'String',
-        [vscode.SymbolKind.Number]: 'Number',
-        [vscode.SymbolKind.Boolean]: 'Boolean',
-        [vscode.SymbolKind.Array]: 'Array',
-        [vscode.SymbolKind.Object]: 'Object',
-        [vscode.SymbolKind.Key]: 'Key',
-        [vscode.SymbolKind.Null]: 'Null',
-        [vscode.SymbolKind.EnumMember]: 'EnumMember',
-        [vscode.SymbolKind.Struct]: 'Struct',
-        [vscode.SymbolKind.Event]: 'Event',
-        [vscode.SymbolKind.Operator]: 'Operator',
-        [vscode.SymbolKind.TypeParameter]: 'TypeParameter'
-    };
-    return kindMap[kind] ?? 'Unknown';
-}
-
-/**
  * Execute the getContainer tool
  */
 async function executeGetContainerTool(
@@ -229,7 +192,8 @@ async function executeGetContainerTool(
         }
 
         const contentIndex = ContentIndex.getInstance();
-        const container = await contentIndex.getContainer(normalizedPath, input.line);
+        // Tool API uses 1-based lines; getContainer expects 0-based
+        const container = await contentIndex.getContainer(normalizedPath, input.line - 1);
 
         const header = `File: \`${input.filePath}\`. Line ${input.line}. Container:`;
 
@@ -237,12 +201,12 @@ async function executeGetContainerTool(
             return `${header}\n(no container found at this line)`;
         }
 
-        const typeStr = symbolKindToString(container.type);
+        const fqn = container.attrs.get(AttrKey.FullyQualifiedName) ?? container.name;
         const details = [
-            `Type: ${typeStr} (ctags: ${container.ctagsType})`,
-            `Fully Qualified Name: ${container.fullyQualifiedName}`,
-            `Start Line: ${container.startLine}`,
-            `End Line: ${container.endLine}`
+            `Type: ${symbolTypeToString(container.type)}`,
+            `Fully Qualified Name: ${fqn}`,
+            `Start Line: ${container.startLine + 1}`,
+            `End Line: ${container.endLine + 1}`
         ];
 
         return `${header}\n${details.join('\n')}`;

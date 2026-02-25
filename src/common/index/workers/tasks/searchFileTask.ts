@@ -54,7 +54,9 @@ export async function searchFile(input: SearchInput): Promise<SearchOutput> {
         // Call native addon
         // unicode=false for performance (source code is predominantly ASCII)
         // includeLines=true to return full line text with results
-        const results = nativeSearchFile(input.filePath, regexPatterns, false, true);
+        // Convert from 1-based (native addon) to 0-based line numbers
+        const results = nativeSearchFile(input.filePath, regexPatterns, false, true)
+            .map(r => ({ line: r.line - 1, text: r.text }));
 
         return { type: 'search', filePath: input.filePath, results };
     } catch (error) {

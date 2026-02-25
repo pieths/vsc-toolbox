@@ -5,7 +5,7 @@ import * as vscode from 'vscode';
 import picomatch from 'picomatch';
 import { createMarkdownCodeBlock } from '../common/markdownUtils';
 import { getFunctionSignatureRange } from '../common/documentUtils';
-import { ContentIndex, ContainerDetails } from '../common/index';
+import { ContentIndex, IndexSymbol, AttrKey, symbolTypeToString, CALLABLE_TYPES } from '../common/index';
 import { ScopedFileCache } from '../common/scopedFileCache';
 import { getModel, sendRequestWithReadFileAccess } from '../common/copilotUtils';
 import { log } from '../common/logger';
@@ -42,7 +42,7 @@ interface SourceContext {
 interface ReferenceGroup {
     references: vscode.Location[];
     range: vscode.Range;
-    container?: ContainerDetails;
+    container?: IndexSymbol;
     containerFullName?: string;
 }
 
@@ -407,17 +407,14 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                 // If there is only one location contained in this reference group,
                 // and it matches the container symbol (aka. location and container
                 // both reference the same method name), then adjust output accordingly.
-                // ContainerDetails uses 1-based line numbers, VS Code uses 0-based
+                // IndexSymbol uses 0-based line numbers, same as VS Code
                 const locationMatchesContainer = ref.container &&
                     ref.references.length == 1 &&
-                    ref.container.startLine === ref.references[0].range.start.line + 1;
+                    ref.container.startLine === ref.references[0].range.start.line;
                 // ^ TODO: update this to add name check
 
                 if (ref.containerFullName) {
-                    // Use container type or ctagsType for display
-                    const containerKind = ref.container!.type !== undefined
-                        ? vscode.SymbolKind[ref.container!.type]
-                        : ref.container!.ctagsType;
+                    const containerKind = symbolTypeToString(ref.container!.type);
                     markdownParts.push('');
 
                     if (locationMatchesContainer) {
@@ -431,10 +428,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                     const context = containerSourceContexts[i];
                     const startLineNum = context.range.start.line + 1;
                     const endLineNum = context.range.end.line + 1;
-                    // Use container type or ctagsType for display
-                    const containerKind = ref.container!.type !== undefined
-                        ? vscode.SymbolKind[ref.container!.type]
-                        : ref.container!.ctagsType;
+                    const containerKind = symbolTypeToString(ref.container!.type);
                     markdownParts.push('');
                     markdownParts.push(`${containerKind} signature (showing source lines ${startLineNum} - ${endLineNum}): `);
                     markdownParts.push(...context.sourceLines);
@@ -544,10 +538,10 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
             const filePath = location.uri.fsPath;
             const lines = await fileCache.getLines(filePath);
 
-            // Get container from ContentIndex (uses 1-based line numbers)
+            // Get container from ContentIndex (uses 0-based line numbers)
             const container = await ContentIndex.getInstance().getContainer(
                 filePath,
-                location.range.start.line + 1  // Convert to 1-based
+                location.range.start.line
             );
 
             // Calculate start and end lines, constrained by method boundaries if found
@@ -556,9 +550,9 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
 
             let containerFullName: string | undefined;
             if (container) {
-                // First, constrain to container boundaries (convert from 1-based to 0-based)
-                const containerStart = container.startLine - 1;
-                const containerEnd = container.endLine - 1;
+                // Constrain to container boundaries (already 0-based)
+                const containerStart = container.startLine;
+                const containerEnd = container.endLine;
 
                 startLine = Math.max(startLine, containerStart);
                 endLine = Math.min(endLine, containerEnd);
@@ -590,7 +584,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                 // window size and the following should hold true:
                 // containerStart ≤ startLine ≤ endLine ≤ containerEnd
 
-                containerFullName = container.fullyQualifiedName;
+                containerFullName = container.attrs.get(AttrKey.FullyQualifiedName) ?? container.name;
             }
 
             const endLineLength = lines[endLine].length;
@@ -628,14 +622,6 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
         const containerSignatureSourceContexts: SourceContext[] = [];
         const containerSignatureRanges: (vscode.Range | undefined)[] = [];
 
-        // Callable ctags types for checking container kind
-        const callableCtagsTypes = ['function', 'method', 'member'];
-        const callableKinds = [
-            vscode.SymbolKind.Function,
-            vscode.SymbolKind.Method,
-            vscode.SymbolKind.Constructor
-        ];
-
         // First, get all container signature ranges in batches
         for (let i = 0; i < references.length; i += batchSize) {
             const batch = references.slice(i, i + batchSize);
@@ -646,19 +632,13 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
                         return undefined;
                     }
 
-                    // Check if it's a callable type (by SymbolKind or ctags type)
-                    const isCallable = (ref.container.type !== undefined && callableKinds.includes(ref.container.type)) ||
-                        callableCtagsTypes.includes(ref.container.ctagsType);
-
-                    if (!isCallable) {
+                    if (!CALLABLE_TYPES.has(ref.container.type)) {
                         return undefined;
                     }
 
                     const lines = await fileCache.getLines(ref.references[0].uri.fsPath);
-                    // Convert 1-based startLine/startColumn to 0-based
-                    const startLine = ref.container.startLine - 1;
-                    const startColumn = ref.container.startColumn !== undefined ? ref.container.startColumn - 1 : 0;
-                    return getFunctionSignatureRange(lines, startLine, startColumn);
+                    // IndexSymbol positions are already 0-based
+                    return getFunctionSignatureRange(lines, ref.container.startLine, ref.container.startColumn);
                 })
             );
             containerSignatureRanges.push(...batchResults);

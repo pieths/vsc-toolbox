@@ -209,7 +209,7 @@ export class ThreadPool {
                 type: 'index' as const,
                 status: IndexStatus.Failed,
                 filePath: input.filePath,
-                tagsPath: null,
+                idxPath: null,
                 error: 'Thread pool has been disposed'
             }));
         }
@@ -239,7 +239,7 @@ export class ThreadPool {
                 type: 'index' as const,
                 status: IndexStatus.Failed,
                 filePath: input.filePath,
-                tagsPath: null,
+                idxPath: null,
                 error: err instanceof Error ? err.message : String(err),
             }));
         }

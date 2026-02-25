@@ -6,32 +6,12 @@
  */
 
 /**
- * Details about a container (function, class, namespace, etc.) extracted from ctags.
- */
-export interface ContainerDetails {
-    /** Name of the container */
-    name: string;
-    /** Fully qualified name (e.g., "namespace::Class::method") */
-    fullyQualifiedName: string;
-    /** VS Code SymbolKind equivalent, or undefined if no mapping exists */
-    type: number | undefined;  // vscode.SymbolKind value
-    /** ctags kind (e.g., "function", "class", "namespace") */
-    ctagsType: string;
-    /** 1-based start line of the container */
-    startLine: number;
-    /** 1-based column number of the container definition, or undefined if not available */
-    startColumn: number | undefined;
-    /** 1-based end line of the container */
-    endLine: number;
-}
-
-/**
  * Reference to a specific line in a file.
  */
 export interface FileLineRef {
     /** Absolute file path */
     filePath: string;
-    /** 1-based line number */
+    /** 0-based line number */
     line: number;
 }
 
@@ -40,7 +20,7 @@ export interface FileLineRef {
  * TODO: should this use FileLineRef?
  */
 export interface SearchResult {
-    /** 1-based line number */
+    /** 0-based line number */
     line: number;
     /** Full line text (trimmed) */
     text: string;
@@ -101,19 +81,17 @@ export interface IndexInput {
     type: 'index';
     /** Absolute file path to index */
     filePath: string;
-    /** Path to the ctags executable */
-    ctagsPath: string;
-    /** Output path for the tags file */
-    tagsPath: string;
+    /** Output path for the *.idx file */
+    idxPath: string;
 }
 
 /**
  * Status of an indexing operation
  */
 export const enum IndexStatus {
-    /** File was indexed (ctags was run and tags file was created) */
+    /** File was indexed (*.idx file was created) */
     Indexed,
-    /** File was skipped (tags file was already up-to-date) */
+    /** File was skipped (*.idx file was already up-to-date) */
     Skipped,
     /** Indexing failed (error occurred) */
     Failed,
@@ -129,8 +107,8 @@ export interface IndexOutput {
     status: IndexStatus;
     /** Absolute file path that was indexed */
     filePath: string;
-    /** Path to the generated tags file, or null on error */
-    tagsPath: string | null;
+    /** Path to the generated *.idx file, or null on error */
+    idxPath: string | null;
     /** Error message if indexing failed */
     error?: string;
 }
@@ -163,8 +141,8 @@ export interface ComputeChunksInput {
     type: 'computeChunks';
     /** Absolute file path to the source file */
     filePath: string;
-    /** Absolute path to the corresponding ctags tags file */
-    ctagsPath: string;
+    /** Absolute path to the corresponding *.idx file */
+    idxPath: string;
 }
 
 /**
@@ -289,8 +267,6 @@ export interface ContentIndexConfig {
     excludePatterns: string[];
     /** List of file extensions to include (e.g., '.cc', '.h') */
     fileExtensions: string[];
-    /** Path to the ctags executable */
-    ctagsPath: string;
     /** Whether to enable embedding generation and vector search */
     enableEmbeddings: boolean;
 }

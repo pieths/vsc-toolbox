@@ -483,31 +483,13 @@ Change to match your module (`"myapp"`, etc.).
 {
   "vscToolbox.contentIndex.workerThreads": 0,
   "vscToolbox.contentIndex.includePaths": ["/path/to/src"],
-  "vscToolbox.contentIndex.fileExtensions": [".cc", ".h"],
-  "vscToolbox.contentIndex.ctagsPath": "ctags"
+  "vscToolbox.contentIndex.fileExtensions": [".cc", ".h"]
 }
 ```
 
 - `workerThreads`: Number of worker threads (0 = auto-detect based on CPU cores)
 - `includePaths`: Directories to index (empty = all workspace folders)
 - `fileExtensions`: File extensions to include in search
-- `ctagsPath`: Path to the ctags executable (default: `"ctags"`)
-
-##### Installing Universal Ctags (Windows)
-
-The content index uses a custom version of
-[Universal Ctags](https://github.com/universal-ctags/ctags)
-for symbol extraction.
-
-- Download from https://github.com/pieths/ctags/releases/tag/v6.2.0-custom
-- Extract the `ctags_v6.2.0-custom.zip` and add to PATH,
-  or set `ctagsPath` in the VSCode settings to the full path.
-
-**Verify installation:**
-```powershell
-ctags --version
-# Should show: Universal Ctags 6.x.x
-```
 
 ## Development
 

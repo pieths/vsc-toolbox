@@ -4,40 +4,26 @@
 import * as fs from 'fs';
 import * as crypto from 'crypto';
 import * as path from 'path';
-import * as vscode from 'vscode';
-import { ContainerDetails } from './types';
+import { AttrKey, CONTAINER_TYPES } from './parsers/types';
+import type { IndexFile, IndexSymbol } from './parsers/types';
+import { getParserForFile } from './parsers/registry';
+
+// ── Symbols cache ───────────────────────────────────────────────────────────
 
 /**
- * Represents a single tag entry from a ctags JSON output file.
- * Only includes fields we care about - path and pattern are ignored
- * since we already know the file path and have line numbers.
+ * Cached symbols entry with mtime for staleness detection.
  */
-interface Tag {
-    name: string;
-    line: number;
-    column?: number;
-    end?: number;
-    kind: string;
-    scope?: string;
-    scopeKind?: string;
-    signature?: string;
-    typeref?: string;
+interface CachedSymbols {
+    symbols: IndexSymbol[];
+    mtime: number;  // mtime of idx file when parsed
 }
 
 /**
- * Cached tags entry with mtime for staleness detection.
+ * Simple LRU cache for hydrated IndexSymbol arrays.
+ * Keys are idx file paths, values are IndexSymbol arrays with their mtime.
  */
-interface CachedTags {
-    tags: Tag[];
-    mtime: number;  // mtime of tags file when parsed
-}
-
-/**
- * Simple LRU cache for parsed tags arrays.
- * Keys are tags file paths, values are parsed Tag arrays with their mtime.
- */
-class TagsCache {
-    private cache = new Map<string, CachedTags>();
+class SymbolsCache {
+    private cache = new Map<string, CachedSymbols>();
     private maxSize: number;
 
     constructor(maxSize: number = 100) {
@@ -45,17 +31,17 @@ class TagsCache {
     }
 
     /**
-     * Get cached tags if the mtime matches.
+     * Get cached symbols if the mtime matches.
      * Returns undefined if not cached or mtime doesn't match.
      */
-    get(key: string, currentMtime: number): Tag[] | undefined {
+    get(key: string, currentMtime: number): IndexSymbol[] | undefined {
         const entry = this.cache.get(key);
         if (entry !== undefined) {
             if (entry.mtime === currentMtime) {
                 // Move to end (most recently used)
                 this.cache.delete(key);
                 this.cache.set(key, entry);
-                return entry.tags;
+                return entry.symbols;
             } else {
                 // Stale entry - remove it
                 this.cache.delete(key);
@@ -64,7 +50,7 @@ class TagsCache {
         return undefined;
     }
 
-    set(key: string, tags: Tag[], mtime: number): void {
+    set(key: string, symbols: IndexSymbol[], mtime: number): void {
         this.cache.delete(key);
 
         if (this.cache.size >= this.maxSize) {
@@ -74,7 +60,7 @@ class TagsCache {
             }
         }
 
-        this.cache.set(key, { tags, mtime });
+        this.cache.set(key, { symbols, mtime });
     }
 
     delete(key: string): void {
@@ -87,95 +73,79 @@ class TagsCache {
 }
 
 // Module-level LRU cache shared by all FileIndex instances
-const tagsCache = new TagsCache(300);
+const symbolsCache = new SymbolsCache(300);
 
-// Regex for replacing anonymous namespace markers (compiled once)
-const ANON_NAMESPACE_REGEX = /__anon[a-fA-F0-9]+/g;
-
-// ctags kinds that represent containers (can contain other code)
-// Excludes local variables, members, parameters, etc.
-const CONTAINER_KINDS = new Set([
-    'class', 'struct', 'union', 'namespace', 'function',
-    'method', 'enum', 'module', 'interface', 'prototype'
-]);
+// ── Idx header reading ──────────────────────────────────────────────────────
 
 /**
- * Replace anonymous namespace markers (e.g., __anon1234abcd) with "(anonymous namespace)".
- * ctags uses these markers for unnamed namespaces in C++.
+ * Byte offsets into the `*.idx` JSON tuple for the fast-path staleness check.
+ *
+ * Layout: `["<64 hex chars>",<version>,…`
+ *   - Bytes [0..2)   → `["`
+ *   - Bytes [2..66)  → 64-char SHA-256 hex digest
+ *   - Bytes [66..68) → `",`
+ *   - Bytes [68..)   → version digits followed by `,`
  */
-function normalizeScope(scope: string): string {
-    return scope.replace(ANON_NAMESPACE_REGEX, '(anonymous namespace)');
-}
+const SHA256_OFFSET = 2;
+const SHA256_HEX_LEN = 64;
+const SHA256_END = SHA256_OFFSET + SHA256_HEX_LEN; // 66
 
 /**
- * Convert a ctags kind to the equivalent vscode.SymbolKind.
- * @param ctagsKind - The ctags kind string (e.g., "function", "class")
- * @returns The vscode.SymbolKind value, or undefined if no mapping exists
+ * Read the sha256 and format version from the first bytes of an existing
+ * `*.idx` file without parsing the full JSON.
+ *
+ * @returns `{ sha256, version }` or `null` if the file cannot be read.
  */
-function ctagsKindToSymbolKind(ctagsKind: string): vscode.SymbolKind | undefined {
-    switch (ctagsKind) {
-        case 'function':
-            return vscode.SymbolKind.Function;
-        case 'method':
-            return vscode.SymbolKind.Method;
-        case 'class':
-            return vscode.SymbolKind.Class;
-        case 'struct':
-            return vscode.SymbolKind.Struct;
-        case 'enum':
-            return vscode.SymbolKind.Enum;
-        case 'enumerator':
-            return vscode.SymbolKind.EnumMember;
-        case 'namespace':
-            return vscode.SymbolKind.Namespace;
-        case 'module':
-            return vscode.SymbolKind.Module;
-        case 'interface':
-            return vscode.SymbolKind.Interface;
-        case 'property':
-            return vscode.SymbolKind.Property;
-        case 'field':
-        case 'member':
-            return vscode.SymbolKind.Field;
-        case 'variable':
-            return vscode.SymbolKind.Variable;
-        case 'constant':
-            return vscode.SymbolKind.Constant;
-        case 'typedef':
-        case 'alias':
-            return vscode.SymbolKind.TypeParameter;
-        case 'constructor':
-            return vscode.SymbolKind.Constructor;
-        case 'package':
-            return vscode.SymbolKind.Package;
-        case 'macro':
-            return vscode.SymbolKind.Constant;  // No direct mapping
-        case 'prototype':
-            return vscode.SymbolKind.Function;  // Forward declaration
-        default:
-            return undefined;
+function readIdxHeader(idxPath: string): { sha256: string; version: number } | null {
+    try {
+        const fd = fs.openSync(idxPath, 'r');
+        const buf = Buffer.alloc(80);
+        const bytesRead = fs.readSync(fd, buf, 0, 80, 0);
+        fs.closeSync(fd);
+        if (bytesRead < SHA256_END + 2) return null;
+
+        const raw = buf.toString('utf8', 0, bytesRead);
+        const sha256 = raw.substring(SHA256_OFFSET, SHA256_END);
+
+        // After the sha256 closing quote: `",<version>,…`
+        const afterQuote = SHA256_END; // points at `"`
+        if (raw[afterQuote] !== '"' || raw[afterQuote + 1] !== ',') return null;
+        const versionStart = afterQuote + 2;
+        const versionEnd = raw.indexOf(',', versionStart);
+        if (versionEnd === -1) return null;
+        const version = parseInt(raw.substring(versionStart, versionEnd), 10);
+        if (isNaN(version)) return null;
+
+        return { sha256, version };
+    } catch {
+        return null;
     }
 }
+
+// ── FileIndex ───────────────────────────────────────────────────────────────
 
 /**
  * FileIndex manages metadata for a single file in the index.
- * It stores the file path and the path to its ctags file.
- * Validity is determined by comparing filesystem mtimes.
+ * It stores the file path and the path to its `*.idx` file.
+ *
+ * Validity is determined by comparing the source file's SHA-256
+ * against the hash stored in the `*.idx` file header, and checking
+ * the format version against the current parser's version.
  */
 export class FileIndex {
     private filePath: string;
-    private tagsPath: string;
+    private idxPath: string;
 
     constructor(filePath: string, cacheDir: string) {
         this.filePath = filePath;
-        this.tagsPath = this.computeTagsPath(cacheDir);
+        this.idxPath = this.computeIdxPath(cacheDir);
     }
 
     /**
-     * Compute the deterministic tags file path for this source file.
+     * Compute the deterministic idx file path for this source file.
      * Uses SHA-256 hash of the full path to avoid conflicts.
      */
-    private computeTagsPath(cacheDir: string): string {
+    private computeIdxPath(cacheDir: string): string {
         const hash = crypto.createHash('sha256')
             .update(this.filePath)
             .digest('hex')
@@ -184,7 +154,7 @@ export class FileIndex {
         const fileName = path.basename(this.filePath);
         const firstChar = fileName[0]?.toLowerCase() ?? '_';
         const subDir = firstChar >= 'a' && firstChar <= 'z' ? firstChar : '_';
-        return path.join(cacheDir, subDir, `${fileName}.${hash}.tags`);
+        return path.join(cacheDir, subDir, `${fileName}.${hash}.idx`);
     }
 
     /**
@@ -195,203 +165,160 @@ export class FileIndex {
     }
 
     /**
-     * Get the path to the tags file.
+     * Get the path to the idx file.
      * Always returns the computed path - use isValid() to check if it exists.
      */
-    getTagsPath(): string {
-        return this.tagsPath;
+    getIdxPath(): string {
+        return this.idxPath;
     }
 
     /**
-     * Check if the tags file exists and is newer than the source file.
+     * Check if the `*.idx` file is up-to-date for the current source file.
+     *
+     * Fast path: if the idx file's mtime >= source mtime, assume valid.
+     * Slow path: read source, compute SHA-256, compare against the hash
+     * stored in the idx file header. Also verifies that the format version
+     * matches the current parser's version.
      */
     isValid(): boolean {
         try {
             const sourceMtime = fs.statSync(this.filePath).mtimeMs;
-            const tagsMtime = fs.statSync(this.tagsPath).mtimeMs;
-            if (tagsMtime >= sourceMtime) {
-                return true; // Tags file is up-to-date
-            } else {
-                // This is copied from the worker thread - if modifying,
-                // also update the same logic there.
-
-                // Read source file and compute SHA256 hash
-                const sourceContent = fs.readFileSync(this.filePath);
-                const hash = crypto.createHash('sha256').update(sourceContent).digest('hex');
-
-                const HASH_LINE_LEN = 96;
-                const HASH_OFFSET = 29; // offset to the start of the 64-char hex hash
-                const fileSize = fs.statSync(this.tagsPath).size;
-                if (fileSize >= HASH_LINE_LEN) {
-                    const fd = fs.openSync(this.tagsPath, 'r');
-                    const buf = Buffer.alloc(HASH_LINE_LEN);
-                    fs.readSync(fd, buf, 0, HASH_LINE_LEN, fileSize - HASH_LINE_LEN);
-                    fs.closeSync(fd);
-                    const storedHash = buf.toString('utf8').substring(HASH_OFFSET, HASH_OFFSET + 64);
-                    if (storedHash === hash) {
-                        return true;
-                    }
-                }
+            const idxMtime = fs.statSync(this.idxPath).mtimeMs;
+            if (idxMtime >= sourceMtime) {
+                return true;
             }
-        } catch {
-            return false;  // Tags file doesn't exist or other error
-        }
 
-        return false; // Tags file is stale
+            // Slow path: compare SHA-256 and format version
+            const sourceContent = fs.readFileSync(this.filePath);
+            const sha256 = crypto.createHash('sha256').update(sourceContent).digest('hex');
+            const fileParser = getParserForFile(this.filePath);
+            const header = readIdxHeader(this.idxPath);
+
+            return header !== null &&
+                header.sha256 === sha256 &&
+                header.version === fileParser.formatVersion;
+        } catch {
+            return false;
+        }
     }
 
     /**
-     * Clear cached tags for this file.
+     * Clear cached symbols for this file.
      */
     invalidate(): void {
-        tagsCache.delete(this.tagsPath);
+        symbolsCache.delete(this.idxPath);
     }
 
     /**
-     * Load and parse tags from the tags file.
-     * Checks mtime before returning to ensure freshness.
-     * @returns Array of Tag objects, or null if not valid or parsing fails
+     * Load and hydrate symbols from the `*.idx` file.
+     * Uses an LRU cache keyed by idx path + mtime.
+     *
+     * @returns Array of IndexSymbol objects, or null if the idx file
+     *          is not valid or cannot be read.
      */
-    private async getTags(): Promise<Tag[] | null> {
+    private async getSymbols(): Promise<IndexSymbol[] | null> {
         if (!this.isValid()) {
             return null;
         }
 
-        // Get tags file mtime for cache staleness check
-        const tagsMtime = fs.statSync(this.tagsPath).mtimeMs;
+        // Get idx file mtime for cache staleness check
+        const idxMtime = fs.statSync(this.idxPath).mtimeMs;
 
-        // Check LRU cache - pass tagsMtime for staleness check
-        const cached = tagsCache.get(this.tagsPath, tagsMtime);
+        // Check LRU cache
+        const cached = symbolsCache.get(this.idxPath, idxMtime);
         if (cached !== undefined) {
             return cached;
         }
 
-        // Read and parse the tags file
+        // Read and parse the idx file
         try {
-            const content = await fs.promises.readFile(this.tagsPath, 'utf8');
-            const tags: Tag[] = [];
+            const content = await fs.promises.readFile(this.idxPath, 'utf8');
+            const [_sha256, _version, _filePath, rawSymbols] = JSON.parse(content) as IndexFile;
 
-            for (const line of content.split('\n')) {
-                if (!line.trim()) continue;
-
-                // Skip pseudo-tags (metadata) - fast string check before JSON.parse
-                if (line.startsWith('{"_type": "ptag"')) continue;
-
-                const entry = JSON.parse(line);
-
-                // Safety fallback for any non-tag entries
-                if (entry._type !== 'tag') continue;
-
-                tags.push({
-                    name: entry.name,
-                    line: entry.line,
-                    column: entry.column,
-                    end: entry.end,
-                    kind: entry.kind,
-                    scope: entry.scope,
-                    scopeKind: entry.scopeKind,
-                    signature: entry.signature,
-                    typeref: entry.typeref
-                });
-            }
+            const fileParser = getParserForFile(this.filePath);
+            const symbols = fileParser.readIndex(rawSymbols);
 
             // Cache with the original mtime to avoid marking the
-            // cached entry as newer than it could be. It is possible
-            // that we are returning slightly stale data if the file changed
-            // again after the mtime check above, but that's acceptable.
-            // The tagsCache will store the older mtime and re-validate
-            // on next get().
-            tagsCache.set(this.tagsPath, tags, tagsMtime);
-            return tags;
+            // cached entry as newer than it could be.
+            symbolsCache.set(this.idxPath, symbols, idxMtime);
+            return symbols;
         } catch {
             return null;
         }
     }
 
     /**
-     * Get the fully qualified name for a symbol at a given location.
-     * Only works for code files (not markdown, etc.).
-     * @param name - The symbol name to look up
-     * @param location - The location of the symbol in the source file
-     * @returns The fully qualified name (e.g., "namespace::Class::method") or the original name if not found
+     * From a list of candidate symbols, return the one with the
+     * tightest enclosing range (smallest line span, then latest
+     * start line as tiebreaker). Returns null if the list is empty.
      */
-    async getFullyQualifiedName(name: string, location: vscode.Location): Promise<string> {
-        const tags = await this.getTags();
-        if (tags === null) {
-            return name;  // Unable to get tags - return simple name
+    private findInnermostSymbol(candidates: IndexSymbol[]): IndexSymbol | null {
+        if (candidates.length === 0) {
+            return null;
         }
-
-        // Convert from 0-based VS Code line to 1-based ctags line
-        const line = location.range.start.line + 1;
-
-        // Find a tag matching the name and line
-        const tag = tags.find(t => t.name === name && t.line === line);
-        if (!tag) {
-            return name;  // Tag not found - return simple name
+        let best = candidates[0];
+        for (let i = 1; i < candidates.length; i++) {
+            const s = candidates[i];
+            const bestSpan = best.endLine - best.startLine;
+            const candidateSpan = s.endLine - s.startLine;
+            if (candidateSpan < bestSpan ||
+                (candidateSpan === bestSpan && s.startLine > best.startLine)) {
+                best = s;
+            }
         }
-
-        if (tag.scope) {
-            const scope = normalizeScope(tag.scope);
-            return `${scope}::${tag.name}`;
-        }
-        return tag.name;
+        return best;
     }
 
     /**
-     * Get the innermost container (function, class, namespace, etc.) that contains a given line.
-     * @param line - The 1-based line number to find the container for
-     * @returns ContainerDetails object, or null if no container found
+     * Get the fully qualified name for a symbol at a given line.
+     *
+     * @param name - The symbol name to look up
+     * @param line - 0-based line number
+     * @returns The fully qualified name (e.g., "namespace::Class::method")
+     *          or the original name if not found
      */
-    async getContainer(line: number): Promise<ContainerDetails | null> {
-        const tags = await this.getTags();
-        if (tags === null) {
-            return null;  // Unable to get tags
+    async getFullyQualifiedName(name: string, line: number): Promise<string> {
+        const symbols = await this.getSymbols();
+        if (symbols === null) {
+            return name;
         }
 
-        // Find all tags that contain the given line (have both start and end)
-        // A tag contains the line if: tag.line <= line <= tag.end
-        // Only include tags that are valid containers (class, function, etc.)
-        const containingTags = tags.filter(t =>
-            t.end !== undefined &&
-            t.line <= line &&
-            line <= t.end &&
-            CONTAINER_KINDS.has(t.kind)
+        // Find all symbols matching the name whose range contains the line
+        const matches = symbols.filter(s =>
+            s.name === name && s.startLine <= line && line <= s.endLine
         );
 
-        if (containingTags.length === 0) {
-            return null;  // No container found
+        const best = this.findInnermostSymbol(matches);
+        if (!best) {
+            return name;
         }
 
-        // Find the innermost container (smallest range)
-        // This is the one with the largest start line that still contains the target
-        let innermost = containingTags[0];
-        for (const tag of containingTags) {
-            // Prefer the tag with the smallest range (end - line)
-            // If ranges are equal, prefer the one that starts later
-            const currentRange = innermost.end! - innermost.line;
-            const candidateRange = tag.end! - tag.line;
-            if (candidateRange < currentRange ||
-                (candidateRange === currentRange && tag.line > innermost.line)) {
-                innermost = tag;
-            }
+        return best.attrs.get(AttrKey.FullyQualifiedName) ?? best.name;
+    }
+
+    /**
+     * Get the innermost container (function, class, namespace, etc.)
+     * that contains a given line.
+     *
+     * @param line - 0-based line number
+     * @returns The innermost containing IndexSymbol, or null if none found
+     */
+    async getContainer(line: number): Promise<IndexSymbol | null> {
+        const symbols = await this.getSymbols();
+        if (symbols === null) {
+            return null;
         }
 
-        // Build the fully qualified name
-        // Normalize both the name and scope to handle anonymous namespaces
-        let fullyQualifiedName = normalizeScope(innermost.name);
-        if (innermost.scope) {
-            const scope = normalizeScope(innermost.scope);
-            fullyQualifiedName = `${scope}::${fullyQualifiedName}`;
-        }
+        // Find all container symbols whose range contains the given line.
+        // IndexSymbol positions are 0-based. The end position (endLine,
+        // endColumn) is exclusive, but endLine itself can still contain
+        // symbol content (up to endColumn), so use <= for line-level checks.
+        const containers = symbols.filter(s =>
+            CONTAINER_TYPES.has(s.type) &&
+            s.startLine <= line &&
+            line <= s.endLine
+        );
 
-        return {
-            name: innermost.name,
-            fullyQualifiedName: fullyQualifiedName,
-            type: ctagsKindToSymbolKind(innermost.kind),
-            ctagsType: innermost.kind,
-            startLine: innermost.line,
-            startColumn: innermost.column,
-            endLine: innermost.end!
-        };
+        return this.findInnermostSymbol(containers);
     }
 }
