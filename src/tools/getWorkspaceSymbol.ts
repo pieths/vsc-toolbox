@@ -7,8 +7,11 @@ import { createMarkdownCodeBlock } from '../common/markdownUtils';
 import { getFunctionSignatureRange } from '../common/documentUtils';
 import { ScopedFileCache } from '../common/scopedFileCache';
 import { ContentIndex } from '../common/index/contentIndex';
-import { getModel, sendRequestWithReadFileAccess } from '../common/copilotUtils';
+import { sendRequestWithReadFileAccess } from '../common/copilotUtils';
 import { log } from '../common/logger';
+
+/** Markdown header prefix used for symbol match results */
+const SYMBOL_MATCHES_HEADER_PREFIX = '# Symbol Matches for';
 
 /**
  * Input parameters for workspace symbol search
@@ -152,7 +155,7 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
             filteredSymbols = [...exactMatches, ...substringMatches, ...fuzzyMatches];
 
             const markdownParts: string[] = [];
-            markdownParts.push(`# Symbol Matches for "${query}"`);
+            markdownParts.push(`${SYMBOL_MATCHES_HEADER_PREFIX} "${query}"`);
             markdownParts.push('');
             markdownParts.push(`- **Total Results:** ${symbols.length}`);
             markdownParts.push(`- **Filtered Results:** ${filteredSymbols.length}`);
@@ -175,35 +178,9 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
             const markdown = markdownParts.join('\n');
 
             // Filter results using AI if a filter is provided
-            const model = await getModel();
-            let filteredMarkdown = markdown;
-            if (model && filter) {
-                log(`Starting AI filter with criteria: "${filter}"`);
-                const filterStart = Date.now();
-                const filterPrompt = [
-                    'You are a filter.',
-                    'Given the markdown below which contains symbol search results (starts with line `# Symbol Matches for`),',
-                    'apply the filter criteria from the "Filter" section below to keep or remove symbols as specified.',
-                    'Return ONLY the filtered markdown with no additional commentary or explanation.',
-                    'Preserve the exact format and content of the remaining text.',
-                    'Do not add any additional text.',
-                    'Only remove complete `## Symbol: ...` sections that don\'t satisfy the filter.',
-                    'If removing a symbol section, remove the entire section including its header.',
-                    'If the filter criteria requires information not currently present in the markdown, use the appropriate tool(s) to get the required information.',
-                    '',
-                    '# Filter',
-                    '',
-                    '```',
-                    filter,
-                    '```',
-                    '',
-                    '',
-                    markdown
-                ].join('\n');
-                filteredMarkdown = await sendRequestWithReadFileAccess(model, filterPrompt, _token, 1000, fileCache);
-                const filterElapsed = Date.now() - filterStart;
-                log(`AI filter completed in ${filterElapsed}ms`);
-            }
+            const filteredMarkdown = filter
+                ? await this.applyAIFilter(markdown, filter, _token, fileCache)
+                : markdown;
 
             return new vscode.LanguageModelToolResult([
                 new vscode.LanguageModelTextPart(filteredMarkdown),
@@ -214,6 +191,53 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
             // Clear cache at the end of the invocation
             fileCache.clear();
         }
+    }
+
+    /**
+     * Apply an AI-based filter to the symbol search results markdown.
+     * Uses the default cached language model.
+     *
+     * @param markdown The full symbol search results markdown
+     * @param filter The filter criteria to apply
+     * @param token Cancellation token
+     * @param fileCache Cache for file contents
+     * @returns The filtered markdown
+     */
+    private async applyAIFilter(
+        markdown: string,
+        filter: string,
+        token: vscode.CancellationToken,
+        fileCache: ScopedFileCache
+    ): Promise<string> {
+        log(`Starting AI filter with criteria: "${filter}"`);
+        const filterStart = Date.now();
+        const filterPrompt = [
+            'You are a filter.',
+            `Given the markdown below which contains symbol search results (starts with line \`${SYMBOL_MATCHES_HEADER_PREFIX}\`),`,
+            'apply the filter criteria from the "Filter" section below to keep or remove symbols as specified.',
+            'Return ONLY the filtered markdown with no additional commentary or explanation.',
+            'Preserve the exact format and content of the remaining text.',
+            'Do not add any additional text.',
+            'Only remove complete `## Symbol: ...` sections that don\'t satisfy the filter.',
+            'If removing a symbol section, remove the entire section including its header.',
+            'If the filter criteria requires information not currently present in the markdown, use the appropriate tool(s) to get the required information.',
+            '',
+            '# Filter',
+            '',
+            '```',
+            filter,
+            '```',
+            '',
+            '',
+            markdown
+        ].join('\n');
+        const result = await sendRequestWithReadFileAccess(null, filterPrompt, token, 1000, fileCache);
+        const filterElapsed = Date.now() - filterStart;
+        log(`AI filter completed in ${filterElapsed}ms`);
+
+        // Strip any preamble the model may have added before the actual results
+        const headerIndex = result.indexOf(SYMBOL_MATCHES_HEADER_PREFIX);
+        return headerIndex > 0 ? result.substring(headerIndex) : result;
     }
 
     /**

@@ -4,13 +4,16 @@
 import * as vscode from 'vscode';
 import { ContentIndex, SearchResult, FileLineRef, IndexSymbol, AttrKey, symbolTypeToString } from '../common/index';
 import { log } from '../common/logger';
-import { getModel, sendRequestWithReadFileAccess } from '../common/copilotUtils';
+import { sendRequestWithReadFileAccess } from '../common/copilotUtils';
 
 /**
  * Default maximum number of files to include in search results.
  * Use 0 or -1 for no limit.
  */
 const DEFAULT_MAX_FILE_RESULTS = 15;
+
+/** Markdown header prefix used for search results */
+const SEARCH_RESULTS_HEADER_PREFIX = '# Search Results for';
 
 /**
  * Input parameters for the language model tool
@@ -89,7 +92,7 @@ function formatResults(resultsWithContainers: ResultWithContainer[], query: stri
     const hasLimit = maxFileResults > 0;
     const truncated = hasLimit && totalFiles > maxFileResults;
 
-    let markdown = `# Search Results for \`${query}\`\n\n`;
+    let markdown = `${SEARCH_RESULTS_HEADER_PREFIX} \`${query}\`\n\n`;
     markdown += `Found **${totalMatches}** matches in **${totalFiles}** files.`;
     if (truncated) {
         markdown += ` Showing first **${maxFileResults}** files.`;
@@ -223,39 +226,9 @@ export class SearchIndexTool implements vscode.LanguageModelTool<SearchIndexPara
 
             // Filter results using AI if a filter is provided
             const { filter } = options.input;
-            let filteredMarkdown = markdown;
-            if (filter) {
-                // TODO: cache model to avoid the overhead
-                // of retrieving it per call (~2 seconds)
-                const model = await getModel();
-                if (model) {
-                    log(`Starting AI filter with criteria: "${filter}"`);
-                    const filterStart = Date.now();
-                    const filterPrompt = [
-                        'You are a filter.',
-                        'Given the markdown below which contains search results (starts with line `# Search Results for`),',
-                        'apply the filter criteria from the "Filter" section below to keep or remove results as specified.',
-                        'Return ONLY the filtered markdown with no additional commentary or explanation.',
-                        'Preserve the exact format and content of the remaining text.',
-                        'Do not add any additional text.',
-                        'Only remove complete sections (starting with `## ` or `### `) or individual result lines that don\'t satisfy the filter.',
-                        'If removing a full section, remove the entire section including its header.',
-                        'If the filter criteria requires information not currently present in the markdown, use the appropriate tool(s) to get the required information.',
-                        '',
-                        '# Filter',
-                        '',
-                        '```',
-                        filter,
-                        '```',
-                        '',
-                        '',
-                        markdown
-                    ].join('\n');
-                    filteredMarkdown = await sendRequestWithReadFileAccess(model, filterPrompt, token, 1000);
-                    const filterElapsed = Date.now() - filterStart;
-                    log(`AI filter completed in ${filterElapsed}ms`);
-                }
-            }
+            const filteredMarkdown = filter
+                ? await this.applyAIFilter(markdown, filter, token)
+                : markdown;
 
             return new vscode.LanguageModelToolResult([
                 new vscode.LanguageModelTextPart(filteredMarkdown)
@@ -266,5 +239,50 @@ export class SearchIndexTool implements vscode.LanguageModelTool<SearchIndexPara
                 new vscode.LanguageModelTextPart(`Search error: ${message}`)
             ]);
         }
+    }
+
+    /**
+     * Apply an AI-based filter to the search results markdown.
+     * Uses the default cached language model.
+     *
+     * @param markdown The full search results markdown
+     * @param filter The filter criteria to apply
+     * @param token Cancellation token
+     * @returns The filtered markdown
+     */
+    private async applyAIFilter(
+        markdown: string,
+        filter: string,
+        token: vscode.CancellationToken
+    ): Promise<string> {
+        log(`Starting AI filter with criteria: "${filter}"`);
+        const filterStart = Date.now();
+        const filterPrompt = [
+            'You are a filter.',
+            `Given the markdown below which contains search results (starts with line \`${SEARCH_RESULTS_HEADER_PREFIX}\`),`,
+            'apply the filter criteria from the "Filter" section below to keep or remove results as specified.',
+            'Return ONLY the filtered markdown with no additional commentary or explanation.',
+            'Preserve the exact format and content of the remaining text.',
+            'Do not add any additional text.',
+            'Only remove complete sections (starting with `## ` or `### `) or individual result lines that don\'t satisfy the filter.',
+            'If removing a full section, remove the entire section including its header.',
+            'If the filter criteria requires information not currently present in the markdown, use the appropriate tool(s) to get the required information.',
+            '',
+            '# Filter',
+            '',
+            '```',
+            filter,
+            '```',
+            '',
+            '',
+            markdown
+        ].join('\n');
+        const result = await sendRequestWithReadFileAccess(null, filterPrompt, token, 1000);
+        const filterElapsed = Date.now() - filterStart;
+        log(`AI filter completed in ${filterElapsed}ms`);
+
+        // Strip any preamble the model may have added before the actual results
+        const headerIndex = result.indexOf(SEARCH_RESULTS_HEADER_PREFIX);
+        return headerIndex > 0 ? result.substring(headerIndex) : result;
     }
 }

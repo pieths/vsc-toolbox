@@ -13,14 +13,33 @@ import { symbolTypeToString, AttrKey } from './index';
  *
  * Usage:
  * ```typescript
+ * // With explicit model:
  * const model = await getModel();
  * if (model) {
  *     const result = await sendSingleRequest(model, 'Summarize this code: ...');
- *     // Or with file reading capability:
- *     const result = await sendRequestWithReadFileAccess(model, 'Analyze the code in src/main.ts');
  * }
+ * // Or use the cached default model by passing null:
+ * const result = await sendSingleRequest(null, 'Summarize this code: ...');
+ * const result2 = await sendRequestWithReadFileAccess(null, 'Analyze the code in src/main.ts');
  * ```
  */
+
+/** Cached default language model instance (lazy-initialized on first use) */
+let cachedDefaultModel: vscode.LanguageModelChat | undefined;
+
+/**
+ * Get the cached default language model, initializing it on first call.
+ * Uses `getModel()` with no parameters (defaults to claude-sonnet-4.5).
+ */
+async function getDefaultModel(): Promise<vscode.LanguageModelChat> {
+    if (!cachedDefaultModel) {
+        cachedDefaultModel = await getModel();
+        if (!cachedDefaultModel) {
+            throw new Error('No default language model available');
+        }
+    }
+    return cachedDefaultModel;
+}
 
 /**
  * Tool definition for reading file lines
@@ -271,7 +290,7 @@ export async function getAvailableModels(): Promise<Array<{ id: string; name: st
 export async function getModel(id?: string): Promise<vscode.LanguageModelChat | undefined> {
     const selector: vscode.LanguageModelChatSelector = id
         ? { id }
-        : { id: 'claude-sonnet-4.5' };
+        : { id: 'claude-opus-4.6' };
 
     const models = await vscode.lm.selectChatModels(selector);
     return models.length > 0 ? models[0] : undefined;
@@ -281,23 +300,25 @@ export async function getModel(id?: string): Promise<vscode.LanguageModelChat | 
  * Send text to a language model and return the response.
  * No tools are available - pure text in/out.
  *
- * @param model - The language model to use for processing
+ * @param model - The language model to use, or null to use the cached default model
  * @param text - The text to send to the model
  * @param cancellationToken - Optional cancellation token
  * @returns The model's response as a string
  */
 export async function sendSingleRequest(
-    model: vscode.LanguageModelChat,
+    model: vscode.LanguageModelChat | null,
     text: string,
     cancellationToken?: vscode.CancellationToken
 ): Promise<string> {
+    const resolvedModel = model ?? await getDefaultModel();
+
     const messages: vscode.LanguageModelChatMessage[] = [
         vscode.LanguageModelChatMessage.User(text)
     ];
 
     const token = cancellationToken ?? new vscode.CancellationTokenSource().token;
 
-    const response = await model.sendRequest(messages, {}, token);
+    const response = await resolvedModel.sendRequest(messages, {}, token);
 
     // Collect all text fragments from the response stream
     const fragments: string[] = [];
@@ -312,7 +333,7 @@ export async function sendSingleRequest(
  * Send text to a language model with file reading capability.
  * The model can use the readFileLines tool to read file contents.
  *
- * @param model - The language model to use for processing
+ * @param model - The language model to use, or null to use the cached default model
  * @param text - The text to send to the model
  * @param cancellationToken - Optional cancellation token
  * @param maxToolCalls - Maximum number of tool calls to allow (default: 1000)
@@ -320,24 +341,26 @@ export async function sendSingleRequest(
  * @returns The model's final response as a string
  */
 export async function sendRequestWithReadFileAccess(
-    model: vscode.LanguageModelChat,
+    model: vscode.LanguageModelChat | null,
     text: string,
     cancellationToken?: vscode.CancellationToken,
     maxToolCalls: number = 1000,
     fileCache?: ScopedFileCache
 ): Promise<string> {
+    const resolvedModel = model ?? await getDefaultModel();
+
     const messages: vscode.LanguageModelChatMessage[] = [
         vscode.LanguageModelChatMessage.User(text)
     ];
 
-    log(`sendRequestWithReadFileAccess: Using model "${model.name}" (${model.id})`);
+    log(`sendRequestWithReadFileAccess: Using model "${resolvedModel.name}" (${resolvedModel.id})`);
 
     const token = cancellationToken ?? new vscode.CancellationTokenSource().token;
     const cache = fileCache ?? new ScopedFileCache();
     let toolCallCount = 0;
 
     while (toolCallCount < maxToolCalls) {
-        const response = await model.sendRequest(
+        const response = await resolvedModel.sendRequest(
             messages,
             { tools: [READ_FILE_TOOL, FILE_GLOB_TOOL, GET_CONTAINER_TOOL] },
             token

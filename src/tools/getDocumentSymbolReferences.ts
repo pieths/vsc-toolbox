@@ -7,8 +7,11 @@ import { createMarkdownCodeBlock } from '../common/markdownUtils';
 import { getFunctionSignatureRange } from '../common/documentUtils';
 import { ContentIndex, IndexSymbol, AttrKey, symbolTypeToString, CALLABLE_TYPES } from '../common/index';
 import { ScopedFileCache } from '../common/scopedFileCache';
-import { getModel, sendRequestWithReadFileAccess } from '../common/copilotUtils';
+import { sendRequestWithReadFileAccess } from '../common/copilotUtils';
 import { log } from '../common/logger';
+
+/** Markdown header prefix used for reference results */
+const REFERENCES_HEADER_PREFIX = '# References for';
 
 /**
  * Input parameters for finding references
@@ -159,36 +162,9 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
             );
 
             // Filter results using AI if a filter is provided
-            const model = await getModel();
-            let filteredMarkdown = markdown;
-            if (model && filter) {
-                log(`Starting AI filter with criteria: "${filter}"`);
-                const filterStart = Date.now();
-                const filterPrompt = [
-                    'You are a filter.',
-                    'Given the markdown below which contains symbol reference results (starts with line `# References for`),',
-                    'apply the filter criteria from the "Filter" section below to keep or remove references as specified.',
-                    'Return ONLY the filtered markdown with no additional commentary or explanation.',
-                    'Preserve the exact format and content of the remaining text.',
-                    'Do not add any additional text.',
-                    'Only remove complete `## References ...` sections that don\'t satisfy the filter.',
-                    'If removing a references section, remove the entire section including its header.',
-                    // 'Update the **Total References:** count to reflect the filtered number of references.',
-                    'If the filter criteria requires information not currently present in the markdown, use the appropriate tool(s) to get the required information.',
-                    '',
-                    '# Filter',
-                    '',
-                    '```',
-                    filter,
-                    '```',
-                    '',
-                    '',
-                    markdown
-                ].join('\n');
-                filteredMarkdown = await sendRequestWithReadFileAccess(model, filterPrompt, _token, 1000, fileCache);
-                const filterElapsed = Date.now() - filterStart;
-                log(`AI filter completed in ${filterElapsed}ms`);
-            }
+            const filteredMarkdown = filter
+                ? await this.applyAIFilter(markdown, filter, _token, fileCache)
+                : markdown;
 
             return new vscode.LanguageModelToolResult([
                 new vscode.LanguageModelTextPart(filteredMarkdown),
@@ -199,6 +175,53 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
             // Clear cache at the end of the invocation
             fileCache.clear();
         }
+    }
+
+    /**
+     * Apply an AI-based filter to the reference results markdown.
+     * Uses the default cached language model.
+     *
+     * @param markdown The full reference results markdown
+     * @param filter The filter criteria to apply
+     * @param token Cancellation token
+     * @param fileCache Cache for file contents
+     * @returns The filtered markdown
+     */
+    private async applyAIFilter(
+        markdown: string,
+        filter: string,
+        token: vscode.CancellationToken,
+        fileCache: ScopedFileCache
+    ): Promise<string> {
+        log(`Starting AI filter with criteria: "${filter}"`);
+        const filterStart = Date.now();
+        const filterPrompt = [
+            'You are a filter.',
+            `Given the markdown below which contains symbol reference results (starts with line \`${REFERENCES_HEADER_PREFIX}\`),`,
+            'apply the filter criteria from the "Filter" section below to keep or remove references as specified.',
+            'Return ONLY the filtered markdown with no additional commentary or explanation.',
+            'Preserve the exact format and content of the remaining text.',
+            'Do not add any additional text.',
+            'Only remove complete `## References ...` sections that don\'t satisfy the filter.',
+            'If removing a references section, remove the entire section including its header.',
+            // 'Update the **Total References:** count to reflect the filtered number of references.',
+            'If the filter criteria requires information not currently present in the markdown, use the appropriate tool(s) to get the required information.',
+            '',
+            '# Filter',
+            '',
+            '```',
+            filter,
+            '```',
+            '',
+            markdown
+        ].join('\n');
+        const result = await sendRequestWithReadFileAccess(null, filterPrompt, token, 1000, fileCache);
+        const filterElapsed = Date.now() - filterStart;
+        log(`AI filter completed in ${filterElapsed}ms`);
+
+        // Strip any preamble the model may have added before the actual results
+        const headerIndex = result.indexOf(REFERENCES_HEADER_PREFIX);
+        return headerIndex > 0 ? result.substring(headerIndex) : result;
     }
 
     /**
@@ -364,7 +387,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
         const totalReferences = references.reduce((sum, group) => sum + group.references.length, 0);
 
         const markdownParts: string[] = [];
-        markdownParts.push(`# References for \`${symbolName}\``);
+        markdownParts.push(`${REFERENCES_HEADER_PREFIX} \`${symbolName}\``);
         markdownParts.push('');
         markdownParts.push(`**Total References:** ${totalReferences}`);
         markdownParts.push('');
