@@ -1,8 +1,18 @@
 // Copyright (c) 2026 Piet Hein Schouten
 // SPDX-License-Identifier: MIT
 
+import * as fs from 'fs';
 import * as vscode from 'vscode';
-import { ContentIndex, SearchResult, FileLineRef, IndexSymbol, AttrKey, symbolTypeToString } from '../common/index';
+import {
+    ContentIndex,
+    FileSearchResults,
+    DocumentType,
+    SearchResult,
+    FileLineRef,
+    IndexSymbol,
+    AttrKey,
+    symbolTypeToString
+} from '../common/index';
 import { log } from '../common/logger';
 import { sendRequestWithReadFileAccess } from '../common/copilotUtils';
 
@@ -63,32 +73,95 @@ function formatContainerHeading(container: IndexSymbol | null): string {
 }
 
 /**
- * Format search results as Markdown, grouped by file and container.
+ * Format search results for a standard (non-knowledge-base) file,
+ * grouped by container.
  *
- * @param resultsWithContainers - Array of search results with container info
+ * @param resultsWithContainers - Line matches with their container symbols
+ * @returns Formatted Markdown string for this file's results
+ */
+function formatResultsForFile(resultsWithContainers: ResultWithContainer[]): string {
+    let markdown = '';
+
+    // Group results by container within this file
+    const byContainer = new Map<string, ResultWithContainer[]>();
+    const containerOrder: string[] = [];
+
+    for (const item of resultsWithContainers) {
+        const key = getContainerKey(item.container);
+        if (!byContainer.has(key)) {
+            byContainer.set(key, []);
+            containerOrder.push(key);
+        }
+        byContainer.get(key)!.push(item);
+    }
+
+    // Output results grouped by container
+    for (const key of containerOrder) {
+        const containerResults = byContainer.get(key)!;
+        const container = containerResults[0].container;
+
+        markdown += formatContainerHeading(container);
+
+        for (const item of containerResults) {
+            const escapedText = item.result.text.replace(/`/g, '\\`');
+            markdown += `${item.result.line + 1}: \`${escapedText}\`\n`;
+        }
+
+        markdown += '\n';
+    }
+
+    return markdown;
+}
+
+/**
+ * Format search results for a knowledge base document.
+ * Shows the full text of the Overview section instead of matched lines.
+ *
+ * @param fsr - The file search results (must be a KnowledgeBase document)
+ * @returns Formatted Markdown string with the Overview section content
+ */
+function formatResultsForKnowledgeBaseDoc(fsr: FileSearchResults): string {
+    if (!fsr.overviewRange) {
+        // Shouldn't happen, but fall back gracefully
+        return '*(Overview section not available)*\n\n';
+    }
+
+    const { startLine, endLine } = fsr.overviewRange;
+
+    try {
+        const content = fs.readFileSync(fsr.filePath, 'utf8');
+        const lines = content.split('\n');
+        const overviewLines = lines.slice(startLine, endLine + 1);
+        const overviewText = overviewLines.join('\n').trimEnd();
+        return overviewText + `\n\n*For more details, read: ${fsr.filePath}*\n\n`;
+    } catch {
+        return '*(Could not read Overview section)*\n\n';
+    }
+}
+
+/**
+ * Format search results as Markdown, grouped by file.
+ * Standard files show matched lines grouped by container.
+ * Knowledge base documents show the Overview section text.
+ *
+ * @param fileResults - Array of per-file search results
+ * @param containersByFile - Map from file path to per-result containers
  * @param query - Original search query
+ * @param maxFileResults - Maximum number of files to show (0 or -1 for no limit)
  * @returns Formatted Markdown string
  */
-function formatResults(resultsWithContainers: ResultWithContainer[], query: string, maxFileResults: number): string {
-    if (resultsWithContainers.length === 0) {
+function formatResults(
+    fileResults: FileSearchResults[],
+    containersByFile: Map<string, (IndexSymbol | null)[]>,
+    query: string,
+    maxFileResults: number
+): string {
+    if (fileResults.length === 0) {
         return `No matches found for: \`${query}\``;
     }
 
-    // Group by file
-    const byFile = new Map<string, ResultWithContainer[]>();
-    for (const item of resultsWithContainers) {
-        const existing = byFile.get(item.result.filePath) || [];
-        existing.push(item);
-        byFile.set(item.result.filePath, existing);
-    }
-
-    // Sort results within each file by line number
-    for (const fileResults of byFile.values()) {
-        fileResults.sort((a, b) => a.result.line - b.result.line);
-    }
-
-    const totalFiles = byFile.size;
-    const totalMatches = resultsWithContainers.length;
+    const totalFiles = fileResults.length;
+    const totalMatches = fileResults.reduce((sum, f) => sum + f.results.length, 0);
     const hasLimit = maxFileResults > 0;
     const truncated = hasLimit && totalFiles > maxFileResults;
 
@@ -100,40 +173,27 @@ function formatResults(resultsWithContainers: ResultWithContainer[], query: stri
     markdown += '\n\n';
 
     let filesShown = 0;
-    for (const [filePath, fileResults] of byFile) {
+    for (const fsr of fileResults) {
         if (hasLimit && filesShown >= maxFileResults) {
             break;
         }
         filesShown++;
 
-        markdown += `## ${filePath}\n\n`;
+        markdown += `## ${fsr.filePath}\n\n`;
 
-        // Group results by container within this file
-        const byContainer = new Map<string, ResultWithContainer[]>();
-        const containerOrder: string[] = [];
+        if (fsr.docType === DocumentType.KnowledgeBase) {
+            markdown += formatResultsForKnowledgeBaseDoc(fsr);
+        } else {
+            const containers = containersByFile.get(fsr.filePath) ?? [];
+            const resultsWithContainers: ResultWithContainer[] = fsr.results.map((result, i) => ({
+                result,
+                container: containers[i] ?? null
+            }));
 
-        for (const item of fileResults) {
-            const key = getContainerKey(item.container);
-            if (!byContainer.has(key)) {
-                byContainer.set(key, []);
-                containerOrder.push(key);
-            }
-            byContainer.get(key)!.push(item);
-        }
+            // Sort by line number
+            resultsWithContainers.sort((a, b) => a.result.line - b.result.line);
 
-        // Output results grouped by container
-        for (const key of containerOrder) {
-            const containerResults = byContainer.get(key)!;
-            const container = containerResults[0].container;
-
-            markdown += formatContainerHeading(container);
-
-            for (const item of containerResults) {
-                const escapedText = item.result.text.replace(/`/g, '\\`');
-                markdown += `${item.result.line + 1}: \`${escapedText}\`\n`;
-            }
-
-            markdown += '\n';
+            markdown += formatResultsForFile(resultsWithContainers);
         }
     }
 
@@ -190,7 +250,7 @@ export class SearchIndexTool implements vscode.LanguageModelTool<SearchIndexPara
                 ]);
             }
 
-            const results = searchResult.results;
+            const fileResults = searchResult.fileMatches;
 
             // Check for cancellation
             if (token.isCancellationRequested) {
@@ -199,13 +259,26 @@ export class SearchIndexTool implements vscode.LanguageModelTool<SearchIndexPara
                 ]);
             }
 
-            // Fetch container information for all results in a single batch call
-            const fileLineRefs: FileLineRef[] = results.map(r => ({ filePath: r.filePath, line: r.line }));
-            const containers = await contentIndex.getContainers(fileLineRefs);
-            const resultsWithContainers: ResultWithContainer[] = results.map((result, i) => ({
-                result,
-                container: containers[i]
-            }));
+            // Fetch container information for standard (non-KB) files in a single batch call
+            const standardFiles = fileResults.filter(f => f.docType !== DocumentType.KnowledgeBase);
+            const fileLineRefs: FileLineRef[] = [];
+            for (const fsr of standardFiles) {
+                for (const r of fsr.results) {
+                    fileLineRefs.push({ filePath: fsr.filePath, line: r.line });
+                }
+            }
+            const allContainers = await contentIndex.getContainers(fileLineRefs);
+
+            // Build a map from file path → per-result containers
+            const containersByFile = new Map<string, (IndexSymbol | null)[]>();
+            let containerIdx = 0;
+            for (const fsr of standardFiles) {
+                const fileContainers: (IndexSymbol | null)[] = [];
+                for (let i = 0; i < fsr.results.length; i++) {
+                    fileContainers.push(allContainers[containerIdx++]);
+                }
+                containersByFile.set(fsr.filePath, fileContainers);
+            }
 
             // Check for cancellation
             if (token.isCancellationRequested) {
@@ -214,15 +287,16 @@ export class SearchIndexTool implements vscode.LanguageModelTool<SearchIndexPara
                 ]);
             }
 
+            const totalMatches = fileResults.reduce((sum, f) => sum + f.results.length, 0);
             const elapsed = Date.now() - startTime;
             const fileCount = contentIndex.getFileCount();
-            log(`Content search: Query "${query}" completed in ${elapsed}ms (${results.length} matches in ${fileCount} files)`);
+            log(`Content search: Query "${query}" completed in ${elapsed}ms (${totalMatches} matches in ${fileCount} files)`);
 
             // Resolve maxResults: use provided value or fall back to default
             const maxResults = options.input.maxResults ?? DEFAULT_MAX_FILE_RESULTS;
 
             // Format and return results
-            const markdown = formatResults(resultsWithContainers, query, maxResults);
+            const markdown = formatResults(fileResults, containersByFile, query, maxResults);
 
             // Filter results using AI if a filter is provided
             const { filter } = options.input;

@@ -9,12 +9,14 @@ import { ThreadPool } from './workers/threadPool';
 import { FileWatcher } from './fileWatcher';
 import {
     ContentIndexConfig,
+    DocumentType,
     FileLineRef,
+    FileSearchResults,
     NearestEmbeddingResult,
     SearchInput,
-    SearchResult,
     SearchResults
 } from './types';
+import { SymbolType } from './parsers/types';
 import type { IndexSymbol } from './parsers/types';
 import { log, warn, error } from '../logger';
 import { LlamaServer } from './embeddings/llamaServer';
@@ -300,7 +302,7 @@ export class ContentIndex {
      * @param include - Optional comma-separated glob patterns to include only matching file paths
      * @param exclude - Optional comma-separated glob patterns to exclude matching file paths
      * @param token - Optional cancellation token
-     * @returns SearchResults with results array and optional error
+     * @returns SearchResults with per-file results array and optional error
      */
     async getDocumentMatches(
         query: string,
@@ -310,30 +312,34 @@ export class ContentIndex {
     ): Promise<SearchResults> {
         // Validate query is non-empty
         if (!query.trim()) {
-            return { results: [], error: 'Search query cannot be empty' };
+            return { fileMatches: [], error: 'Search query cannot be empty' };
         }
 
         // Perform the search
-        const results = await this.getDocumentMatchesInternal(query, include, exclude, token);
-        return { results };
+        const fileMatches = await this.getDocumentMatchesInternal(query, include, exclude, token);
+        return { fileMatches };
     }
 
     /**
      * Search for content matching a glob query.
      * Internal method - use getDocumentMatches for public API.
      *
+     * Results are grouped per file. Markdown files whose first symbol is
+     * a `# Overview` heading are tagged as {@link DocumentType.KnowledgeBase}
+     * and include the heading's line extent in `overviewRange`.
+     *
      * @param query - Glob query string (space-separated AND terms with * and ? wildcards)
      * @param include - Optional comma-separated glob patterns to include only matching file paths
      * @param exclude - Optional comma-separated glob patterns to exclude matching file paths
      * @param token - Optional cancellation token
-     * @returns Array of search results
+     * @returns Array of per-file search results
      */
     private async getDocumentMatchesInternal(
         query: string,
         include?: string,
         exclude?: string,
         token?: vscode.CancellationToken
-    ): Promise<SearchResult[]> {
+    ): Promise<FileSearchResults[]> {
         if (!this.initialized || !this.threadPool) {
             warn('ContentIndex: Not initialized');
             return [];
@@ -380,20 +386,59 @@ export class ContentIndex {
                 return [];
             }
 
-            // Collect results
-            const results: SearchResult[] = [];
+            // Collect per-file results
+            const fileResults: FileSearchResults[] = [];
             const errors: string[] = [];
+
+            // Track markdown FileSearchResults directly for KB detection
+            const mdFileResults: FileSearchResults[] = [];
 
             for (const output of outputs) {
                 if (output.error) {
                     errors.push(`${output.filePath}: ${output.error}`);
-                } else {
-                    for (const result of output.results) {
-                        results.push({
-                            line: result.line,
-                            text: result.text,
-                            filePath: output.filePath
-                        });
+                } else if (output.results.length > 0) {
+                    const fsr: FileSearchResults = {
+                        filePath: output.filePath,
+                        docType: DocumentType.Standard,
+                        results: output.results
+                    };
+                    fileResults.push(fsr);
+
+                    if (output.filePath.endsWith('.md')) {
+                        mdFileResults.push(fsr);
+                    }
+                }
+            }
+
+            // Detect knowledge base documents among markdown files
+            if (mdFileResults.length > 0) {
+                const mdFilePaths = mdFileResults.map(fsr => fsr.filePath);
+                const fileIndexMap = await this.cacheManager.get(mdFilePaths, true);
+
+                for (const fsr of mdFileResults) {
+                    const fileIndex = fileIndexMap.get(fsr.filePath);
+                    if (!fileIndex) {
+                        continue;
+                    }
+
+                    const symbols = await fileIndex.getAllSymbols(true);
+                    if (!symbols || symbols.length === 0) {
+                        continue;
+                    }
+
+                    // A knowledge base document has an "Overview" heading
+                    // as one of its first two symbols (either # or ##).
+                    const overviewSymbol = symbols.slice(0, 2).find(s =>
+                        (s.type === SymbolType.MarkdownHeading1 ||
+                         s.type === SymbolType.MarkdownHeading2) &&
+                        s.name === 'Overview'
+                    );
+                    if (overviewSymbol) {
+                        fsr.docType = DocumentType.KnowledgeBase;
+                        fsr.overviewRange = {
+                            startLine: overviewSymbol.startLine + 1,
+                            endLine: overviewSymbol.endLine
+                        };
                     }
                 }
             }
@@ -403,7 +448,7 @@ export class ContentIndex {
                 warn(`ContentIndex: ${errors.length} files had errors`);
             }
 
-            return results;
+            return fileResults;
         } catch (err) {
             error(`ContentIndex: Search failed - ${err}`);
             return [];

@@ -16,25 +16,47 @@ export interface FileLineRef {
 }
 
 /**
- * Represents a single search result
- * TODO: should this use FileLineRef?
+ * Represents a single line match within a file.
  */
 export interface SearchResult {
     /** 0-based line number */
     line: number;
     /** Full line text (trimmed) */
     text: string;
+}
+
+/**
+ * Document type tag for search results.
+ * Used to distinguish knowledge base documents from other files.
+ */
+export const enum DocumentType {
+    /** Regular source / text file */
+    Standard = 0,
+    /** Markdown knowledge base document (has an Overview heading in the first two symbols) */
+    KnowledgeBase = 1,
+}
+
+/**
+ * Search results for a single file.
+ */
+export interface FileSearchResults {
     /** Absolute file path */
     filePath: string;
+    /** The type of document this file represents */
+    docType: DocumentType;
+    /** Line matches within the file */
+    results: SearchResult[];
+    /** For KnowledgeBase docs: 0-based inclusive line range of the Overview body (excludes heading) */
+    overviewRange?: { startLine: number; endLine: number };
 }
 
 /**
  * Result of a search operation.
- * Contains either results array or an error message.
+ * Contains either per-file results or an error message.
  */
 export interface SearchResults {
-    /** Array of search results (empty if error or no matches) */
-    results: SearchResult[];
+    /** Per-file search results (empty if error or no matches) */
+    fileMatches: FileSearchResults[];
     /** Error message if the search failed */
     error?: string;
 }
@@ -52,14 +74,6 @@ export interface SearchInput {
 }
 
 /**
- * A single search result with line number and text content
- */
-export interface LineResult {
-    line: number;
-    text: string;
-}
-
-/**
  * Output data returned from a worker thread
  */
 export interface SearchOutput {
@@ -68,7 +82,7 @@ export interface SearchOutput {
     /** Absolute file path that was searched */
     filePath: string;
     /** Array of search results */
-    results: LineResult[];
+    results: SearchResult[];
     /** Error message if search failed */
     error?: string;
 }

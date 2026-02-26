@@ -297,6 +297,24 @@ export class FileIndex {
     }
 
     /**
+     * Get all hydrated symbols for this file.
+     *
+     * @param sort - If true, sort symbols by start line (ascending)
+     * @returns Array of IndexSymbol objects, or null if the idx file
+     *          is not valid or cannot be read.
+     */
+    async getAllSymbols(sort: boolean = false): Promise<IndexSymbol[] | null> {
+        const symbols = await this.getSymbols();
+        if (symbols === null) {
+            return null;
+        }
+        if (sort) {
+            return [...symbols].sort((a, b) => a.startLine - b.startLine);
+        }
+        return symbols;
+    }
+
+    /**
      * Get the innermost container (function, class, namespace, etc.)
      * that contains a given line.
      *

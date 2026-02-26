@@ -11,6 +11,8 @@
 export { ContentIndex } from './contentIndex';
 export {
     SearchResult,
+    FileSearchResults,
+    DocumentType,
     SearchResults,
     FileLineRef,
     NearestEmbeddingResult,
