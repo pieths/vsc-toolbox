@@ -45,6 +45,10 @@ export const enum SymbolType {
     // ── Misc ──────────────────────────────────
     CodeComment = 60,
     Macro = 61,
+
+    // ── Markdown ──────────────────────────────────────
+    MarkdownHeading1 = 80, // # heading
+    MarkdownHeading2 = 81, // ## heading
 }
 
 // ── AttrKey ─────────────────────────────────────────────────────────────────
@@ -268,6 +272,8 @@ const SYMBOL_TYPE_NAMES: Record<number, string> = {
     [SymbolType.SourceInclude]: 'Include',
     [SymbolType.CodeComment]: 'Comment',
     [SymbolType.Macro]: 'Macro',
+    [SymbolType.MarkdownHeading1]: 'MarkdownHeading1',
+    [SymbolType.MarkdownHeading2]: 'MarkdownHeading2',
 };
 
 /**
@@ -304,4 +310,6 @@ export const CONTAINER_TYPES: ReadonlySet<SymbolType> = new Set<SymbolType>([
     SymbolType.Method,
     SymbolType.Constructor,
     SymbolType.Destructor,
+    SymbolType.MarkdownHeading1,
+    SymbolType.MarkdownHeading2,
 ]);

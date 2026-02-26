@@ -12,10 +12,12 @@
 import type { IFileParser } from './types';
 import { defaultParser } from './defaultParser';
 import { cppParser } from './cppParser';
+import { markdownParser } from './markdownParser';
 
 /** All language-specific parsers (order does not matter). */
 const LANGUAGE_PARSERS: readonly IFileParser[] = [
     cppParser,
+    markdownParser,
 ];
 
 /** Map from file extension (lower-case, with dot) to parser singleton. */
