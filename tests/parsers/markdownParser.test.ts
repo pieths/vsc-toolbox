@@ -113,6 +113,17 @@ describe('single H1 heading', () => {
         assert.equal(sym.endLine, 0);
         assert.equal(sym.endColumn, 10);
     });
+
+    it('should produce the exact expected symbol', () => {
+        const { symbols } = parseFixture(SINGLE_H1_SOURCE);
+        const actual = symbols.map(toComparable);
+        assert.equal(actual.length, 1);
+        assert.deepStrictEqual(actual[0], expectedSymbol(
+            SymbolType.MarkdownHeading1, 'Overview',
+            0, 0, 0, 10,    // section extent: heading line only
+            0, 2, 0, 10,    // name: "Overview" at col 2..10
+        ));
+    });
 });
 
 const H1_WITH_BODY_SOURCE = `\
@@ -171,6 +182,17 @@ describe('single H2 heading', () => {
         assert.equal(sym.startColumn, 0);
         assert.equal(sym.endLine, 2);
         assert.equal(sym.endColumn, 13);
+    });
+
+    it('should produce the exact expected symbol', () => {
+        const { symbols } = parseFixture(SINGLE_H2_SOURCE);
+        const actual = symbols.map(toComparable);
+        assert.equal(actual.length, 1);
+        assert.deepStrictEqual(actual[0], expectedSymbol(
+            SymbolType.MarkdownHeading2, 'Details',
+            0, 0, 2, 13,    // section extent: line 0..2
+            0, 3, 0, 10,    // name: "Details" at col 3..10
+        ));
     });
 });
 
@@ -281,6 +303,22 @@ describe('multiple H1 headings', () => {
         assert.ok(h1s[1].startLine > h1s[0].endLine,
             'second section should start after first section ends');
     });
+
+    it('should produce the exact expected symbols', () => {
+        const { symbols } = parseFixture(MULTIPLE_H1_SOURCE);
+        const actual = symbols.map(toComparable);
+        assert.equal(actual.length, 2);
+        assert.deepStrictEqual(actual[0], expectedSymbol(
+            SymbolType.MarkdownHeading1, 'Chapter 1',
+            0, 0, 2, 10,    // section extent: line 0..2
+            0, 2, 0, 11,    // name: "Chapter 1" at col 2..11
+        ));
+        assert.deepStrictEqual(actual[1], expectedSymbol(
+            SymbolType.MarkdownHeading1, 'Chapter 2',
+            4, 0, 6, 10,    // section extent: line 4..6
+            4, 2, 4, 11,    // name: "Chapter 2" at col 2..11
+        ));
+    });
 });
 
 // ── Heading with inline Markdown ────────────────────────────────────────────
@@ -299,6 +337,17 @@ describe('heading with inline Markdown formatting', () => {
         assert.equal(filtered.length, 1);
         assert.equal(filtered[0].name, 'Hello **world**');
     });
+
+    it('should produce the exact expected symbol', () => {
+        const { symbols } = parseFixture(INLINE_MARKDOWN_SOURCE);
+        const actual = symbols.map(toComparable);
+        assert.equal(actual.length, 1);
+        assert.deepStrictEqual(actual[0], expectedSymbol(
+            SymbolType.MarkdownHeading1, 'Hello **world**',
+            0, 0, 2, 10,    // section extent: line 0..2
+            0, 2, 0, 17,    // name: "Hello **world**" at col 2..17
+        ));
+    });
 });
 
 // ── Heading with code in name ───────────────────────────────────────────────
@@ -316,6 +365,17 @@ describe('heading with backtick code in name', () => {
         const filtered = filterSymbols(actual, { type: SymbolType.MarkdownHeading2 });
         assert.equal(filtered.length, 1);
         assert.equal(filtered[0].name, 'The `parse` function');
+    });
+
+    it('should produce the exact expected symbol', () => {
+        const { symbols } = parseFixture(CODE_IN_HEADING_SOURCE);
+        const actual = symbols.map(toComparable);
+        assert.equal(actual.length, 1);
+        assert.deepStrictEqual(actual[0], expectedSymbol(
+            SymbolType.MarkdownHeading2, 'The `parse` function',
+            0, 0, 2, 12,    // section extent: line 0..2
+            0, 3, 0, 23,    // name: "The `parse` function" at col 3..23
+        ));
     });
 });
 
@@ -378,6 +438,37 @@ describe('complex heading structure (multiple H1 with nested H2)', () => {
         assert.ok(events.startLine >= api.startLine);
         assert.ok(events.endLine <= api.endLine);
     });
+
+    it('should produce the exact expected symbols', () => {
+        const { symbols } = parseFixture(COMPLEX_STRUCTURE_SOURCE);
+        const actual = symbols.map(toComparable);
+        assert.equal(actual.length, 5);
+        assert.deepStrictEqual(actual[0], expectedSymbol(
+            SymbolType.MarkdownHeading1, 'Introduction',
+            0, 0, 6, 16,    // section extent: line 0..6
+            0, 2, 0, 14,    // name: "Introduction" at col 2..14
+        ));
+        assert.deepStrictEqual(actual[1], expectedSymbol(
+            SymbolType.MarkdownHeading2, 'Background',
+            4, 0, 6, 16,    // section extent: line 4..6
+            4, 3, 4, 13,    // name: "Background" at col 3..13
+        ));
+        assert.deepStrictEqual(actual[2], expectedSymbol(
+            SymbolType.MarkdownHeading1, 'API Reference',
+            8, 0, 18, 14,   // section extent: line 8..18
+            8, 2, 8, 15,    // name: "API Reference" at col 2..15
+        ));
+        assert.deepStrictEqual(actual[3], expectedSymbol(
+            SymbolType.MarkdownHeading2, 'Methods',
+            12, 0, 14, 15,  // section extent: line 12..14
+            12, 3, 12, 10,  // name: "Methods" at col 3..10
+        ));
+        assert.deepStrictEqual(actual[4], expectedSymbol(
+            SymbolType.MarkdownHeading2, 'Events',
+            16, 0, 18, 14,  // section extent: line 16..18
+            16, 3, 16, 9,   // name: "Events" at col 3..9
+        ));
+    });
 });
 
 // ── H3 inside H2 (H3 ignored, content included in H2 extent) ───────────────
@@ -407,6 +498,17 @@ describe('H3 inside H2 (H3 ignored)', () => {
         const h2 = actual[0];
         // The H2 section should extend past the H3 heading and its content
         assert.ok(h2.endLine >= 6, 'H2 extent should cover H3 sub-content');
+    });
+
+    it('should produce the exact expected symbol', () => {
+        const { symbols } = parseFixture(H3_INSIDE_H2_SOURCE);
+        const actual = symbols.map(toComparable);
+        assert.equal(actual.length, 1);
+        assert.deepStrictEqual(actual[0], expectedSymbol(
+            SymbolType.MarkdownHeading2, 'Section A',
+            0, 0, 6, 12,    // section extent: line 0..6 (includes H3 content)
+            0, 3, 0, 12,    // name: "Section A" at col 3..12
+        ));
     });
 });
 
@@ -522,6 +624,14 @@ describe('chunking: multiple heading sections', () => {
         assert.ok(ch2Chunk!.text.includes('section: Chapter 2'));
         assert.ok(!ch2Chunk!.text.includes('section: Chapter 1'));
     });
+
+    it('each chunk should have correct line numbers', () => {
+        const { chunks } = chunkFixture(CHUNK_MULTIPLE_SECTIONS_SOURCE);
+        assert.equal(chunks[0].startLine, 1);
+        assert.equal(chunks[0].endLine, 5);
+        assert.equal(chunks[1].startLine, 7);
+        assert.equal(chunks[1].endLine, 11);
+    });
 });
 
 const CHUNK_CONTENT_BEFORE_HEADING_SOURCE = `\
@@ -551,6 +661,14 @@ describe('chunking: content before first heading', () => {
         assert.ok(introChunk.text.includes('file: test.md'));
         assert.ok(!introChunk.text.includes('section:'),
             'intro chunk should not have a heading prefix');
+    });
+
+    it('each chunk should have correct line numbers', () => {
+        const { chunks } = chunkFixture(CHUNK_CONTENT_BEFORE_HEADING_SOURCE);
+        assert.equal(chunks[0].startLine, 1);
+        assert.equal(chunks[0].endLine, 3);
+        assert.equal(chunks[1].startLine, 5);
+        assert.equal(chunks[1].endLine, 8);
     });
 });
 
@@ -606,6 +724,19 @@ describe('chunking: breadcrumb prefixes for nested H2', () => {
         assert.ok(methodsChunk, 'expected Methods chunk');
         assert.ok(eventsChunk, 'expected Events chunk');
     });
+
+    it('each chunk should have correct line numbers', () => {
+        const { chunks } = chunkFixture(CHUNK_BREADCRUMB_SOURCE);
+        // H1 intro: lines 1..4 (# API Reference + body, before ## Methods)
+        assert.equal(chunks[0].startLine, 1);
+        assert.equal(chunks[0].endLine, 4);
+        // ## Methods section: lines 6..9
+        assert.equal(chunks[1].startLine, 6);
+        assert.equal(chunks[1].endLine, 9);
+        // ## Events section: lines 11..14
+        assert.equal(chunks[2].startLine, 11);
+        assert.equal(chunks[2].endLine, 14);
+    });
 });
 
 // ── Standalone H2 (no parent H1) ───────────────────────────────────────────
@@ -624,6 +755,12 @@ describe('chunking: standalone H2 (no parent H1)', () => {
         assert.ok(chunks[0].text.includes('section: Standalone Section'));
         assert.ok(!chunks[0].text.includes('>'),
             'standalone H2 should not have a breadcrumb separator');
+    });
+
+    it('chunk should have correct line numbers', () => {
+        const { chunks } = chunkFixture(CHUNK_STANDALONE_H2_SOURCE);
+        assert.equal(chunks[0].startLine, 1);
+        assert.equal(chunks[0].endLine, 4);
     });
 });
 
@@ -650,7 +787,13 @@ describe('chunking: empty H1 section before H2', () => {
         // The H2 should still get a breadcrumb chunk
         const h2Chunk = chunks.find(c => c.text.includes('Real Content'));
         assert.ok(h2Chunk, 'expected a chunk for the H2 section');
-        assert.ok(h2Chunk!.text.includes('section: Title > Real Content'));
+        assert.ok(h2Chunk.text.includes('section: Title > Real Content'));
+    });
+
+    it('chunk should have correct line numbers', () => {
+        const { chunks } = chunkFixture(CHUNK_EMPTY_H1_BEFORE_H2_SOURCE);
+        assert.equal(chunks[0].startLine, 3);
+        assert.equal(chunks[0].endLine, 6);
     });
 });
 
@@ -680,6 +823,16 @@ describe('chunking: empty H2 section', () => {
             c.text.includes('section: Overview > Content Section'));
         assert.ok(contentChunk,
             'expected a chunk for the non-empty H2 section');
+    });
+
+    it('each chunk should have correct line numbers', () => {
+        const { chunks } = chunkFixture(CHUNK_EMPTY_H2_SOURCE);
+        // H1 intro: lines 1..4 (# Overview + body, before ## Empty Section)
+        assert.equal(chunks[0].startLine, 1);
+        assert.equal(chunks[0].endLine, 4);
+        // ## Content Section: lines 8..11
+        assert.equal(chunks[1].startLine, 8);
+        assert.equal(chunks[1].endLine, 11);
     });
 });
 
