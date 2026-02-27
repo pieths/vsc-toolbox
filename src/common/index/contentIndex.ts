@@ -37,13 +37,15 @@ function getConfig(): ContentIndexConfig {
     const excludePatterns = config.get<string[]>('excludePatterns', []);
     const fileExtensions = config.get<string[]>('fileExtensions', ['.cc', '.h']);
     const enableEmbeddings = config.get<boolean>('enableEmbeddings', false);
+    const knowledgeBaseDirectory = config.get<string>('knowledgeBaseDirectory', '').trim();
 
     return {
         workerThreads,
         includePaths,
         excludePatterns,
         fileExtensions,
-        enableEmbeddings
+        enableEmbeddings,
+        knowledgeBaseDirectory
     };
 }
 
@@ -162,7 +164,8 @@ export class ContentIndex {
                 includePaths,
                 excludePatterns,
                 fileExtensions,
-                enableEmbeddings
+                enableEmbeddings,
+                knowledgeBaseDirectory
             } = config;
 
             // Create fresh components
@@ -170,7 +173,7 @@ export class ContentIndex {
             // constructor or from stopComponents if this is a reset)
             const nodePath = path.join(this.context.extensionPath, 'bin', 'win_x64', 'node', 'node.exe');
             this.threadPool = new ThreadPool(workerThreads, nodePath);
-            this.pathFilter = new PathFilter(includePaths, excludePatterns, fileExtensions);
+            this.pathFilter = new PathFilter(includePaths, excludePatterns, fileExtensions, knowledgeBaseDirectory);
             this.fileWatcher = new FileWatcher(this.cacheManager, this.pathFilter);
 
             // Initialize llama server for embeddings (if enabled)
@@ -430,7 +433,7 @@ export class ContentIndex {
                     // as one of its first two symbols (either # or ##).
                     const overviewSymbol = symbols.slice(0, 2).find(s =>
                         (s.type === SymbolType.MarkdownHeading1 ||
-                         s.type === SymbolType.MarkdownHeading2) &&
+                            s.type === SymbolType.MarkdownHeading2) &&
                         s.name === 'Overview'
                     );
                     if (overviewSymbol) {

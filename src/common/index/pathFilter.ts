@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import * as path from 'path';
+import * as vscode from 'vscode';
 import picomatch from 'picomatch';
 import { log } from '../logger';
 
@@ -23,17 +24,44 @@ export class PathFilter {
     /**
      * Create a new PathFilter.
      *
-     * @param includePaths - Directory paths to include
+     * If `includePaths` is empty the workspace folders are used as a
+     * fallback so that all workspace files are indexed by default.
+     *
+     * When a `knowledgeBaseDirectory` is provided it is unconditionally
+     * appended to the resolved include paths (if not already present),
+     * ensuring knowledge-base documents are always indexed regardless of
+     * whether the user explicitly configured include paths.
+     *
+     * @param includePaths - Directory paths to include (empty = workspace folders)
      * @param excludePatterns - Picomatch glob patterns to exclude
      *   (e.g., `d:/cs/src/chrome/{fuchsia,mac,linux}/**`)
      * @param fileExtensions - File extensions to include (e.g., '.cc', '.h')
+     * @param knowledgeBaseDirectory - Optional knowledge base directory to always include
      */
     constructor(
         includePaths: string[],
         excludePatterns: string[],
         fileExtensions: string[],
+        knowledgeBaseDirectory?: string,
     ) {
-        this.setIncludePaths(includePaths);
+        // Resolve include paths: fall back to workspace folders when empty
+        let resolvedPaths = includePaths;
+        if (resolvedPaths.length === 0) {
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (workspaceFolders) {
+                resolvedPaths = workspaceFolders.map(f => f.uri.fsPath);
+            }
+            log('PathFilter: No includePaths configured, using workspace folders');
+        }
+
+        // Append knowledge base directory if configured and not already present
+        if (knowledgeBaseDirectory && !resolvedPaths.includes(knowledgeBaseDirectory)) {
+            resolvedPaths = [...resolvedPaths, knowledgeBaseDirectory];
+            log(`PathFilter: Appended knowledgeBaseDirectory: ${knowledgeBaseDirectory}`);
+        }
+
+        this.includePaths = resolvedPaths;
+        this.normalizedIncludePaths = resolvedPaths.map(p => path.normalize(p).toLowerCase());
         this.fileExtensions = fileExtensions.map(ext => ext.toLowerCase());
 
         // Compile all exclude patterns into a single matcher for fast testing.
@@ -91,16 +119,6 @@ export class PathFilter {
      */
     getIncludePaths(): string[] {
         return this.includePaths;
-    }
-
-    /**
-     * Set the include paths.
-     * Called when no include paths are configured and the workspace folders
-     * are used as a fallback.
-     */
-    setIncludePaths(paths: string[]): void {
-        this.includePaths = paths;
-        this.normalizedIncludePaths = paths.map(p => path.normalize(p).toLowerCase());
     }
 
     /**

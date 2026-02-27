@@ -6,6 +6,7 @@ import { GetWorkspaceSymbolTool } from './getWorkspaceSymbol';
 import { GetDocumentSymbolReferencesTool } from './getDocumentSymbolReferences';
 import { SearchIndexTool } from './searchIndex';
 import { SearchEmbeddingsTool } from './searchEmbeddings';
+import { AddKnowledgeBaseDocumentTool } from './addKnowledgeBaseDocument';
 
 /**
  * Tool class constructor type that accepts an ExtensionContext
@@ -25,4 +26,5 @@ export const TOOL_REGISTRY: ToolRegistryEntry[] = [
     { name: 'getDocumentSymbolReferences', class: GetDocumentSymbolReferencesTool },
     { name: 'searchIndex', class: SearchIndexTool },
     { name: 'searchEmbeddings', class: SearchEmbeddingsTool },
+    { name: 'addKnowledgeBaseDocument', class: AddKnowledgeBaseDocumentTool },
 ];

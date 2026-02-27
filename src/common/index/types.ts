@@ -283,4 +283,6 @@ export interface ContentIndexConfig {
     fileExtensions: string[];
     /** Whether to enable embedding generation and vector search */
     enableEmbeddings: boolean;
+    /** Directory containing the knowledge base documents */
+    knowledgeBaseDirectory: string;
 }

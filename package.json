@@ -152,6 +152,11 @@
           "type": "boolean",
           "default": false,
           "description": "Enable embedding generation and vector/semantic search."
+        },
+        "vscToolbox.contentIndex.knowledgeBaseDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Directory path where knowledge base documents are stored. If empty, you will be prompted to select a directory on first use."
         }
       }
     },
@@ -302,6 +307,31 @@
           },
           "required": [
             "query"
+          ]
+        }
+      },
+      {
+        "name": "addKnowledgeBaseDocument",
+        "displayName": "Add Knowledge Base Document",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "add-knowledge-base-document",
+        "userDescription": "Add a new markdown document to the knowledge base",
+        "modelDescription": "Add a new markdown document to the knowledge base. Provide a document name (file name) and markdown content. The document will be saved to the configured knowledge base directory. If a document with the same name already exists, an error is returned. The '.md' extension is automatically appended if not already present in the document name. IMPORTANT: The markdown content MUST include an 'Overview' heading (either '# Overview' or '## Overview') as one of its first two headings. This is required for the document to be recognized as a knowledge base document by the content index. For example, start the document with '# Document Title' followed by '## Overview' and a summary paragraph. The summary paragraph will be shown in the search results output so it should describe the document's purpose and key points so that AI agents that see this overview section will be able to quickly determine its relevance. This overview section should not be more than a paragraph and should not include any triple back tick code block sections.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "documentName": {
+              "type": "string",
+              "description": "The file name for the document (e.g. 'my-topic' or 'my-topic.md'). The '.md' extension is added automatically if not provided."
+            },
+            "content": {
+              "type": "string",
+              "description": "The markdown content of the document to save."
+            }
+          },
+          "required": [
+            "documentName",
+            "content"
           ]
         }
       }

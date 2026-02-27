@@ -103,21 +103,6 @@ export class CacheManager {
     private async buildInitialIndex(): Promise<void> {
         try {
             const filePaths: string[] = [];
-            const includePaths = this.pathFilter!.getIncludePaths();
-
-            if (includePaths.length === 0) {
-                // Fall back to workspace folders if no includePaths specified
-                const workspaceFolders = vscode.workspace.workspaceFolders;
-                if (workspaceFolders) {
-                    const fallbackPaths: string[] = [];
-                    for (const folder of workspaceFolders) {
-                        fallbackPaths.push(folder.uri.fsPath);
-                    }
-                    this.pathFilter!.setIncludePaths(fallbackPaths);
-                }
-                log('Content index: No includePaths configured, using workspace folders');
-            }
-
             // Scan each includePath directory for matching files
             for (const includePath of this.pathFilter!.getIncludePaths()) {
                 try {
