@@ -3,9 +3,13 @@
 
 import * as vscode from 'vscode';
 import { ContentIndex, NearestEmbeddingResult } from '../common/index';
+import { sendRequestWithReadFileAccess } from '../common/copilotUtils';
 import { log } from '../common/logger';
 import { createMarkdownCodeBlock } from '../common/markdownUtils';
 import { ScopedFileCache } from '../common/scopedFileCache';
+
+/** Markdown header prefix used for embedding search results */
+const EMBEDDING_RESULTS_HEADER_PREFIX = '# Embedding Search Results for';
 
 /**
  * Input parameters for the SearchEmbeddings language model tool
@@ -30,7 +34,7 @@ function formatResults(
         return `No matches found for: \`${query}\``;
     }
 
-    let markdown = `# Embedding Search Results for \`${query}\`\n\n`;
+    let markdown = `${EMBEDDING_RESULTS_HEADER_PREFIX} \`${query}\`\n\n`;
     markdown += `Found **${results.length}** matches.\n\n`;
 
     for (const { embedding, lines } of results) {
@@ -113,7 +117,14 @@ export class SearchEmbeddingsTool implements vscode.LanguageModelTool<SearchEmbe
             log(`Embedding search: Query "${query}" completed in ${elapsed}ms (${results.length} matches)`);
 
             // Format and return results
-            const markdown = formatResults(resultsWithContent, query);
+            let markdown = formatResults(resultsWithContent, query);
+
+            // Apply LLM re-ranker if enabled
+            const enableReranker = vscode.workspace.getConfiguration('vscToolbox')
+                .get<boolean>('enableLlmReranker', false);
+            if (enableReranker) {
+                markdown = await this.applyLlmReranker(markdown, query, token, fileCache);
+            }
 
             return new vscode.LanguageModelToolResult([
                 new vscode.LanguageModelTextPart(markdown)
@@ -124,5 +135,55 @@ export class SearchEmbeddingsTool implements vscode.LanguageModelTool<SearchEmbe
                 new vscode.LanguageModelTextPart(`Embedding search error: ${message}`)
             ]);
         }
+    }
+
+    /**
+     * Apply an LLM-based re-ranker to the embedding search results.
+     * Re-ranks and removes `## ` sections based on their relevance to the query.
+     *
+     * @param markdown The formatted embedding search results markdown
+     * @param query The original search query
+     * @param token Cancellation token
+     * @param fileCache Cache for file contents
+     * @returns The re-ranked and filtered markdown
+     */
+    private async applyLlmReranker(
+        markdown: string,
+        query: string,
+        token: vscode.CancellationToken,
+        fileCache: ScopedFileCache
+    ): Promise<string> {
+        log(`Starting LLM re-ranker for query: "${query}"`);
+        const rerankerStart = Date.now();
+        const rerankerPrompt = [
+            'You are a search result re-ranker.',
+            `Given the markdown below which contains embedding search results (starts with line \`${EMBEDDING_RESULTS_HEADER_PREFIX}\`),`,
+            'evaluate each section for its relevance to the original search query.',
+            '',
+            '# Instructions',
+            '',
+            '1. Remove any `## ` sections that are NOT relevant to the query.',
+            '2. Re-order the remaining `## ` sections so the most relevant results appear first.',
+            '3. Return ONLY the filtered and re-ranked markdown with no additional commentary or explanation.',
+            '4. Preserve the exact format and content of the remaining sections.',
+            '5. Keep the top-level heading and summary line, updating the match count to reflect removals.',
+            '6. If the re-ranking requires information not currently present in the markdown, use the appropriate tool(s) to get the required information.',
+            '',
+            '# Query',
+            '',
+            '```',
+            query,
+            '```',
+            '',
+            '',
+            markdown
+        ].join('\n');
+        const result = await sendRequestWithReadFileAccess(null, rerankerPrompt, token, 1000, fileCache);
+        const rerankerElapsed = Date.now() - rerankerStart;
+        log(`LLM re-ranker completed in ${rerankerElapsed}ms`);
+
+        // Strip any preamble the model may have added before the actual results
+        const headerIndex = result.indexOf(EMBEDDING_RESULTS_HEADER_PREFIX);
+        return headerIndex > 0 ? result.substring(headerIndex) : result;
     }
 }

@@ -112,6 +112,11 @@
           "default": "chrome",
           "description": "Module name to use as prefix for WinDbg breakpoint locations"
         },
+        "vscToolbox.enableLlmReranker": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use an LLM re-ranker to filter and re-rank embedding search results by relevance."
+        },
         "vscToolbox.contentIndex.workerThreads": {
           "type": "number",
           "default": 0,
