@@ -1013,7 +1013,7 @@ describe('out-of-line method with template argument', () => {
             SymbolType.Function, 'TestMethod', 2, 0, 6, 1, 2, 16, 2, 26, [
             [AttrKey.Scope, 'ns::TestClass'],
             [AttrKey.FullyQualifiedName, 'ns::TestClass::TestMethod'],
-            [AttrKey.Signature, 'void TestClass::TestMethod(\n    const std::string& key,\n    base::OnceCallback<void(Service::StatusCallback)> task)'],
+            [AttrKey.Signature, 'void TestClass::TestMethod( const std::string& key, base::OnceCallback<void(Service::StatusCallback)> task)'],
             [AttrKey.ContainerHeaderEndLine, 4],
             [AttrKey.ContainerHeaderEndColumn, 60],
         ]);
@@ -1044,7 +1044,7 @@ describe('out-of-line method with return type on previous line', () => {
             SymbolType.Function, 'TestMethod', 2, 1, 8, 1, 3, 11, 3, 21, [
             [AttrKey.Scope, 'ns::TestClass'],
             [AttrKey.FullyQualifiedName, 'ns::TestClass::TestMethod'],
-            [AttrKey.Signature, 'std::string&\nTestClass::TestMethod(\n    const std::string& key,\n    base::OnceCallback<void(Service::StatusCallback)> task)'],
+            [AttrKey.Signature, 'std::string& TestClass::TestMethod( const std::string& key, base::OnceCallback<void(Service::StatusCallback)> task)'],
             [AttrKey.ContainerHeaderEndLine, 5],
             [AttrKey.ContainerHeaderEndColumn, 60],
         ]);
