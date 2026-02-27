@@ -60,6 +60,9 @@ export class PathFilter {
             log(`PathFilter: Appended knowledgeBaseDirectory: ${knowledgeBaseDirectory}`);
         }
 
+        // Remove paths that are subdirectories of another included path
+        resolvedPaths = this.removeRedundantPaths(resolvedPaths);
+
         this.includePaths = resolvedPaths;
         this.normalizedIncludePaths = resolvedPaths.map(p => path.normalize(p).toLowerCase());
         this.fileExtensions = fileExtensions.map(ext => ext.toLowerCase());
@@ -127,5 +130,37 @@ export class PathFilter {
      */
     getFileExtensions(): string[] {
         return this.fileExtensions;
+    }
+
+    /**
+     * Remove include paths that are subdirectories of another included path.
+     *
+     * Sorts the paths lexicographically so that parent directories appear
+     * before their children, then does a single pass keeping only paths
+     * that are not nested under the previously kept path.
+     *
+     * TODO: The case-insensitive comparison assumes a case-insensitive
+     * file system (e.g. NTFS on Windows). On case-sensitive file systems
+     * (e.g. ext4 on Linux) this would incorrectly collapse paths that
+     * differ only in casing. This same assumption exists throughout the
+     * class (e.g. shouldIncludeFile).
+     */
+    private removeRedundantPaths(paths: string[]): string[] {
+        if (paths.length <= 1) {
+            return paths;
+        }
+
+        const sorted = [...paths]
+            .map(p => path.normalize(p))
+            .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+
+        const result: string[] = [];
+        for (const p of sorted) {
+            const last = result[result.length - 1];
+            if (!last || !p.toLowerCase().startsWith(last.toLowerCase() + path.sep)) {
+                result.push(p);
+            }
+        }
+        return result;
     }
 }
