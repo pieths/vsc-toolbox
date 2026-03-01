@@ -120,7 +120,7 @@ npm run compile
    ```
 
    This installs:
-   - **Development:** `@types/vscode`, `@types/node`, `typescript`, `eslint`
+   - **Development:** `@types/vscode`, `@types/node`, `typescript`
 
 3. **Compile the extension:**
    ```bash
@@ -498,7 +498,6 @@ Change to match your module (`"myapp"`, etc.).
 ```bash
 npm run compile    # Compile once
 npm run watch      # Watch mode (auto-compile on change)
-npm run lint       # Run ESLint
 ```
 
 ### Debugging in Custom Environments

@@ -348,7 +348,6 @@
     "watch": "node esbuild.mjs --watch",
     "package": "npm run typecheck && node esbuild.mjs --production",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src --ext ts",
     "pretest": "tsc -p tsconfig.test.json",
     "test": "node --test out-test/tests/**/*.test.js"
   },
@@ -356,10 +355,7 @@
     "@types/node": "^20.0.0",
     "@types/picomatch": "^4.0.2",
     "@types/vscode": "^1.85.0",
-    "@typescript-eslint/eslint-plugin": "^6.0.0",
-    "@typescript-eslint/parser": "^6.0.0",
     "esbuild": "^0.27.3",
-    "eslint": "^8.50.0",
     "typescript": "^5.2.0"
   },
   "dependencies": {
