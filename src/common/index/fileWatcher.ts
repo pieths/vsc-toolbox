@@ -134,7 +134,7 @@ export class FileWatcher implements vscode.Disposable {
 
     /**
      * Handle file change event.
-     * Invalidates the cache entry for the changed file.
+     * Marks the file dirty.
      *
      * @param uri - URI of the changed file
      */
@@ -146,13 +146,12 @@ export class FileWatcher implements vscode.Disposable {
             return;
         }
 
-        // Invalidate cache entry
-        this.cacheManager.invalidate(filePath);
+        this.cacheManager.markDirty(filePath);
     }
 
     /**
      * Handle file create event.
-     * Adds the file to the cache and builds its index.
+     * Adds the file to the cache.
      *
      * @param uri - URI of the created file
      */
@@ -171,7 +170,7 @@ export class FileWatcher implements vscode.Disposable {
 
     /**
      * Handle file delete event.
-     * Removes the file from the cache.
+     * Marks the file as deleted.
      *
      * @param uri - URI of the deleted file
      */
@@ -180,18 +179,7 @@ export class FileWatcher implements vscode.Disposable {
 
         log(`FileWatcher: Deleted: ${filePath}`);
 
-        // Remove from cache (no need to check include paths)
-        this.cacheManager.remove(filePath);
-    }
-
-    /**
-     * Update configuration and recreate watchers.
-     *
-     * @param pathFilter - New PathFilter instance
-     */
-    updateConfig(pathFilter: PathFilter): void {
-        this.pathFilter = pathFilter;
-        this.createWatchers();
+        this.cacheManager.markDeleted(filePath);
     }
 
     /**

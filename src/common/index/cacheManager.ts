@@ -7,16 +7,35 @@ import * as fs from 'fs';
 import picomatch from 'picomatch';
 import { FileIndex } from './fileIndex';
 import { ThreadPool } from './workers/threadPool';
-import { IndexInput, NearestEmbeddingResult } from './types';
+import { IndexInput, IndexStatus, NearestEmbeddingResult } from './types';
 import { LlamaServer } from './embeddings/llamaServer';
 import { VectorDatabase } from './embeddings/vectorDatabase';
 import { EmbeddingProcessor } from './embeddings/embeddingProcessor';
 import { PathFilter } from './pathFilter';
 import { log, warn, error } from '../logger';
 
+/** Mutation queue entry — ordered for temporal "last action wins" collapse. */
+interface FileMutationEntry {
+    action: 'dirty' | 'delete';
+    filePath: string;
+}
+
+/** Pending vector search query, resolved by the drain loop. */
+interface VectorQueryEntry {
+    vector: Float32Array;
+    topK: number;
+    resolve: (value: NearestEmbeddingResult[]) => void;
+    reject: (reason: unknown) => void;
+}
+
 /**
  * CacheManager manages the collection of FileIndex instances and coordinates
  * cache operations across all indexed files.
+ *
+ * All indexing and embedding work is driven by a single serial drain loop
+ * that consumes from an ordered {@link fileMutationQueue}. This eliminates
+ * race conditions from overlapping `indexAll()` calls and ensures queries
+ * always see a consistent, quiescent database snapshot.
  */
 export class CacheManager {
     private cache: Map<string, FileIndex> = new Map();
@@ -29,6 +48,12 @@ export class CacheManager {
     private llamaServer: LlamaServer | null = null;
     private vectorDatabase: VectorDatabase | null = null;
     private embeddingProcessor: EmbeddingProcessor | null = null;
+
+    // ── Dirty-set drain loop state ──────────────────────────────────────────
+    private fileMutationQueue: FileMutationEntry[] = [];
+    private vectorQueryQueue: VectorQueryEntry[] = [];
+    private drainLoopRunning = false;
+    private drainLoopPromise: Promise<void> | null = null;
 
     /**
      * Normalize a file path for use as a cache key.
@@ -107,7 +132,8 @@ export class CacheManager {
             for (const includePath of this.pathFilter!.getIncludePaths()) {
                 try {
                     const files = await this.findFilesInDirectory(includePath);
-                    // Use concat instead of spread to avoid stack overflow with large arrays
+                    // Use concat instead of spread to avoid
+                    // stack overflow with large arrays
                     for (const file of files) {
                         filePaths.push(file);
                     }
@@ -119,36 +145,27 @@ export class CacheManager {
 
             log(`Content index: Found ${filePaths.length} files...`);
 
-            // Process files in batches to stay responsive
-            const batchSize = 500;
-            let lastYield = Date.now();
-
-            for (let i = 0; i < filePaths.length; i += batchSize) {
-                const batch = filePaths.slice(i, i + batchSize);
-
-                // Create FileIndex instances for each file
-                // isValid() handles cache restoration automatically via mtime comparison
-                for (const filePath of batch) {
-                    const key = this.normalizePath(filePath);
-                    if (this.cache.has(key)) {
-                        log(`Content index: Duplicate path: "${filePath}" (existing: "${this.cache.get(key)!.getFilePath()}")`);
-                        continue;
-                    }
-                    const fileIndex = new FileIndex(filePath, this.symbolsCacheDir);
-                    this.cache.set(key, fileIndex);
+            // Create FileIndex instances for each file
+            for (const filePath of filePaths) {
+                const key = this.normalizePath(filePath);
+                if (this.cache.has(key)) {
+                    log(`Content index: Duplicate path: "${filePath}" (existing: "${this.cache.get(key)!.getFilePath()}")`);
+                    continue;
                 }
-
-                // Yield to event loop every 50ms to stay responsive
-                const now = Date.now();
-                if (now - lastYield > 50) {
-                    await new Promise(resolve => setImmediate(resolve));
-                    lastYield = Date.now();
-                }
+                const fileIndex = new FileIndex(filePath, this.symbolsCacheDir);
+                this.cache.set(key, fileIndex);
             }
 
-            // Index all discovered files
-            const allFiles = Array.from(this.cache.values());
-            await this.indexFiles(allFiles);
+            // Push all discovered files to the mutation queue for the drain loop.
+            // Assume everthing might be dirty. The worker threads will skip
+            // indexing if it's not needed.
+            for (const [_key, fileIndex] of this.cache) {
+                this.fileMutationQueue.push({ action: 'dirty', filePath: fileIndex.getFilePath() });
+            }
+
+            // Drain all mutations — blocks until the
+            // inner drain loop fully converges
+            await this.awaitDrainLoop();
 
             this.indexingComplete = true;
             log(`Content index: Added ${this.cache.size} files to cache`);
@@ -227,39 +244,39 @@ export class CacheManager {
      */
     async get(filePaths: string[], ensureValid: boolean = false): Promise<Map<string, FileIndex>> {
         const result = new Map<string, FileIndex>();
-        const toIndex: FileIndex[] = [];
 
-        // Look up all FileIndex instances and collect those needing indexing
         for (const filePath of filePaths) {
             const fileIndex = this.cache.get(this.normalizePath(filePath));
             if (fileIndex) {
                 result.set(filePath, fileIndex);
-                if (ensureValid && !fileIndex.isValid()) {
-                    toIndex.push(fileIndex);
+                if (ensureValid) {
+                    this.fileMutationQueue.push({ action: 'dirty', filePath });
                 }
             }
         }
 
-        // Batch index all invalid files
-        if (toIndex.length > 0) {
-            await this.indexFiles(toIndex);
+        // Workers sha256-skip unchanged files, so unconditionally
+        // draining is safe — just slightly more worker I/O.
+        if (ensureValid && result.size > 0) {
+            await this.awaitDrainLoop();
         }
 
         return result;
     }
 
     /**
-     * Index a batch of FileIndex instances.
+     * Index a batch of files via worker threads and compute
+     * embeddings for files that were actually re-indexed.
      *
-     * @param toIndex - Array of FileIndex instances to index
+     * @param fileIndexes - Array of FileIndex instances to index
      */
-    private async indexFiles(toIndex: FileIndex[]): Promise<void> {
+    private async indexFiles(fileIndexes: FileIndex[]): Promise<void> {
         if (!this.threadPool) {
-            warn('Content index: Cannot ensure valid - thread pool not set');
+            warn('Content index: Cannot index - thread pool not set');
             return;
         }
 
-        const inputs: IndexInput[] = toIndex.map(fi => ({
+        const inputs: IndexInput[] = fileIndexes.map(fi => ({
             type: 'index' as const,
             filePath: fi.getFilePath(),
             idxPath: fi.getIdxPath()
@@ -268,18 +285,19 @@ export class CacheManager {
         const startTime = Date.now();
         const outputs = await this.threadPool.indexAll(inputs);
 
-        let successCount = 0;
-        for (const output of outputs) {
-            if (output.idxPath && !output.error) {
-                successCount++;
-            }
+        // Only compute embeddings for files that were actually re-indexed
+        const indexed = outputs.filter(o => o.status === IndexStatus.Indexed);
+        if (indexed.length > 0) {
+            const indexedPaths = new Set(indexed.map(o => this.normalizePath(o.filePath)));
+            const updatedFileIndexes = fileIndexes.filter(fi =>
+                indexedPaths.has(this.normalizePath(fi.getFilePath())));
+            await this.computeEmbeddings(updatedFileIndexes);
         }
 
-        await this.computeEmbeddings(toIndex);
         const elapsed = Date.now() - startTime;
-
-        if (successCount > 0) {
-            log(`Content index: Indexed ${successCount} files in ${elapsed}ms`);
+        const skippedCount = outputs.filter(o => o.status === IndexStatus.Skipped).length;
+        if (indexed.length > 0 || skippedCount > 0) {
+            log(`Content index: Indexed ${indexed.length} files (${skippedCount} skipped) in ${elapsed}ms`);
         }
     }
 
@@ -354,7 +372,7 @@ export class CacheManager {
     }
 
     /**
-     * Add a new file to cache.
+     * Creates the {@link FileIndex} and marks the file as dirty.
      *
      * @param filePath - Absolute file path to add
      */
@@ -363,36 +381,166 @@ export class CacheManager {
         if (!this.cache.has(normalizedPath) && this.pathFilter?.shouldIncludeFile(filePath)) {
             const fileIndex = new FileIndex(filePath, this.symbolsCacheDir);
             this.cache.set(normalizedPath, fileIndex);
-            this.indexFiles([fileIndex]);
+            this.markDirty(filePath);
             log(`Content index: Added new file ${filePath}`);
         }
     }
 
     /**
-     * Invalidate cache for a specific file.
+     * Append a dirty mutation to the queue and wake the drain loop.
+     * The drain loop will process it in the next cycle.
+     * Safe to call multiple times — the reentrancy guard in
+     * {@link wakeDrainLoop} makes redundant calls free.
      *
-     * @param filePath - Absolute file path to invalidate
+     * @param filePath - Absolute file path to mark dirty
      */
-    invalidate(filePath: string): void {
-        const fileIndex = this.cache.get(this.normalizePath(filePath));
-        if (fileIndex) {
-            // FileWatcher.handleChange can fire even if there were no
-            // actual content changes to the file. Validate that there were
-            // actual changes before re-indexing to avoid unnecessary work.
-            if (!fileIndex.isValid()) {
-                this.indexFiles([fileIndex]);
-            }
-            fileIndex.invalidate();
+    markDirty(filePath: string): void {
+        this.fileMutationQueue.push({ action: 'dirty', filePath });
+        this.wakeDrainLoop();
+    }
+
+    /**
+     * Append a delete mutation to the queue and wake the drain loop.
+     * The drain loop will remove the file from cache and DB.
+     * Safe to call multiple times — the reentrancy guard in
+     * {@link wakeDrainLoop} makes redundant calls free.
+     *
+     * @param filePath - Absolute file path to mark deleted
+     */
+    markDeleted(filePath: string): void {
+        this.fileMutationQueue.push({ action: 'delete', filePath });
+        this.wakeDrainLoop();
+    }
+
+    /**
+     * Start the drain loop if not already running.
+     * Safe to call multiple times — a no-op if the loop is in-flight.
+     * New entries are picked up naturally by the running loop's `while` condition.
+     */
+    private wakeDrainLoop(): void {
+        if (this.drainLoopRunning) {
+            return;
+        }
+        this.drainLoopRunning = true;
+        this.drainLoopPromise = this.runDrainLoop().finally(() => {
+            this.drainLoopRunning = false;
+            this.drainLoopPromise = null;
+        });
+    }
+
+    /**
+     * Start the drain loop if needed, then await its completion.
+     * Used by `get(ensureValid)` and `buildInitialIndex`.
+     */
+    private async awaitDrainLoop(): Promise<void> {
+        if (!this.drainLoopRunning &&
+            (this.fileMutationQueue.length > 0 || this.vectorQueryQueue.length > 0)) {
+            this.wakeDrainLoop();
+        }
+        if (this.drainLoopPromise) {
+            await this.drainLoopPromise;
         }
     }
 
     /**
-     * Remove a file from cache.
-     * Cleans up any associated tags file.
+     * Serial drain loop: processes all mutations until the index files
+     * and database are consistent, then handles queued queries against
+     * that quiescent snapshot. Repeats until no work remains.
+     *
+     * The inner loop drains all pending mutations (collapses the queue
+     * using "last action wins", processes deletes, indexes dirty files
+     * and generates embeddings). Only when no mutations remain does the
+     * outer loop process queued queries.
+     */
+    private async runDrainLoop(): Promise<void> {
+        while (this.fileMutationQueue.length > 0 || this.vectorQueryQueue.length > 0) {
+
+            // Inner loop: drain ALL mutations until the
+            // idx files and DB are fully consistent.
+            while (this.fileMutationQueue.length > 0) {
+
+                // 1. Collapse queue: for each filePath, only keep the LAST action.
+                //    This preserves temporal ordering — delete→create keeps 'dirty',
+                //    modify→delete keeps 'delete'.
+                const lastAction = new Map<string, FileMutationEntry>();
+                for (const entry of this.fileMutationQueue) {
+                    lastAction.set(this.normalizePath(entry.filePath), entry);
+                }
+                this.fileMutationQueue.length = 0;
+
+                // 2. Split into deletes and dirty files
+                const deletedFiles: string[] = [];
+                const dirtyFiles: FileIndex[] = [];
+                for (const [normalizedPath, { action, filePath }] of lastAction) {
+                    if (action === 'delete') {
+                        deletedFiles.push(filePath);
+                    } else {
+                        const fi = this.cache.get(normalizedPath);
+                        if (fi) {
+                            dirtyFiles.push(fi);
+                        }
+                    }
+                }
+
+                // 3. Process deletes — remove from cache and DB
+                for (const filePath of deletedFiles) {
+                    this.remove(filePath);
+                    if (this.vectorDatabase) {
+                        await this.vectorDatabase.deleteByFilePath(filePath);
+                    }
+                }
+
+                // 4. Index dirty files (includes post-validation)
+                if (dirtyFiles.length > 0) {
+                    await this.indexFiles(dirtyFiles);
+                }
+
+                // 5. Inner loop continues — picks up any new mutations
+                //    that arrived during the awaits above
+            }
+
+            // ── DB and idx files are fully consistent at this point ──
+
+            // 6. Process queued queries — guaranteed to see a quiescent snapshot
+            if (this.vectorQueryQueue.length > 0) {
+                const queries = [...this.vectorQueryQueue];
+                this.vectorQueryQueue.length = 0;
+                for (const query of queries) {
+                    try {
+                        if (!this.vectorDatabase) {
+                            query.resolve([]);
+                            continue;
+                        }
+                        const hits = await this.vectorDatabase.getNearestFileChunks(
+                            query.vector, query.topK
+                        );
+                        // Convert cosine distance (0 = identical, 2 = opposite) to
+                        // cosine similarity score (1 = identical, -1 = opposite)
+                        query.resolve(hits.map(hit => ({
+                            filePath: hit.filePath,
+                            startLine: hit.startLine,
+                            endLine: hit.endLine,
+                            score: 1 - hit._distance,
+                        })));
+                    } catch (err) {
+                        query.reject(err instanceof Error ? err : new Error(String(err)));
+                    }
+                }
+            }
+
+            // 7. Outer loop continues — if new mutations arrived during
+            //    query processing, the inner loop will drain them before
+            //    the next batch of queries executes
+        }
+    }
+
+    /**
+     * Remove a file from the in-memory cache.
+     * Clears any associated cached symbols.
      *
      * @param filePath - Absolute file path to remove
      */
-    remove(filePath: string): void {
+    private remove(filePath: string): void {
         const normalizedPath = this.normalizePath(filePath);
         const fileIndex = this.cache.get(normalizedPath);
         if (fileIndex) {
@@ -409,31 +557,22 @@ export class CacheManager {
     }
 
     /**
-     * Clear cache and rebuild.
-     * Called when configuration changes after initialization.
-     */
-    private rebuild(): void {
-        this.cache.clear();
-        this.indexingComplete = false;
-        this.indexingPromise = this.buildInitialIndex();
-    }
-
-    /**
-     * Update configuration and rebuild the cache.
-     * Triggers a full rebuild if already initialized.
-     *
-     * @param pathFilter - New PathFilter instance
-     */
-    updateConfig(pathFilter: PathFilter): void {
-        this.pathFilter = pathFilter;
-        this.rebuild();
-    }
-
-    /**
      * Dispose of all resources held by this CacheManager.
      * Closes the vector database and clears internal state.
      */
     async dispose(): Promise<void> {
+        // Clear queues and reject pending queries
+        this.fileMutationQueue.length = 0;
+        for (const query of this.vectorQueryQueue) {
+            query.reject(new Error('CacheManager disposed'));
+        }
+        this.vectorQueryQueue.length = 0;
+
+        // Wait for any in-flight drain loop to finish
+        if (this.drainLoopPromise) {
+            await this.drainLoopPromise;
+        }
+
         if (this.vectorDatabase) {
             await this.vectorDatabase.close();
             this.vectorDatabase = null;
@@ -466,10 +605,18 @@ export class CacheManager {
 
     /**
      * Search the vector database for the nearest embeddings to a query vector.
+     * The query is enqueued and processed by the drain loop to ensure
+     * it executes against a consistent, quiescent database snapshot.
+     *
+     * If the drain loop is idle (no dirty files, no deletes), the query
+     * executes immediately — the loop wakes, skips mutations, runs the
+     * query, and exits.
      *
      * @param queryVector - Embedding vector for the query (Float32Array of length `dims`)
      * @param topK - Maximum number of results to return
-     * @returns Array of { filePath, startLine, endLine, score } ordered from most to least similar
+     * @returns Array of { filePath, startLine, endLine, score } ordered from
+     * most to least similar. Score is cosine similarity (1 = identical,
+     * -1 = opposite).
      */
     async getNearestEmbeddings(
         queryVector: Float32Array,
@@ -479,15 +626,9 @@ export class CacheManager {
             return [];
         }
 
-        const hits = await this.vectorDatabase.getNearestFileChunks(queryVector, topK);
-
-        // Convert cosine distance (0 = identical, 2 = opposite) to
-        // cosine similarity score (1 = identical, -1 = opposite)
-        return hits.map(hit => ({
-            filePath: hit.filePath,
-            startLine: hit.startLine,
-            endLine: hit.endLine,
-            score: 1 - hit._distance,
-        }));
+        return new Promise<NearestEmbeddingResult[]>((resolve, reject) => {
+            this.vectorQueryQueue.push({ vector: queryVector, topK, resolve, reject });
+            this.wakeDrainLoop();
+        });
     }
 }
