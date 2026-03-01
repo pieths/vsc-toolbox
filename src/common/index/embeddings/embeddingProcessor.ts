@@ -3,9 +3,9 @@
 
 import { FileIndex } from '../fileIndex';
 import { ThreadPool } from '../workers/threadPool';
-import { Chunk, ComputeChunksInput } from '../types';
+import { Chunk, ComputeChunksInput, ComputeChunksOutput } from '../types';
 import { LlamaServer } from './llamaServer';
-import { FileChunkRecord, VectorDatabase } from './vectorDatabase';
+import { FileChunkInput, FileChunkRecord, VectorDatabase } from './vectorDatabase';
 import { log, warn } from '../../logger';
 
 /**
@@ -23,10 +23,10 @@ export class EmbeddingProcessor {
     private readonly batchSize = 50;
 
     // Accumulated diff state (reset per batch)
-    private texts: string[] = [];
-    private meta: { filePath: string; chunk: Chunk }[] = [];
-    private idsToDelete: number[] = [];
+    private chunksToEmbed: { filePath: string; chunk: Chunk }[] = [];
+    private chunkIdsToDelete: number[] = [];
     private movedChunks: { id: number; startLine: number; endLine: number }[] = [];
+    private fileVersions = new Map<string, string>();
     private changedFilePaths = new Set<string>();
 
     constructor(
@@ -74,15 +74,21 @@ export class EmbeddingProcessor {
         const chunkOutputs = await this.computeChunks(batch);
         await this.diff(chunkOutputs);
 
-        const chunks = this.texts.length;
+        const chunks = this.chunksToEmbed.length;
         const result = await this.embedAndStore();
+
+        if (this.vectorDatabase && this.fileVersions.size > 0) {
+            const updates = Array.from(this.fileVersions, ([filePath, sha256]) => ({ filePath, sha256 }));
+            await this.vectorDatabase.setFileVersions(updates);
+        }
+
         return { chunks, vectors: result.vectors, files: result.files };
     }
 
     /**
      * Compute chunks for a batch of files via worker threads.
      */
-    private async computeChunks(batch: FileIndex[]): Promise<{ filePath: string; chunks: Chunk[]; error?: string }[]> {
+    private async computeChunks(batch: FileIndex[]): Promise<ComputeChunksOutput[]> {
         const inputs: ComputeChunksInput[] = batch.map(fi => ({
             type: 'computeChunks' as const,
             filePath: fi.getFilePath(),
@@ -102,11 +108,14 @@ export class EmbeddingProcessor {
      *  - Chunks present in both sets whose line numbers differ are queued for
      *    a metadata-only update (no re-embedding needed).
      */
-    private async diff(chunkOutputs: { filePath: string; chunks: Chunk[]; error?: string }[]): Promise<void> {
-        // Batch-fetch all stored chunks in a single DB query
-        const validPaths = chunkOutputs.map(o => o.filePath);
+    private async diff(chunkOutputs: ComputeChunksOutput[]): Promise<void> {
+        // Batch-fetch all stored chunks and file versions in single DB queries
+        const allPaths = chunkOutputs.map(o => o.filePath);
         const storedChunksMap: Map<string, FileChunkRecord[]> = this.vectorDatabase
-            ? await this.vectorDatabase.getFileChunksForMultipleFiles(validPaths)
+            ? await this.vectorDatabase.getFileChunksForMultipleFiles(allPaths)
+            : new Map();
+        const storedFileVersions: Map<string, string> = this.vectorDatabase
+            ? await this.vectorDatabase.getFileVersions(allPaths)
             : new Map();
 
         for (const output of chunkOutputs) {
@@ -118,8 +127,9 @@ export class EmbeddingProcessor {
                 warn(`Content index: Chunk error for ${output.filePath}: ${output.error}`);
                 const staleChunks = storedChunksMap.get(output.filePath) ?? [];
                 for (const stored of staleChunks) {
-                    this.idsToDelete.push(stored.id);
+                    this.chunkIdsToDelete.push(stored.id);
                 }
+                this.fileVersions.set(output.filePath, '');
                 continue;
             }
 
@@ -133,7 +143,7 @@ export class EmbeddingProcessor {
             // Delete stored chunks that no longer exist in the new output
             for (const [hash, stored] of storedByHash) {
                 if (!newHashes.has(hash)) {
-                    this.idsToDelete.push(stored.id);
+                    this.chunkIdsToDelete.push(stored.id);
                     fileChanged = true;
                 }
             }
@@ -141,8 +151,7 @@ export class EmbeddingProcessor {
             // Queue new chunks that don't already exist in the database
             for (const chunk of output.chunks) {
                 if (!storedByHash.has(chunk.sha256)) {
-                    this.texts.push(chunk.text);
-                    this.meta.push({ filePath: output.filePath, chunk });
+                    this.chunksToEmbed.push({ filePath: output.filePath, chunk });
                     fileChanged = true;
                 }
             }
@@ -159,6 +168,14 @@ export class EmbeddingProcessor {
             if (fileChanged) {
                 this.changedFilePaths.add(output.filePath);
             }
+
+            // Queue a file version update if the source
+            // sha256 differs from what's stored
+            const storedSha256 = storedFileVersions.get(output.filePath);
+            const newSha256 = output.sha256 ?? '';
+            if (storedSha256 !== newSha256) {
+                this.fileVersions.set(output.filePath, newSha256);
+            }
         }
     }
 
@@ -169,40 +186,45 @@ export class EmbeddingProcessor {
      * (for stale chunks), and a single addFileChunks call (for new ones).
      */
     private async embedAndStore(): Promise<{ vectors: number; files: number }> {
-        if (this.vectorDatabase && this.idsToDelete.length > 0) {
-            await this.vectorDatabase.deleteFileChunks(this.idsToDelete);
+        if (this.vectorDatabase && this.chunkIdsToDelete.length > 0) {
+            await this.vectorDatabase.deleteFileChunks(this.chunkIdsToDelete);
         }
 
         if (this.vectorDatabase && this.movedChunks.length > 0) {
             await this.vectorDatabase.updateFileChunkLines(this.movedChunks);
         }
 
-        if (this.texts.length === 0) {
+        if (this.chunksToEmbed.length === 0) {
             return { vectors: 0, files: 0 };
         }
 
-        const vectors = await this.llamaServer.embedBatch(this.texts, true);
+        const texts = this.chunksToEmbed.map(m => m.chunk.text);
+        const vectors = await this.llamaServer.embedBatch(texts, true);
 
         if (!vectors) {
-            warn(`Content index: Failed to embed batch of ${this.texts.length} chunks`);
+            warn(`Content index: Failed to embed batch of ${texts.length} chunks`);
             return { vectors: 0, files: 0 };
         }
 
-        const newChunks: { filePath: string; startLine: number; endLine: number; sha256: string; vector: Float32Array }[] = [];
+        const newChunks: FileChunkInput[] = [];
         let failedCount = 0;
 
-        for (let j = 0; j < vectors.length; j++) {
-            if (!vectors[j]) {
+        for (let i = 0; i < vectors.length; i++) {
+            if (!vectors[i]) {
                 failedCount++;
+                // Blank the file version for this file so we don't claim
+                // valid chunks when some embeddings failed
+                const failedPath = this.chunksToEmbed[i].filePath;
+                this.fileVersions.set(failedPath, '');
                 continue;
             }
-            const m = this.meta[j];
+            const m = this.chunksToEmbed[i];
             newChunks.push({
                 filePath: m.filePath,
                 startLine: m.chunk.startLine,
                 endLine: m.chunk.endLine,
                 sha256: m.chunk.sha256,
-                vector: vectors[j],
+                vector: vectors[i],
             });
         }
 
@@ -221,10 +243,10 @@ export class EmbeddingProcessor {
      * Reset diff state for the next batch.
      */
     private resetDiff(): void {
-        this.texts = [];
-        this.meta = [];
-        this.idsToDelete = [];
+        this.chunksToEmbed = [];
+        this.chunkIdsToDelete = [];
         this.movedChunks = [];
+        this.fileVersions.clear();
         this.changedFilePaths.clear();
     }
 }

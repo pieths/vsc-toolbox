@@ -169,6 +169,8 @@ export interface ComputeChunksOutput {
     filePath: string;
     /** Array of text chunks extracted from the file */
     chunks: Chunk[];
+    /** SHA-256 hex digest of the source file. Present only when chunking succeeded. */
+    sha256?: string;
     /** Error message if chunking failed */
     error?: string;
 }

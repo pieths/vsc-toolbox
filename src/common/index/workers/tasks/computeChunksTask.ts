@@ -58,6 +58,7 @@ export async function computeChunks(input: ComputeChunksInput): Promise<ComputeC
             type: 'computeChunks',
             filePath: input.filePath,
             chunks,
+            sha256,
         };
     } catch (error) {
         return {

@@ -13,6 +13,7 @@
  *   Vectors       — id, vector (float32[], fixed dimension)
  *   FilePaths     — id, filePath
  *   FileChunks    — id, filePathId, startLine, endLine, sha256, vectorId
+ *   FileVersions  — filePathId, sha256  (source file version that chunks correspond to)
  *   Links         — vectorId, fileChunkId  (maps vector → FileChunk)
  *   ShadowChunks  — text, vectorId, fileChunkId
  *
@@ -101,6 +102,7 @@ export interface FileChunkSearchResult {
 const TBL_VECTORS = 'vectors';
 const TBL_FILE_PATHS = 'file_paths';
 const TBL_FILE_CHUNKS = 'file_chunks';
+const TBL_FILE_VERSIONS = 'file_versions';
 const TBL_LINKS = 'links';
 const TBL_SHADOW_CHUNKS = 'shadow_chunks';
 
@@ -124,6 +126,7 @@ export class VectorDatabase {
     private vectorsTable: Table | null = null;
     private filePathsTable: Table | null = null;
     private fileChunksTable: Table | null = null;
+    private fileVersionsTable: Table | null = null;
     private linksTable: Table | null = null;
     private shadowChunksTable: Table | null = null;
 
@@ -198,6 +201,11 @@ export class VectorDatabase {
             }
         }
 
+        // ── FileVersions ────────────────────────────────────────────────
+        if (tableNames.includes(TBL_FILE_VERSIONS)) {
+            this.fileVersionsTable = await this.db.openTable(TBL_FILE_VERSIONS);
+        }
+
         // ── Links ───────────────────────────────────────────────────────
         if (tableNames.includes(TBL_LINKS)) {
             this.linksTable = await this.db.openTable(TBL_LINKS);
@@ -228,6 +236,7 @@ export class VectorDatabase {
             this.vectorsTable,
             this.filePathsTable,
             this.fileChunksTable,
+            this.fileVersionsTable,
             this.linksTable,
             this.shadowChunksTable,
         ];
@@ -237,6 +246,7 @@ export class VectorDatabase {
         this.vectorsTable = null;
         this.filePathsTable = null;
         this.fileChunksTable = null;
+        this.fileVersionsTable = null;
         this.linksTable = null;
         this.shadowChunksTable = null;
 
@@ -406,6 +416,11 @@ export class VectorDatabase {
             await this.deleteFileChunks(chunkRows.map(r => r.id));
         }
 
+        // Delete the FileVersion entry
+        if (this.fileVersionsTable) {
+            await this.fileVersionsTable.delete(`filePathId = ${filePathId}`);
+        }
+
         // Delete the FilePath entry itself
         await this.filePathsTable.delete(`id = ${filePathId}`);
         this.filePathCache.delete(filePath);
@@ -559,6 +574,51 @@ export class VectorDatabase {
         }
     }
 
+    /**
+     * Set the source-file SHA-256 for one or more file paths.
+     *
+     * Each entry in the FileVersions table records the SHA-256 of the
+     * source file that was used to produce the chunks stored in the
+     * database.  A non-empty sha256 means "chunks are valid for this
+     * file version"; an empty string means "no valid chunks."
+     *
+     * Uses delete + insert (upsert) since LanceDB does not support
+     * conditional upsert natively.
+     */
+    async setFileVersions(updates: { filePath: string; sha256: string }[]): Promise<void> {
+        if (updates.length === 0) {
+            return;
+        }
+        this.ensureOpen();
+
+        // Resolve file paths to ids, skipping unknown paths
+        const rows: { filePathId: number; sha256: string }[] = [];
+        for (const u of updates) {
+            const filePathId = this.filePathCache.get(u.filePath);
+            if (filePathId === undefined) {
+                continue;
+            }
+            rows.push({ filePathId, sha256: u.sha256 });
+        }
+
+        if (rows.length === 0) {
+            return;
+        }
+
+        // Delete existing entries for these file paths
+        const idList = rows.map(r => r.filePathId).join(', ');
+        if (this.fileVersionsTable) {
+            await this.fileVersionsTable.delete(`filePathId IN (${idList})`);
+        }
+
+        // Insert new entries
+        if (!this.fileVersionsTable) {
+            this.fileVersionsTable = await this.db!.createTable(TBL_FILE_VERSIONS, rows);
+        } else {
+            await this.fileVersionsTable.add(rows);
+        }
+    }
+
     // ── Search ──────────────────────────────────────────────────────────────
 
     /**
@@ -661,6 +721,50 @@ export class VectorDatabase {
     }
 
     // ── Query ───────────────────────────────────────────────────────────────
+
+    /**
+     * Get the stored source-file SHA-256 for multiple file paths.
+     *
+     * @param filePaths — the file paths to look up.
+     * @returns A Map from filePath → sha256. File paths with no stored
+     *          version will not appear in the map.
+     */
+    async getFileVersions(filePaths: string[]): Promise<Map<string, string>> {
+        const result = new Map<string, string>();
+
+        if (!this.fileVersionsTable || filePaths.length === 0) {
+            return result;
+        }
+
+        // Resolve filePaths to filePathIds, skipping unknown paths
+        const idToPath = new Map<number, string>();
+        for (const fp of filePaths) {
+            const id = this.filePathCache.get(fp);
+            if (id !== undefined) {
+                idToPath.set(id, fp);
+            }
+        }
+
+        if (idToPath.size === 0) {
+            return result;
+        }
+
+        const idList = Array.from(idToPath.keys()).join(', ');
+        const rows = await this.fileVersionsTable
+            .query()
+            .select(['filePathId', 'sha256'])
+            .where(`filePathId IN (${idList})`)
+            .toArray() as { filePathId: number; sha256: string }[];
+
+        for (const row of rows) {
+            const fp = idToPath.get(row.filePathId);
+            if (fp) {
+                result.set(fp, row.sha256);
+            }
+        }
+
+        return result;
+    }
 
     /**
      * Get all FileChunks associated with a given file path.
@@ -861,6 +965,7 @@ export class VectorDatabase {
             [TBL_VECTORS, this.vectorsTable],
             [TBL_FILE_PATHS, this.filePathsTable],
             [TBL_FILE_CHUNKS, this.fileChunksTable],
+            [TBL_FILE_VERSIONS, this.fileVersionsTable],
             [TBL_LINKS, this.linksTable],
             [TBL_SHADOW_CHUNKS, this.shadowChunksTable],
         ];
@@ -1086,6 +1191,8 @@ export class VectorDatabase {
      *   4. Orphaned file paths — FilePaths that no FileChunk references.
      *   5. Dangling chunks    — FileChunks whose vectorId no longer exists
      *                           in Vectors.
+     *   6. Orphaned file versions — FileVersions whose filePathId no longer
+     *                               exists in FilePaths.
      *
      * The check only reads lightweight id/FK columns — no vector data is
      * loaded — so the cost is proportional to the row count, not the
@@ -1099,6 +1206,7 @@ export class VectorDatabase {
         orphanedLinks: number;
         orphanedShadowChunks: number;
         orphanedFilePaths: number;
+        orphanedFileVersions: number;
         danglingFileChunks: number;
     }> {
         this.ensureOpen();
@@ -1108,6 +1216,7 @@ export class VectorDatabase {
             orphanedLinks: 0,
             orphanedShadowChunks: 0,
             orphanedFilePaths: 0,
+            orphanedFileVersions: 0,
             danglingFileChunks: 0,
         };
 
@@ -1221,11 +1330,31 @@ export class VectorDatabase {
         }
         result.danglingFileChunks = danglingChunkIds.length;
 
+        // ── 6. Orphaned file versions — filePathId not in FilePaths ──────
+        const fileVersionFilePathIds = new Set<number>();
+        if (this.fileVersionsTable) {
+            const rows = await this.fileVersionsTable
+                .query()
+                .select(['filePathId'])
+                .toArray() as { filePathId: number }[];
+            for (const r of rows) {
+                fileVersionFilePathIds.add(r.filePathId);
+            }
+        }
+        const orphanedFileVersionPathIds: number[] = [];
+        for (const id of fileVersionFilePathIds) {
+            if (!filePathIds.has(id)) {
+                orphanedFileVersionPathIds.push(id);
+            }
+        }
+        result.orphanedFileVersions = orphanedFileVersionPathIds.length;
+
         // ── Log summary ─────────────────────────────────────────────────
         const total = result.orphanedVectors
             + result.orphanedLinks
             + result.orphanedShadowChunks
             + result.orphanedFilePaths
+            + result.orphanedFileVersions
             + result.danglingFileChunks;
 
         if (total === 0) {
@@ -1239,6 +1368,7 @@ export class VectorDatabase {
             `${result.orphanedLinks} orphaned link(s), ` +
             `${result.orphanedShadowChunks} orphaned shadow chunk(s), ` +
             `${result.orphanedFilePaths} orphaned file path(s), ` +
+            `${result.orphanedFileVersions} orphaned file version(s), ` +
             `${result.danglingFileChunks} dangling file chunk(s)`
         );
 
@@ -1318,6 +1448,12 @@ export class VectorDatabase {
             if (chunkIdsToDelete.length > 0) {
                 await this.deleteFileChunks(chunkIdsToDelete);
             }
+        }
+
+        // Delete orphaned file versions
+        if (this.fileVersionsTable && orphanedFileVersionPathIds.length > 0) {
+            const idList = orphanedFileVersionPathIds.join(', ');
+            await this.fileVersionsTable.delete(`filePathId IN (${idList})`);
         }
 
         log(`VectorDatabase: integrity repair complete — removed ${total} orphan(s)`);
