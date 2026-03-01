@@ -104,16 +104,22 @@ export class EmbeddingProcessor {
      */
     private async diff(chunkOutputs: { filePath: string; chunks: Chunk[]; error?: string }[]): Promise<void> {
         // Batch-fetch all stored chunks in a single DB query
-        const validPaths = chunkOutputs
-            .filter(o => !o.error)
-            .map(o => o.filePath);
+        const validPaths = chunkOutputs.map(o => o.filePath);
         const storedChunksMap: Map<string, FileChunkRecord[]> = this.vectorDatabase
             ? await this.vectorDatabase.getFileChunksForMultipleFiles(validPaths)
             : new Map();
 
         for (const output of chunkOutputs) {
             if (output.error) {
+                // Chunking failed (e.g. source file changed since the idx was built).
+                // Purge any stored chunks for this file so stale vectors don't pollute
+                // search results; the file will be re-indexed and re-embedded on the
+                // next pass.
                 warn(`Content index: Chunk error for ${output.filePath}: ${output.error}`);
+                const staleChunks = storedChunksMap.get(output.filePath) ?? [];
+                for (const stored of staleChunks) {
+                    this.idsToDelete.push(stored.id);
+                }
                 continue;
             }
 
