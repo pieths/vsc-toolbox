@@ -11,6 +11,7 @@
 
 import * as fs from 'fs';
 import * as crypto from 'crypto';
+import { ComputeChunksStatus } from '../../types';
 import type { ComputeChunksInput, ComputeChunksOutput } from '../../types';
 import type { IndexFile } from '../../parsers/types';
 import { getParserForFile } from '../../parsers/registry';
@@ -31,16 +32,30 @@ export async function computeChunks(input: ComputeChunksInput): Promise<ComputeC
         const contentBuffer = await fs.promises.readFile(input.filePath);
         const sha256 = crypto.createHash('sha256').update(contentBuffer).digest('hex');
 
+        // Fast-path: skip if the source file hasn't changed since the last
+        // successful embedding pass (stored sha256 matches current sha256).
+        if (input.storedSha256 && sha256 === input.storedSha256) {
+            return {
+                type: 'computeChunks',
+                status: ComputeChunksStatus.Skipped,
+                filePath: input.filePath,
+                chunks: [],
+                sha256,
+            };
+        }
+
         const fileParser = getParserForFile(input.filePath);
 
         // Read and parse the *.idx file to get symbols
         const idxContent = await fs.promises.readFile(input.idxPath, 'utf8');
         const [idxSha256, _version, _filePath, rawSymbols] = JSON.parse(idxContent) as IndexFile;
 
-        // Verify the source file hasn't changed since the idx was built
+        // If the source file has changed since the index
+        // was built, skip chunking and report error.
         if (sha256 !== idxSha256) {
             return {
                 type: 'computeChunks',
+                status: ComputeChunksStatus.Error,
                 filePath: input.filePath,
                 chunks: [],
                 error: `Source file changed since index was built (expected ${idxSha256}, got ${sha256})`,
@@ -56,6 +71,7 @@ export async function computeChunks(input: ComputeChunksInput): Promise<ComputeC
 
         return {
             type: 'computeChunks',
+            status: ComputeChunksStatus.Computed,
             filePath: input.filePath,
             chunks,
             sha256,
@@ -63,6 +79,7 @@ export async function computeChunks(input: ComputeChunksInput): Promise<ComputeC
     } catch (error) {
         return {
             type: 'computeChunks',
+            status: ComputeChunksStatus.Error,
             filePath: input.filePath,
             chunks: [],
             error: error instanceof Error ? error.message : String(error),

@@ -157,6 +157,20 @@ export interface ComputeChunksInput {
     filePath: string;
     /** Absolute path to the corresponding *.idx file */
     idxPath: string;
+    /** SHA-256 of the source file version currently stored in the database, if any */
+    storedSha256?: string;
+}
+
+/**
+ * Status of a compute chunks operation
+ */
+export const enum ComputeChunksStatus {
+    /** Chunks were successfully computed */
+    Computed,
+    /** Chunking was skipped */
+    Skipped,
+    /** Chunking failed due to an error */
+    Error,
 }
 
 /**
@@ -165,6 +179,8 @@ export interface ComputeChunksInput {
 export interface ComputeChunksOutput {
     /** Discriminator for message type */
     type: 'computeChunks';
+    /** Final status of the compute chunks operation */
+    status: ComputeChunksStatus;
     /** Absolute file path that was processed */
     filePath: string;
     /** Array of text chunks extracted from the file */
