@@ -11,6 +11,7 @@ import {
     IndexStatus,
     ComputeChunksInput,
     ComputeChunksOutput,
+    ComputeChunksStatus,
     WorkerLogMessage,
     WorkerBatchRequest,
     WorkerBatchResponse,
@@ -255,6 +256,7 @@ export class ThreadPool {
         if (this.disposed) {
             return inputs.map(input => ({
                 type: 'computeChunks' as const,
+                status: ComputeChunksStatus.Error,
                 filePath: input.filePath,
                 chunks: [],
                 error: 'Thread pool has been disposed'
@@ -273,6 +275,7 @@ export class ThreadPool {
         } catch (err) {
             return inputs.map(input => ({
                 type: 'computeChunks' as const,
+                status: ComputeChunksStatus.Error,
                 filePath: input.filePath,
                 chunks: [],
                 error: err instanceof Error ? err.message : String(err),
