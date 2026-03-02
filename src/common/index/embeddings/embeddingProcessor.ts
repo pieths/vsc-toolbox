@@ -66,8 +66,11 @@ export class EmbeddingProcessor {
             ? await this.vectorDatabase.getFileVersions(allPaths)
             : new Map();
 
+        const recentBatchDurations: number[] = [];
+
         for (let i = 0; i < files.length; i += this.batchSize) {
             const batch = files.slice(i, i + this.batchSize);
+            const batchStart = Date.now();
 
             try {
                 const result = await this.processBatch(batch);
@@ -80,7 +83,15 @@ export class EmbeddingProcessor {
                 this.resetDiff();
             }
 
-            log(`Content index: Embedding progress: ${Math.min(i + this.batchSize, files.length)}/${files.length} files`);
+            recentBatchDurations.push(Date.now() - batchStart);
+            if (recentBatchDurations.length > 10) {
+                recentBatchDurations.shift();
+            }
+
+            const processed = Math.min(i + this.batchSize, files.length);
+            const remainingBatches = Math.ceil((files.length - processed) / this.batchSize);
+            const eta = this.formatTimeRemaining(recentBatchDurations, remainingBatches);
+            log(`Content index: Embedding progress: ${processed}/${files.length} files${eta}`);
         }
 
         const elapsed = Date.now() - startTime;
@@ -264,6 +275,30 @@ export class EmbeddingProcessor {
         }
 
         return { vectors: newChunks.length, files: this.changedFilePaths.size };
+    }
+
+    /**
+     * Estimate the time remaining based on recent batch durations.
+     *
+     * Uses a rolling average of the most recent batch durations to
+     * extrapolate how long the remaining batches will take.
+     *
+     * @returns A formatted string like " (~2m 30s remaining)", or empty
+     *          string if no batches remaining.
+     */
+    private formatTimeRemaining(recentDurations: number[], remainingBatches: number): string {
+        if (remainingBatches <= 0 || recentDurations.length === 0) {
+            return '';
+        }
+        const avgMs = recentDurations.reduce((a, b) => a + b, 0) / recentDurations.length;
+        const remainingMs = avgMs * remainingBatches;
+        const totalSeconds = Math.ceil(remainingMs / 1000);
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        if (minutes > 0) {
+            return ` (~${minutes}m ${seconds}s remaining)`;
+        }
+        return ` (~${seconds}s remaining)`;
     }
 
     /**
