@@ -285,16 +285,10 @@ export class CacheManager {
         const startTime = Date.now();
         const outputs = await this.threadPool.indexAll(inputs);
 
-        // Only compute embeddings for files that were actually re-indexed
-        const indexed = outputs.filter(o => o.status === IndexStatus.Indexed);
-        if (indexed.length > 0) {
-            const indexedPaths = new Set(indexed.map(o => this.normalizePath(o.filePath)));
-            const updatedFileIndexes = fileIndexes.filter(fi =>
-                indexedPaths.has(this.normalizePath(fi.getFilePath())));
-            await this.computeEmbeddings(updatedFileIndexes);
-        }
+        await this.computeEmbeddings(fileIndexes);
 
         const elapsed = Date.now() - startTime;
+        const indexed = outputs.filter(o => o.status === IndexStatus.Indexed);
         const skippedCount = outputs.filter(o => o.status === IndexStatus.Skipped).length;
         if (indexed.length > 0 || skippedCount > 0) {
             log(`Content index: Indexed ${indexed.length} files (${skippedCount} skipped) in ${elapsed}ms`);
