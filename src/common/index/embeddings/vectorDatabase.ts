@@ -137,6 +137,9 @@ export class VectorDatabase {
     /** In-memory cache mapping filePath → filePathId for fast lookups. */
     private filePathCache = new Map<string, number>();
 
+    /** In-memory cache mapping filePathId → sha256 for file version lookups. */
+    private fileVersionCache = new Map<number, string>();
+
     /**
      * Create a VectorDatabase instance.
      *
@@ -204,6 +207,14 @@ export class VectorDatabase {
         // ── FileVersions ────────────────────────────────────────────────
         if (tableNames.includes(TBL_FILE_VERSIONS)) {
             this.fileVersionsTable = await this.db.openTable(TBL_FILE_VERSIONS);
+            // Populate the in-memory cache
+            const fvRows = await this.fileVersionsTable
+                .query()
+                .select(['filePathId', 'sha256'])
+                .toArray() as { filePathId: number; sha256: string }[];
+            for (const row of fvRows) {
+                this.fileVersionCache.set(row.filePathId, row.sha256);
+            }
         }
 
         // ── Links ───────────────────────────────────────────────────────
@@ -254,6 +265,7 @@ export class VectorDatabase {
         this.db = null;
 
         this.filePathCache.clear();
+        this.fileVersionCache.clear();
     }
 
     // ── Insert ──────────────────────────────────────────────────────────────
@@ -420,6 +432,7 @@ export class VectorDatabase {
         if (this.fileVersionsTable) {
             await this.fileVersionsTable.delete(`filePathId = ${filePathId}`);
         }
+        this.fileVersionCache.delete(filePathId);
 
         // Delete the FilePath entry itself
         await this.filePathsTable.delete(`id = ${filePathId}`);
@@ -617,6 +630,11 @@ export class VectorDatabase {
         } else {
             await this.fileVersionsTable.add(rows);
         }
+
+        // Update the in-memory cache
+        for (const row of rows) {
+            this.fileVersionCache.set(row.filePathId, row.sha256);
+        }
     }
 
     // ── Search ──────────────────────────────────────────────────────────────
@@ -732,34 +750,14 @@ export class VectorDatabase {
     async getFileVersions(filePaths: string[]): Promise<Map<string, string>> {
         const result = new Map<string, string>();
 
-        if (!this.fileVersionsTable || filePaths.length === 0) {
-            return result;
-        }
-
-        // Resolve filePaths to filePathIds, skipping unknown paths
-        const idToPath = new Map<number, string>();
         for (const fp of filePaths) {
-            const id = this.filePathCache.get(fp);
-            if (id !== undefined) {
-                idToPath.set(id, fp);
+            const filePathId = this.filePathCache.get(fp);
+            if (filePathId === undefined) {
+                continue;
             }
-        }
-
-        if (idToPath.size === 0) {
-            return result;
-        }
-
-        const idList = Array.from(idToPath.keys()).join(', ');
-        const rows = await this.fileVersionsTable
-            .query()
-            .select(['filePathId', 'sha256'])
-            .where(`filePathId IN (${idList})`)
-            .toArray() as { filePathId: number; sha256: string }[];
-
-        for (const row of rows) {
-            const fp = idToPath.get(row.filePathId);
-            if (fp) {
-                result.set(fp, row.sha256);
+            const sha256 = this.fileVersionCache.get(filePathId);
+            if (sha256 !== undefined) {
+                result.set(fp, sha256);
             }
         }
 
@@ -1454,6 +1452,10 @@ export class VectorDatabase {
         if (this.fileVersionsTable && orphanedFileVersionPathIds.length > 0) {
             const idList = orphanedFileVersionPathIds.join(', ');
             await this.fileVersionsTable.delete(`filePathId IN (${idList})`);
+            // Also evict from the in-memory cache
+            for (const id of orphanedFileVersionPathIds) {
+                this.fileVersionCache.delete(id);
+            }
         }
 
         log(`VectorDatabase: integrity repair complete — removed ${total} orphan(s)`);
