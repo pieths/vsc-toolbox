@@ -26,8 +26,11 @@ export class EmbeddingProcessor {
     private chunksToEmbed: { filePath: string; chunk: Chunk }[] = [];
     private chunkIdsToDelete: number[] = [];
     private movedChunks: { id: number; startLine: number; endLine: number }[] = [];
-    private fileVersions = new Map<string, string>();
+    private fileVersionUpdates = new Map<string, string>();
     private changedFilePaths = new Set<string>();
+
+    // Per-run state (set once at start of run, cleared at end)
+    private storedFileVersions = new Map<string, string>();
 
     constructor(
         private readonly vectorDatabase: VectorDatabase | null,
@@ -44,7 +47,24 @@ export class EmbeddingProcessor {
         let totalVectors = 0;
         let totalFiles = 0;
 
+        // Deduplicate by file path to prevent double-processing
+        const seen = new Set<string>();
+        files = files.filter(fi => {
+            const key = fi.getFilePath();
+            if (seen.has(key)) { return false; }
+            seen.add(key);
+            return true;
+        });
+
         log(`Content index: Starting embedding for ${files.length} files`);
+
+        // Fetch stored file versions once for the entire run — shared by
+        // computeChunks (for early skip) and diff (for version comparison).
+        // Safe because each file appears in exactly one batch (deduped above).
+        const allPaths = files.map(fi => fi.getFilePath());
+        this.storedFileVersions = this.vectorDatabase
+            ? await this.vectorDatabase.getFileVersions(allPaths)
+            : new Map();
 
         for (let i = 0; i < files.length; i += this.batchSize) {
             const batch = files.slice(i, i + this.batchSize);
@@ -65,20 +85,15 @@ export class EmbeddingProcessor {
 
         const elapsed = Date.now() - startTime;
         log(`Content index: Embedding complete: ${totalVectors} vectors from ${totalChunks} chunks across ${totalFiles} files in ${elapsed}ms`);
+
+        this.storedFileVersions.clear();
     }
 
     /**
      * Process a single batch: compute chunks, diff, embed, and persist.
      */
     private async processBatch(batch: FileIndex[]): Promise<{ chunks: number; vectors: number; files: number }> {
-        // Fetch stored file versions once for the batch — shared by
-        // computeChunks (for early skip) and diff (for version comparison).
-        const allPaths = batch.map(fi => fi.getFilePath());
-        const storedFileVersions: Map<string, string> = this.vectorDatabase
-            ? await this.vectorDatabase.getFileVersions(allPaths)
-            : new Map();
-
-        const chunkOutputs = await this.computeChunks(batch, storedFileVersions);
+        const chunkOutputs = await this.computeChunks(batch);
 
         // Filter out skipped files — their chunks and versions are already
         // up-to-date in the database, so diff doesn't need to see them.
@@ -86,13 +101,13 @@ export class EmbeddingProcessor {
         if (activeOutputs.length === 0) {
             return { chunks: 0, vectors: 0, files: 0 };
         }
-        await this.diff(activeOutputs, storedFileVersions);
+        await this.diff(activeOutputs);
 
         const chunks = this.chunksToEmbed.length;
         const result = await this.embedAndStore();
 
-        if (this.vectorDatabase && this.fileVersions.size > 0) {
-            const updates = Array.from(this.fileVersions, ([filePath, sha256]) => ({ filePath, sha256 }));
+        if (this.vectorDatabase && this.fileVersionUpdates.size > 0) {
+            const updates = Array.from(this.fileVersionUpdates, ([filePath, sha256]) => ({ filePath, sha256 }));
             await this.vectorDatabase.setFileVersions(updates);
         }
 
@@ -102,12 +117,12 @@ export class EmbeddingProcessor {
     /**
      * Compute chunks for a batch of files via worker threads.
      */
-    private async computeChunks(batch: FileIndex[], storedFileVersions: Map<string, string>): Promise<ComputeChunksOutput[]> {
+    private async computeChunks(batch: FileIndex[]): Promise<ComputeChunksOutput[]> {
         const inputs: ComputeChunksInput[] = batch.map(fi => ({
             type: 'computeChunks' as const,
             filePath: fi.getFilePath(),
             idxPath: fi.getIdxPath(),
-            storedSha256: storedFileVersions.get(fi.getFilePath()),
+            storedSha256: this.storedFileVersions.get(fi.getFilePath()),
         }));
 
         return this.threadPool.computeChunksAll(inputs);
@@ -123,7 +138,7 @@ export class EmbeddingProcessor {
      *  - Chunks present in both sets whose line numbers differ are queued for
      *    a metadata-only update (no re-embedding needed).
      */
-    private async diff(chunkOutputs: ComputeChunksOutput[], storedFileVersions: Map<string, string>): Promise<void> {
+    private async diff(chunkOutputs: ComputeChunksOutput[]): Promise<void> {
         // Batch-fetch stored chunks in a single DB query
         const allPaths = chunkOutputs.map(o => o.filePath);
         const storedChunksMap: Map<string, FileChunkRecord[]> = this.vectorDatabase
@@ -141,7 +156,7 @@ export class EmbeddingProcessor {
                 for (const stored of staleChunks) {
                     this.chunkIdsToDelete.push(stored.id);
                 }
-                this.fileVersions.set(output.filePath, '');
+                this.fileVersionUpdates.set(output.filePath, '');
                 continue;
             }
 
@@ -183,10 +198,10 @@ export class EmbeddingProcessor {
 
             // Queue a file version update if the source
             // sha256 differs from what's stored
-            const storedSha256 = storedFileVersions.get(output.filePath);
+            const storedSha256 = this.storedFileVersions.get(output.filePath);
             const newSha256 = output.sha256 ?? '';
             if (storedSha256 !== newSha256) {
-                this.fileVersions.set(output.filePath, newSha256);
+                this.fileVersionUpdates.set(output.filePath, newSha256);
             }
         }
     }
@@ -227,7 +242,7 @@ export class EmbeddingProcessor {
                 // Blank the file version for this file so we don't mark
                 // that all chunks are valid when some embeddings failed.
                 const failedPath = this.chunksToEmbed[i].filePath;
-                this.fileVersions.set(failedPath, '');
+                this.fileVersionUpdates.set(failedPath, '');
                 continue;
             }
             const m = this.chunksToEmbed[i];
@@ -258,7 +273,7 @@ export class EmbeddingProcessor {
         this.chunksToEmbed = [];
         this.chunkIdsToDelete = [];
         this.movedChunks = [];
-        this.fileVersions.clear();
+        this.fileVersionUpdates.clear();
         this.changedFilePaths.clear();
     }
 }
