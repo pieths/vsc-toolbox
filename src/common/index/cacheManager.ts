@@ -347,8 +347,10 @@ export class CacheManager {
 
         // Compile patterns to native RegExp for fast matching
         // windows: true makes regex match both / and \ separators
-        const includeRegexes = includePatterns.map(p => picomatch.makeRe(p, { windows: true }));
-        const excludeRegexes = excludePatterns.map(p => picomatch.makeRe(p, { windows: true }));
+        // nocase: true because cache keys are lowercased via normalizePath()
+        const globOptions = { windows: true, nocase: true };
+        const includeRegexes = includePatterns.map(p => picomatch.makeRe(p, globOptions));
+        const excludeRegexes = excludePatterns.map(p => picomatch.makeRe(p, globOptions));
 
         return paths.filter(p => {
             // If include patterns specified, path must match at least one
