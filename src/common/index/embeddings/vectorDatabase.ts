@@ -35,18 +35,22 @@ import { log, warn, error } from '../../logger';
 
 // ── Public types ────────────────────────────────────────────────────────────
 
-/** A FileChunk record as stored in the database (foreign keys resolved). */
+/** A FileChunk record as stored in the database (filePathId FK resolved). */
 export interface FileChunkRecord {
     /** Unique FileChunk identifier */
     id: number;
     /** Resolved file path string */
     filePath: string;
+    /** Foreign key into the FilePaths table */
+    filePathId: number;
     /** 1-based start line in the file */
     startLine: number;
     /** 1-based end line in the file */
     endLine: number;
     /** SHA-256 hash of the chunk text (hex string) */
     sha256: string;
+    /** Foreign key into the Vectors table */
+    vectorId: number;
 }
 
 /** Input data for inserting a FileChunk (includes the embedding vector). */
@@ -566,25 +570,38 @@ export class VectorDatabase {
     // ── Update ──────────────────────────────────────────────────────────────
 
     /**
-     * Update the start and end line numbers for multiple FileChunks.
+     * Update the start and end line numbers for multiple FileChunks
+     * in a single batch operation.
+     *
+     * Uses mergeInsert (upsert) keyed on `id` so that all updates are
+     * applied in one pass — creating a single new table version instead
+     * of one per row.
      *
      * Only the line metadata is changed — the vector, links, and shadow
      * chunks remain untouched.
      *
-     * @param updates — array of objects with the FileChunk `id` and new line numbers.
+     * @param updates — FileChunkRecords with updated line numbers.
      */
-    async updateFileChunkLines(updates: { id: number; startLine: number; endLine: number }[]): Promise<void> {
+    async updateFileChunkLines(updates: FileChunkRecord[]): Promise<void> {
         if (updates.length === 0 || !this.fileChunksTable) {
             return;
         }
         this.ensureOpen();
 
-        for (const { id, startLine, endLine } of updates) {
-            await this.fileChunksTable.update({
-                where: `id = ${id}`,
-                values: { startLine, endLine },
-            });
-        }
+        // Build raw rows matching the file_chunks table schema
+        const rows = updates.map(r => ({
+            id: r.id,
+            filePathId: r.filePathId,
+            startLine: r.startLine,
+            endLine: r.endLine,
+            sha256: r.sha256,
+            vectorId: r.vectorId,
+        }));
+
+        await this.fileChunksTable
+            .mergeInsert('id')
+            .whenMatchedUpdateAll()
+            .execute(rows);
     }
 
     /**
@@ -779,7 +796,7 @@ export class VectorDatabase {
 
         const rows = await this.fileChunksTable
             .query()
-            .select(['id', 'filePathId', 'startLine', 'endLine', 'sha256'])
+            .select(['id', 'filePathId', 'startLine', 'endLine', 'sha256', 'vectorId'])
             .where(`filePathId = ${filePathId}`)
             .toArray() as {
                 id: number;
@@ -787,14 +804,17 @@ export class VectorDatabase {
                 startLine: number;
                 endLine: number;
                 sha256: string;
+                vectorId: number;
             }[];
 
         return rows.map(row => ({
             id: row.id,
             filePath,
+            filePathId: row.filePathId,
             startLine: row.startLine,
             endLine: row.endLine,
             sha256: row.sha256,
+            vectorId: row.vectorId,
         }));
     }
 
@@ -831,7 +851,7 @@ export class VectorDatabase {
         const idList = Array.from(idToPath.keys()).join(', ');
         const rows = await this.fileChunksTable
             .query()
-            .select(['id', 'filePathId', 'startLine', 'endLine', 'sha256'])
+            .select(['id', 'filePathId', 'startLine', 'endLine', 'sha256', 'vectorId'])
             .where(`filePathId IN (${idList})`)
             .toArray() as {
                 id: number;
@@ -839,6 +859,7 @@ export class VectorDatabase {
                 startLine: number;
                 endLine: number;
                 sha256: string;
+                vectorId: number;
             }[];
 
         for (const row of rows) {
@@ -854,9 +875,11 @@ export class VectorDatabase {
             arr.push({
                 id: row.id,
                 filePath: fp,
+                filePathId: row.filePathId,
                 startLine: row.startLine,
                 endLine: row.endLine,
                 sha256: row.sha256,
+                vectorId: row.vectorId,
             });
         }
 
@@ -891,7 +914,7 @@ export class VectorDatabase {
         const escaped = hashes.map(h => `'${this.escapeSql(h)}'`).join(', ');
         const rows = await this.fileChunksTable
             .query()
-            .select(['id', 'filePathId', 'startLine', 'endLine', 'sha256'])
+            .select(['id', 'filePathId', 'startLine', 'endLine', 'sha256', 'vectorId'])
             .where(`sha256 IN (${escaped})`)
             .toArray() as {
                 id: number;
@@ -899,6 +922,7 @@ export class VectorDatabase {
                 startLine: number;
                 endLine: number;
                 sha256: string;
+                vectorId: number;
             }[];
 
         // Resolve file paths
@@ -908,9 +932,11 @@ export class VectorDatabase {
         return rows.map(row => ({
             id: row.id,
             filePath: filePathMap.get(row.filePathId) ?? '',
+            filePathId: row.filePathId,
             startLine: row.startLine,
             endLine: row.endLine,
             sha256: row.sha256,
+            vectorId: row.vectorId,
         }));
     }
 

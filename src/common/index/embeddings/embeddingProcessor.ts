@@ -25,7 +25,7 @@ export class EmbeddingProcessor {
     // Accumulated diff state (reset per batch)
     private chunksToEmbed: { filePath: string; chunk: Chunk }[] = [];
     private chunkIdsToDelete: number[] = [];
-    private movedChunks: { id: number; startLine: number; endLine: number }[] = [];
+    private movedChunks: FileChunkRecord[] = [];
     private fileVersionUpdates = new Map<string, string>();
     private changedFilePaths = new Set<string>();
 
@@ -198,7 +198,9 @@ export class EmbeddingProcessor {
             for (const chunk of output.chunks) {
                 const stored = storedByHash.get(chunk.sha256);
                 if (stored && (stored.startLine !== chunk.startLine || stored.endLine !== chunk.endLine)) {
-                    this.movedChunks.push({ id: stored.id, startLine: chunk.startLine, endLine: chunk.endLine });
+                    stored.startLine = chunk.startLine;
+                    stored.endLine = chunk.endLine;
+                    this.movedChunks.push(stored);
                     fileChanged = true;
                 }
             }
