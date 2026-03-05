@@ -89,7 +89,11 @@ export class SearchEmbeddingsTool implements vscode.LanguageModelTool<SearchEmbe
             }
 
             // Perform the embedding search
-            const results: NearestEmbeddingResult[] = await contentIndex.searchEmbeddings(query, 30);
+            // Fetch more results when re-ranker is enabled to give it a wider pool to filter from
+            const enableReranker = vscode.workspace.getConfiguration('vscToolbox')
+                .get<boolean>('enableLlmReranker', false);
+            const searchLimit = enableReranker ? 50 : 30;
+            const results: NearestEmbeddingResult[] = await contentIndex.searchEmbeddings(query, searchLimit);
 
             if (token.isCancellationRequested) {
                 return new vscode.LanguageModelToolResult([
@@ -121,9 +125,6 @@ export class SearchEmbeddingsTool implements vscode.LanguageModelTool<SearchEmbe
             log(`Embedding search: Query "${query}" completed in ${elapsed}ms (${results.length} matches)`);
 
             // Apply LLM re-ranker if enabled
-            const enableReranker = vscode.workspace.getConfiguration('vscToolbox')
-                .get<boolean>('enableLlmReranker', false);
-
             let markdown: string;
             if (enableReranker) {
                 // Format with IDs so the LLM can reference results by index
