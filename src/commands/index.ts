@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Piet Hein Schouten
+// Copyright (c) 2026 Piet Hein Schouten
 // SPDX-License-Identifier: MIT
 
 import { GetFileNameCommand } from './getFileName';
@@ -7,6 +7,7 @@ import { GetWinDbgBreakpointLocationCommand } from './getWinDbgBreakpointLocatio
 import { GetGnTargetsForFileCommand } from './getGnTargetsForFile';
 import { TestLanguageModelToolCommand } from './testLanguageModelTool';
 import { FilterLinesByPatternCommand } from './filterLinesByPattern';
+import { OpenFileUnderCursorCommand } from './openFileUnderCursor';
 
 /**
  * Command registry - add new commands here to automatically register them
@@ -18,4 +19,5 @@ export const COMMAND_REGISTRY = [
     GetGnTargetsForFileCommand,
     TestLanguageModelToolCommand,
     FilterLinesByPatternCommand,
+    OpenFileUnderCursorCommand,
 ] as const;

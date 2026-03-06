@@ -49,6 +49,11 @@
         "command": "vscToolbox.filterLinesByPattern",
         "title": "Filter Lines By Pattern",
         "category": "VSC Toolbox"
+      },
+      {
+        "command": "vscToolbox.openFileUnderCursor",
+        "title": "Open File Under Cursor",
+        "category": "VSC Toolbox"
       }
     ],
     "configuration": {
