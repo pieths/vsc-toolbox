@@ -612,8 +612,9 @@ export class VectorDatabase {
      * database.  A non-empty sha256 means "chunks are valid for this
      * file version"; an empty string means "no valid chunks."
      *
-     * Uses delete + insert (upsert) since LanceDB does not support
-     * conditional upsert natively.
+     * Uses mergeInsert (upsert) keyed on `filePathId` so that existing
+     * entries are updated and new entries are inserted in a single
+     * atomic operation.
      */
     async setFileVersions(updates: { filePath: string; sha256: string }[]): Promise<void> {
         if (updates.length === 0) {
@@ -635,17 +636,14 @@ export class VectorDatabase {
             return;
         }
 
-        // Delete existing entries for these file paths
-        const idList = rows.map(r => r.filePathId).join(', ');
-        if (this.fileVersionsTable) {
-            await this.fileVersionsTable.delete(`filePathId IN (${idList})`);
-        }
-
-        // Insert new entries
         if (!this.fileVersionsTable) {
             this.fileVersionsTable = await this.db!.createTable(TBL_FILE_VERSIONS, rows);
         } else {
-            await this.fileVersionsTable.add(rows);
+            await this.fileVersionsTable
+                .mergeInsert('filePathId')
+                .whenMatchedUpdateAll()
+                .whenNotMatchedInsertAll()
+                .execute(rows);
         }
 
         // Update the in-memory cache
