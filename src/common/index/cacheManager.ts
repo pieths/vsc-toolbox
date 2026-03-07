@@ -5,13 +5,16 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import picomatch from 'picomatch';
-import { FileIndex } from './fileIndex';
+import { FileRef } from './fileRef';
 import { ThreadPool } from './workers/threadPool';
 import { IndexInput, IndexStatus, NearestEmbeddingResult } from './types';
 import { LlamaServer } from './embeddings/llamaServer';
 import { VectorDatabase } from './embeddings/vectorDatabase';
 import { EmbeddingProcessor } from './embeddings/embeddingProcessor';
 import { PathFilter } from './pathFilter';
+import { SymbolCache } from './symbolCache';
+import { AttrKey, CONTAINER_TYPES } from './parsers/types';
+import type { IndexSymbol } from './parsers/types';
 import { log, warn, error } from '../logger';
 
 /** Mutation queue entry — ordered for temporal "last action wins" collapse. */
@@ -20,16 +23,31 @@ interface FileMutationEntry {
     filePath: string;
 }
 
-/** Pending vector search query, resolved by the drain loop. */
-interface VectorQueryEntry {
-    vector: Float32Array;
-    topK: number;
-    resolve: (value: NearestEmbeddingResult[]) => void;
-    reject: (reason: unknown) => void;
-}
+/** Pending query, resolved by the drain loop after all mutations are processed. */
+type QueryEntry =
+    | {
+        type: 'vectorSearch'; vector: Float32Array; topK: number;
+        resolve: (v: NearestEmbeddingResult[]) => void;
+        reject: (e: unknown) => void
+    }
+    | {
+        type: 'getAllSymbols'; fileRef: FileRef; sort: boolean;
+        resolve: (v: IndexSymbol[] | null) => void;
+        reject: (e: unknown) => void
+    }
+    | {
+        type: 'getContainer'; fileRef: FileRef; line: number;
+        resolve: (v: IndexSymbol | null) => void;
+        reject: (e: unknown) => void
+    }
+    | {
+        type: 'getFQN'; fileRef: FileRef; name: string; line: number;
+        resolve: (v: string) => void;
+        reject: (e: unknown) => void
+    };
 
 /**
- * CacheManager manages the collection of FileIndex instances and coordinates
+ * CacheManager manages the collection of FileRef handles and coordinates
  * cache operations across all indexed files.
  *
  * All indexing and embedding work is driven by a single serial drain loop
@@ -38,7 +56,7 @@ interface VectorQueryEntry {
  * always see a consistent, quiescent database snapshot.
  */
 export class CacheManager {
-    private cache: Map<string, FileIndex> = new Map();
+    private cache: Map<string, FileRef> = new Map();
     private indexingComplete: boolean = false;
     private indexingPromise: Promise<void> | null = null;
     private pathFilter: PathFilter | null = null;
@@ -48,12 +66,15 @@ export class CacheManager {
     private llamaServer: LlamaServer | null = null;
     private vectorDatabase: VectorDatabase | null = null;
     private embeddingProcessor: EmbeddingProcessor | null = null;
+    private symbolCache = new SymbolCache();
 
     // ── Dirty-set drain loop state ──────────────────────────────────────────
     private fileMutationQueue: FileMutationEntry[] = [];
-    private vectorQueryQueue: VectorQueryEntry[] = [];
+    private queryQueue: QueryEntry[] = [];
     private drainLoopRunning = false;
     private drainLoopPromise: Promise<void> | null = null;
+    private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    private readonly debounceMs = 500;
 
     /**
      * Normalize a file path for use as a cache key.
@@ -145,22 +166,22 @@ export class CacheManager {
 
             log(`Content index: Found ${filePaths.length} files...`);
 
-            // Create FileIndex instances for each file
+            // Create FileRef handles for each file
             for (const filePath of filePaths) {
                 const key = this.normalizePath(filePath);
                 if (this.cache.has(key)) {
                     log(`Content index: Duplicate path: "${filePath}" (existing: "${this.cache.get(key)!.getFilePath()}")`);
                     continue;
                 }
-                const fileIndex = new FileIndex(filePath, this.symbolsCacheDir);
-                this.cache.set(key, fileIndex);
+                const fileRef = new FileRef(filePath, this.symbolsCacheDir);
+                this.cache.set(key, fileRef);
             }
 
             // Push all discovered files to the mutation queue for the drain loop.
             // Assume everthing might be dirty. The worker threads will skip
             // indexing if it's not needed.
-            for (const [_key, fileIndex] of this.cache) {
-                this.fileMutationQueue.push({ action: 'dirty', filePath: fileIndex.getFilePath() });
+            for (const [_key, fileRef] of this.cache) {
+                this.fileMutationQueue.push({ action: 'dirty', filePath: fileRef.getFilePath() });
             }
 
             // Drain all mutations — blocks until the
@@ -227,38 +248,22 @@ export class CacheManager {
     }
 
     /**
-     * Wait for indexing to complete.
-     */
-    async waitUntilReady(): Promise<void> {
-        if (this.indexingPromise) {
-            await this.indexingPromise;
-        }
-    }
-
-    /**
-     * Get FileIndex instances for multiple paths.
+     * Get FileRef handles for multiple paths.
+     * Returns whatever is in the cache immediately. Consistency is
+     * guaranteed at read time when the caller passes the FileRef
+     * to a drain-loop-gated query method.
      *
      * @param filePaths - Array of absolute file paths
-     * @param ensureValid - If true, indexes any files that don't have valid tags
-     * @returns Map of file path to FileIndex (only includes paths that are in cache)
+     * @returns Map of file path to FileRef (only includes paths that are in cache)
      */
-    async get(filePaths: string[], ensureValid: boolean = false): Promise<Map<string, FileIndex>> {
-        const result = new Map<string, FileIndex>();
+    get(filePaths: string[]): Map<string, FileRef> {
+        const result = new Map<string, FileRef>();
 
         for (const filePath of filePaths) {
-            const fileIndex = this.cache.get(this.normalizePath(filePath));
-            if (fileIndex) {
-                result.set(filePath, fileIndex);
-                if (ensureValid) {
-                    this.fileMutationQueue.push({ action: 'dirty', filePath });
-                }
+            const fileRef = this.cache.get(this.normalizePath(filePath));
+            if (fileRef) {
+                result.set(filePath, fileRef);
             }
-        }
-
-        // Workers sha256-skip unchanged files, so unconditionally
-        // draining is safe — just slightly more worker I/O.
-        if (ensureValid && result.size > 0) {
-            await this.awaitDrainLoop();
         }
 
         return result;
@@ -268,15 +273,15 @@ export class CacheManager {
      * Index a batch of files via worker threads and compute
      * embeddings for files that were actually re-indexed.
      *
-     * @param fileIndexes - Array of FileIndex instances to index
+     * @param fileRefs - Array of FileRef handles to index
      */
-    private async indexFiles(fileIndexes: FileIndex[]): Promise<void> {
+    private async indexFiles(fileRefs: FileRef[]): Promise<void> {
         if (!this.threadPool) {
             warn('Content index: Cannot index - thread pool not set');
             return;
         }
 
-        const inputs: IndexInput[] = fileIndexes.map(fi => ({
+        const inputs: IndexInput[] = fileRefs.map(fi => ({
             type: 'index' as const,
             filePath: fi.getFilePath(),
             idxPath: fi.getIdxPath()
@@ -285,7 +290,7 @@ export class CacheManager {
         const startTime = Date.now();
         const outputs = await this.threadPool.indexAll(inputs);
 
-        await this.computeEmbeddings(fileIndexes);
+        await this.computeEmbeddings(fileRefs);
 
         const elapsed = Date.now() - startTime;
         const indexed = outputs.filter(o => o.status === IndexStatus.Indexed);
@@ -300,9 +305,9 @@ export class CacheManager {
      * Delegates to {@link EmbeddingProcessor} which handles batching, diffing
      * against the database, embedding, and persistence.
      *
-     * @param files - Array of FileIndex instances to compute embeddings for
+     * @param files - Array of FileRef handles to compute embeddings for
      */
-    private async computeEmbeddings(files: FileIndex[]): Promise<void> {
+    private async computeEmbeddings(files: FileRef[]): Promise<void> {
         if (files.length === 0) {
             return;
         }
@@ -313,18 +318,6 @@ export class CacheManager {
         }
 
         await this.embeddingProcessor.run(files);
-    }
-
-    /**
-     * Get all FileIndex instances in the cache.
-     *
-     * @param ensureValid - If true, indexes any files that don't have valid tags
-     * @returns Array of FileIndex instances
-     */
-    async getAll(ensureValid: boolean = false): Promise<FileIndex[]> {
-        const filePaths = Array.from(this.cache.values()).map(fi => fi.getFilePath());
-        const result = await this.get(filePaths, ensureValid);
-        return Array.from(result.values());
     }
 
     /**
@@ -368,17 +361,14 @@ export class CacheManager {
     }
 
     /**
-     * Creates the {@link FileIndex} and marks the file as dirty.
+     * Filter the file and mark it dirty.  The drain loop will
+     * auto-create the cache entry if one doesn't already exist.
      *
      * @param filePath - Absolute file path to add
      */
     add(filePath: string): void {
-        const normalizedPath = this.normalizePath(filePath);
-        if (!this.cache.has(normalizedPath) && this.pathFilter?.shouldIncludeFile(filePath)) {
-            const fileIndex = new FileIndex(filePath, this.symbolsCacheDir);
-            this.cache.set(normalizedPath, fileIndex);
+        if (this.pathFilter?.shouldIncludeFile(filePath)) {
             this.markDirty(filePath);
-            log(`Content index: Added new file ${filePath}`);
         }
     }
 
@@ -392,7 +382,7 @@ export class CacheManager {
      */
     markDirty(filePath: string): void {
         this.fileMutationQueue.push({ action: 'dirty', filePath });
-        this.wakeDrainLoop();
+        this.wakeDrainLoop(true);
     }
 
     /**
@@ -405,15 +395,50 @@ export class CacheManager {
      */
     markDeleted(filePath: string): void {
         this.fileMutationQueue.push({ action: 'delete', filePath });
-        this.wakeDrainLoop();
+        this.wakeDrainLoop(true);
     }
 
     /**
-     * Start the drain loop if not already running.
-     * Safe to call multiple times — a no-op if the loop is in-flight.
-     * New entries are picked up naturally by the running loop's `while` condition.
+     * Start the drain loop, optionally after a debounce delay.
+     *
+     * Debounced mode (`debounce = true`) is used by mutation sources
+     * (FileWatcher via `markDirty` / `markDeleted`) to batch rapid
+     * file-system events into a single drain loop run.
+     *
+     * Immediate mode (`debounce = false`) is used by query methods
+     * and `awaitDrainLoop` — when a caller needs results now, don't
+     * wait for the timer.  Cancels any pending debounce timer.
+     *
+     * Safe to call multiple times — a no-op if the loop is already
+     * running. New entries are picked up naturally by the running
+     * loop's `while` condition.
      */
-    private wakeDrainLoop(): void {
+    private wakeDrainLoop(debounce: boolean = false): void {
+        if (this.drainLoopRunning) {
+            return;
+        }
+        if (debounce) {
+            if (this.debounceTimer) {
+                clearTimeout(this.debounceTimer);
+            }
+            this.debounceTimer = setTimeout(() => {
+                this.debounceTimer = null;
+                this.startDrainLoop();
+            }, this.debounceMs);
+        } else {
+            if (this.debounceTimer) {
+                clearTimeout(this.debounceTimer);
+                this.debounceTimer = null;
+            }
+            this.startDrainLoop();
+        }
+    }
+
+    /**
+     * Actually start the drain loop. Factored out of {@link wakeDrainLoop}
+     * so both the immediate and debounced paths share the same logic.
+     */
+    private startDrainLoop(): void {
         if (this.drainLoopRunning) {
             return;
         }
@@ -425,13 +450,12 @@ export class CacheManager {
     }
 
     /**
-     * Start the drain loop if needed, then await its completion.
-     * Used by `get(ensureValid)` and `buildInitialIndex`.
+     * Start the drain loop immediately if needed, then await its completion.
      */
     private async awaitDrainLoop(): Promise<void> {
         if (!this.drainLoopRunning &&
-            (this.fileMutationQueue.length > 0 || this.vectorQueryQueue.length > 0)) {
-            this.wakeDrainLoop();
+            (this.fileMutationQueue.length > 0 || this.queryQueue.length > 0)) {
+            this.wakeDrainLoop(false);
         }
         if (this.drainLoopPromise) {
             await this.drainLoopPromise;
@@ -449,7 +473,7 @@ export class CacheManager {
      * outer loop process queued queries.
      */
     private async runDrainLoop(): Promise<void> {
-        while (this.fileMutationQueue.length > 0 || this.vectorQueryQueue.length > 0) {
+        while (this.fileMutationQueue.length > 0 || this.queryQueue.length > 0) {
 
             // Inner loop: drain ALL mutations until the
             // idx files and DB are fully consistent.
@@ -466,15 +490,18 @@ export class CacheManager {
 
                 // 2. Split into deletes and dirty files
                 const deletedFiles: string[] = [];
-                const dirtyFiles: FileIndex[] = [];
+                const dirtyFiles: FileRef[] = [];
                 for (const [normalizedPath, { action, filePath }] of lastAction) {
                     if (action === 'delete') {
                         deletedFiles.push(filePath);
                     } else {
-                        const fi = this.cache.get(normalizedPath);
-                        if (fi) {
-                            dirtyFiles.push(fi);
+                        let fi = this.cache.get(normalizedPath);
+                        if (!fi) {
+                            fi = new FileRef(filePath, this.symbolsCacheDir);
+                            this.cache.set(normalizedPath, fi);
+                            log(`Content index: Added new file ${filePath}`);
                         }
+                        dirtyFiles.push(fi);
                     }
                 }
 
@@ -497,30 +524,12 @@ export class CacheManager {
 
             // ── DB and idx files are fully consistent at this point ──
 
-            // 6. Process queued queries — guaranteed to see a quiescent snapshot
-            if (this.vectorQueryQueue.length > 0) {
-                const queries = [...this.vectorQueryQueue];
-                this.vectorQueryQueue.length = 0;
+            // 6. Dispatch queued queries against the quiescent snapshot
+            if (this.queryQueue.length > 0) {
+                const queries = [...this.queryQueue];
+                this.queryQueue.length = 0;
                 for (const query of queries) {
-                    try {
-                        if (!this.vectorDatabase) {
-                            query.resolve([]);
-                            continue;
-                        }
-                        const hits = await this.vectorDatabase.getNearestFileChunks(
-                            query.vector, query.topK
-                        );
-                        // Convert cosine distance (0 = identical, 2 = opposite) to
-                        // cosine similarity score (1 = identical, -1 = opposite)
-                        query.resolve(hits.map(hit => ({
-                            filePath: hit.filePath,
-                            startLine: hit.startLine,
-                            endLine: hit.endLine,
-                            score: 1 - hit._distance,
-                        })));
-                    } catch (err) {
-                        query.reject(err instanceof Error ? err : new Error(String(err)));
-                    }
+                    await this.executeQuery(query);
                 }
             }
 
@@ -530,17 +539,115 @@ export class CacheManager {
         }
     }
 
+    // ── Query execution handlers ────────────────────────────────────────────
+
+    /**
+     * Dispatch a single query to the appropriate handler.
+     */
+    private async executeQuery(query: QueryEntry): Promise<void> {
+        switch (query.type) {
+            case 'vectorSearch': return this.executeVectorSearch(query);
+            case 'getAllSymbols': return this.executeGetAllSymbols(query);
+            case 'getContainer': return this.executeGetContainer(query);
+            case 'getFQN': return this.executeGetFQN(query);
+        }
+    }
+
+    private async executeVectorSearch(
+        query: Extract<QueryEntry, { type: 'vectorSearch' }>,
+    ): Promise<void> {
+        try {
+            if (!this.vectorDatabase) {
+                query.resolve([]);
+                return;
+            }
+            const hits = await this.vectorDatabase.getNearestFileChunks(
+                query.vector, query.topK
+            );
+            // Convert cosine distance (0 = identical, 2 = opposite) to
+            // cosine similarity score (1 = identical, -1 = opposite)
+            query.resolve(hits.map(hit => ({
+                filePath: hit.filePath,
+                startLine: hit.startLine,
+                endLine: hit.endLine,
+                score: 1 - hit._distance,
+            })));
+        } catch (err) {
+            query.reject(err instanceof Error ? err : new Error(String(err)));
+        }
+    }
+
+    private async executeGetAllSymbols(
+        query: Extract<QueryEntry, { type: 'getAllSymbols' }>,
+    ): Promise<void> {
+        try {
+            const symbols = await this.symbolCache.getSymbols(query.fileRef);
+            if (symbols && query.sort) {
+                query.resolve([...symbols].sort((a, b) => a.startLine - b.startLine));
+            } else {
+                query.resolve(symbols);
+            }
+        } catch (err) {
+            query.reject(err instanceof Error ? err : new Error(String(err)));
+        }
+    }
+
+    private async executeGetContainer(
+        query: Extract<QueryEntry, { type: 'getContainer' }>,
+    ): Promise<void> {
+        try {
+            const symbols = await this.symbolCache.getSymbols(query.fileRef);
+            if (symbols === null) {
+                query.resolve(null);
+                return;
+            }
+            const containers = symbols.filter(s =>
+                CONTAINER_TYPES.has(s.type) &&
+                s.startLine <= query.line &&
+                query.line <= s.endLine
+            );
+            query.resolve(this.symbolCache.findInnermostSymbol(containers));
+        } catch (err) {
+            query.reject(err instanceof Error ? err : new Error(String(err)));
+        }
+    }
+
+    private async executeGetFQN(
+        query: Extract<QueryEntry, { type: 'getFQN' }>,
+    ): Promise<void> {
+        try {
+            const symbols = await this.symbolCache.getSymbols(query.fileRef);
+            if (symbols === null) {
+                query.resolve(query.name);
+                return;
+            }
+            const matches = symbols.filter(s =>
+                s.name === query.name &&
+                s.startLine <= query.line &&
+                query.line <= s.endLine
+            );
+            const best = this.symbolCache.findInnermostSymbol(matches);
+            if (!best) {
+                query.resolve(query.name);
+                return;
+            }
+            query.resolve(best.attrs.get(AttrKey.FullyQualifiedName) ?? best.name);
+        } catch (err) {
+            query.reject(err instanceof Error ? err : new Error(String(err)));
+        }
+    }
+
     /**
      * Remove a file from the in-memory cache.
-     * Clears any associated cached symbols.
+     * Evicts any associated cached symbols.
      *
      * @param filePath - Absolute file path to remove
      */
     private remove(filePath: string): void {
         const normalizedPath = this.normalizePath(filePath);
-        const fileIndex = this.cache.get(normalizedPath);
-        if (fileIndex) {
-            fileIndex.invalidate();
+        const fileRef = this.cache.get(normalizedPath);
+        if (fileRef) {
+            this.symbolCache.invalidateSymbols(fileRef);
             this.cache.delete(normalizedPath);
         }
     }
@@ -557,12 +664,18 @@ export class CacheManager {
      * Closes the vector database and clears internal state.
      */
     async dispose(): Promise<void> {
+        // Cancel any pending debounce timer
+        if (this.debounceTimer) {
+            clearTimeout(this.debounceTimer);
+            this.debounceTimer = null;
+        }
+
         // Clear queues and reject pending queries
         this.fileMutationQueue.length = 0;
-        for (const query of this.vectorQueryQueue) {
+        for (const query of this.queryQueue) {
             query.reject(new Error('CacheManager disposed'));
         }
-        this.vectorQueryQueue.length = 0;
+        this.queryQueue.length = 0;
 
         // Wait for any in-flight drain loop to finish
         if (this.drainLoopPromise) {
@@ -599,6 +712,58 @@ export class CacheManager {
         return this.pathFilter?.getFileExtensions() ?? [];
     }
 
+    // ── Drain-loop-gated query methods ──────────────────────────────────────
+
+    /**
+     * Get all hydrated symbols for a file.
+     * The query is enqueued and processed by the drain loop to ensure
+     * it executes against a consistent, quiescent snapshot.
+     *
+     * @param fileRef - FileRef handle for the file
+     * @param sort - If true, sort symbols by start line (ascending)
+     * @returns Array of IndexSymbol objects, or null if the idx file cannot be read
+     */
+    async getAllSymbols(fileRef: FileRef, sort: boolean = false): Promise<IndexSymbol[] | null> {
+        return new Promise<IndexSymbol[] | null>((resolve, reject) => {
+            this.queryQueue.push({ type: 'getAllSymbols', fileRef, sort, resolve, reject });
+            this.wakeDrainLoop(false);
+        });
+    }
+
+    /**
+     * Get the innermost container (function, class, namespace, etc.)
+     * that contains a given line.
+     * The query is enqueued and processed by the drain loop to ensure
+     * it executes against a consistent, quiescent snapshot.
+     *
+     * @param fileRef - FileRef handle for the file
+     * @param line - 0-based line number
+     * @returns The innermost containing IndexSymbol, or null if none found
+     */
+    async getContainer(fileRef: FileRef, line: number): Promise<IndexSymbol | null> {
+        return new Promise<IndexSymbol | null>((resolve, reject) => {
+            this.queryQueue.push({ type: 'getContainer', fileRef, line, resolve, reject });
+            this.wakeDrainLoop(false);
+        });
+    }
+
+    /**
+     * Get the fully qualified name for a symbol at a given line.
+     * The query is enqueued and processed by the drain loop to ensure
+     * it executes against a consistent, quiescent snapshot.
+     *
+     * @param fileRef - FileRef handle for the file
+     * @param name - The symbol name to look up
+     * @param line - 0-based line number
+     * @returns The fully qualified name or the original name if not found
+     */
+    async getFullyQualifiedName(fileRef: FileRef, name: string, line: number): Promise<string> {
+        return new Promise<string>((resolve, reject) => {
+            this.queryQueue.push({ type: 'getFQN', fileRef, name, line, resolve, reject });
+            this.wakeDrainLoop(false);
+        });
+    }
+
     /**
      * Search the vector database for the nearest embeddings to a query vector.
      * The query is enqueued and processed by the drain loop to ensure
@@ -623,8 +788,8 @@ export class CacheManager {
         }
 
         return new Promise<NearestEmbeddingResult[]>((resolve, reject) => {
-            this.vectorQueryQueue.push({ vector: queryVector, topK, resolve, reject });
-            this.wakeDrainLoop();
+            this.queryQueue.push({ type: 'vectorSearch', vector: queryVector, topK, resolve, reject });
+            this.wakeDrainLoop(false);
         });
     }
 }

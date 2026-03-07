@@ -134,7 +134,7 @@ export type IndexFile = [sha256: string, version: number, filePath: string, symb
 
 /**
  * Hydrated in-memory representation of a symbol, produced by
- * {@link IFileParser.readIndex}. This is the type that `FileIndex`
+ * {@link IFileParser.readIndex}. This is the type that `FileRef`
  * query methods operate on (replacing the current `Tag` interface).
  *
  * Every instance has exactly the same 11 properties (uniform V8

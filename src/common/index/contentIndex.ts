@@ -416,15 +416,15 @@ export class ContentIndex {
             // Detect knowledge base documents among markdown files
             if (mdFileResults.length > 0) {
                 const mdFilePaths = mdFileResults.map(fsr => fsr.filePath);
-                const fileIndexMap = await this.cacheManager.get(mdFilePaths, true);
+                const fileRefMap = this.cacheManager.get(mdFilePaths);
 
                 for (const fsr of mdFileResults) {
-                    const fileIndex = fileIndexMap.get(fsr.filePath);
-                    if (!fileIndex) {
+                    const fileRef = fileRefMap.get(fsr.filePath);
+                    if (!fileRef) {
                         continue;
                     }
 
-                    const symbols = await fileIndex.getAllSymbols(true);
+                    const symbols = await this.cacheManager.getAllSymbols(fileRef, true);
                     if (!symbols || symbols.length === 0) {
                         continue;
                     }
@@ -491,14 +491,13 @@ export class ContentIndex {
             return null;
         }
 
-        // Get the FileIndex for this file, ensuring it's valid
-        const fileIndexMap = await this.cacheManager.get([filePath], true);
-        const fileIndex = fileIndexMap.get(filePath);
-        if (!fileIndex) {
-            return null;  // File not in index or couldn't be indexed
+        const fileRefMap = this.cacheManager.get([filePath]);
+        const fileRef = fileRefMap.get(filePath);
+        if (!fileRef) {
+            return null;  // File not in index
         }
 
-        return fileIndex.getContainer(line);
+        return this.cacheManager.getContainer(fileRef, line);
     }
 
     /**
@@ -523,7 +522,7 @@ export class ContentIndex {
         }
 
         const uniqueFilePaths = [...new Set(queries.map(q => q.filePath))];
-        const fileIndexMap = await this.cacheManager.get(uniqueFilePaths, true);
+        const fileRefMap = this.cacheManager.get(uniqueFilePaths);
 
         // Group queries by file path, tracking original indices
         const queriesByFile = new Map<string, Array<{ originalIndex: number; line: number }>>();
@@ -536,12 +535,12 @@ export class ContentIndex {
         // Pre-allocate results array (maintains input order)
         const results: (IndexSymbol | null)[] = new Array(queries.length).fill(null);
 
-        // Process each file's queries consecutively (keeps FileIndex cache hot)
+        // Process each file's queries consecutively (keeps symbolCache hot)
         for (const [filePath, fileQueries] of queriesByFile) {
-            const fileIndex = fileIndexMap.get(filePath);
-            if (fileIndex) {
+            const fileRef = fileRefMap.get(filePath);
+            if (fileRef) {
                 for (const { originalIndex, line } of fileQueries) {
-                    results[originalIndex] = await fileIndex.getContainer(line);
+                    results[originalIndex] = await this.cacheManager.getContainer(fileRef, line);
                 }
             }
         }
@@ -568,14 +567,13 @@ export class ContentIndex {
             return name;
         }
 
-        // Get the FileIndex for this file, ensuring it's valid
-        const fileIndexMap = await this.cacheManager.get([filePath], true);
-        const fileIndex = fileIndexMap.get(filePath);
-        if (!fileIndex) {
-            return name;  // File not in index or couldn't be indexed
+        const fileRefMap = this.cacheManager.get([filePath]);
+        const fileRef = fileRefMap.get(filePath);
+        if (!fileRef) {
+            return name;  // File not in index
         }
 
-        return fileIndex.getFullyQualifiedName(name, line);
+        return this.cacheManager.getFullyQualifiedName(fileRef, name, line);
     }
 
     /**

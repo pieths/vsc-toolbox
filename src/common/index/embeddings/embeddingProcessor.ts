@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Piet Hein Schouten
 // SPDX-License-Identifier: MIT
 
-import { FileIndex } from '../fileIndex';
+import { FileRef } from '../fileRef';
 import { ThreadPool } from '../workers/threadPool';
 import { Chunk, ComputeChunksInput, ComputeChunksOutput, ComputeChunksStatus } from '../types';
 import { LlamaServer } from './llamaServer';
@@ -41,7 +41,7 @@ export class EmbeddingProcessor {
     /**
      * Process all files: compute chunks, diff, embed, and persist.
      */
-    async run(files: FileIndex[]): Promise<void> {
+    async run(files: FileRef[]): Promise<void> {
         const startTime = Date.now();
         let totalChunks = 0;
         let totalVectors = 0;
@@ -103,7 +103,7 @@ export class EmbeddingProcessor {
     /**
      * Process a single batch: compute chunks, diff, embed, and persist.
      */
-    private async processBatch(batch: FileIndex[]): Promise<{ chunks: number; vectors: number; files: number }> {
+    private async processBatch(batch: FileRef[]): Promise<{ chunks: number; vectors: number; files: number }> {
         const chunkOutputs = await this.computeChunks(batch);
 
         // Filter out skipped files — their chunks and versions are already
@@ -128,7 +128,7 @@ export class EmbeddingProcessor {
     /**
      * Compute chunks for a batch of files via worker threads.
      */
-    private async computeChunks(batch: FileIndex[]): Promise<ComputeChunksOutput[]> {
+    private async computeChunks(batch: FileRef[]): Promise<ComputeChunksOutput[]> {
         const inputs: ComputeChunksInput[] = batch.map(fi => ({
             type: 'computeChunks' as const,
             filePath: fi.getFilePath(),
