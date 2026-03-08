@@ -201,12 +201,12 @@ export class FileWatcher implements vscode.Disposable {
      */
     private cleanupWatchers(): void {
         for (const watcher of this.watchers) {
-            watcher.dispose();
+            try { watcher.dispose(); } catch { /* ignore */ }
         }
         this.watchers = [];
 
         for (const disposable of this.disposables) {
-            disposable.dispose();
+            try { disposable.dispose(); } catch { /* ignore */ }
         }
         this.disposables = [];
     }
