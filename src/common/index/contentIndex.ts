@@ -235,7 +235,7 @@ export class ContentIndex {
         this.threadPool?.dispose();
         this.threadPool = null;
 
-        this.llamaServer.stop();
+        await this.llamaServer.stop();
 
         this.pathFilter = null;
 

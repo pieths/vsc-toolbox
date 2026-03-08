@@ -340,7 +340,7 @@ interface HealthResponse {
  *   server.initialize(context);
  *   await server.start();
  *   const vector = await server.embed("some text");
- *   server.stop();
+ *   await server.stop();
  */
 export class LlamaServer {
     private serverProcess: ChildProcess | null = null;
@@ -352,16 +352,7 @@ export class LlamaServer {
     private cudaAvailable = false;
     private starting = false;
     private ready = false;
-    private httpAgent: http.Agent;
-
-    constructor() {
-        // Use a keep-alive agent to reuse TCP connections, reducing overhead/latency
-        this.httpAgent = new http.Agent({
-            keepAlive: true,
-            maxSockets: 50, // Allow enough concurrent connections for slots + overhead
-            keepAliveMsecs: 1000,
-        });
-    }
+    private httpAgent: http.Agent | null = null;
 
     /**
      * Initialize the server with extension context.
@@ -606,6 +597,13 @@ export class LlamaServer {
                 return false;
             }
 
+            // Create a keep-alive HTTP agent for reusing TCP connections
+            this.httpAgent = new http.Agent({
+                keepAlive: true,
+                maxSockets: 50, // Allow enough concurrent connections for slots + overhead
+                keepAliveMsecs: 1000,
+            });
+
             // Select device-specific settings
             const useGpu = this.cudaAvailable && this.model.gpuArgs.length > 0;
             const deviceArgs = useGpu ? this.model.gpuArgs : this.model.cpuArgs;
@@ -655,7 +653,7 @@ export class LlamaServer {
                 log(`llama-server started (port=${this.port}, slots=${this.parallelSlots}, mode=${useGpu ? 'GPU' : 'CPU'})`);
             } else {
                 logError('llama-server failed to start within timeout');
-                this.stop();
+                await this.stop();
             }
 
             return started;
@@ -675,6 +673,11 @@ export class LlamaServer {
         const pollInterval = 200;
 
         while (Date.now() - startTime < timeoutMs) {
+            // Short-circuit if the process was killed externally (e.g., stop() called)
+            if (!this.serverProcess) {
+                return false;
+            }
+
             try {
                 const response = await this.httpGet(`http://127.0.0.1:${this.port}/health`);
                 const health = JSON.parse(response) as HealthResponse;
@@ -692,15 +695,61 @@ export class LlamaServer {
     }
 
     /**
-     * Stop the llama-server process.
+     * Stop the llama-server process. Waits for the process to
+     * fully exit so that all resources (including GPU memory)
+     * are released before this method returns.
      */
-    stop(): void {
-        if (this.serverProcess) {
-            log('Stopping llama-server...');
-            this.serverProcess.kill();
-            this.serverProcess = null;
-        }
+    async stop(): Promise<void> {
         this.ready = false;
+        this.starting = false;
+
+        // Destroy keep-alive sockets so they don't hold the event loop open.
+        // A fresh agent will be created on the next start() call.
+        this.httpAgent?.destroy();
+        this.httpAgent = null;
+
+        if (!this.serverProcess) {
+            return;
+        }
+
+        log('Stopping llama-server...');
+
+        const proc = this.serverProcess;
+        this.serverProcess = null;
+
+        // If the process already exited, nothing to wait for
+        if (proc.exitCode !== null || proc.signalCode !== null) {
+            log('llama-server already exited');
+            return;
+        }
+
+        // Kill the process and wait for it to fully exit.
+        // On Windows, kill() calls TerminateProcess which is abrupt but the
+        // OS and GPU driver clean up all resources during process teardown.
+        // The 'exit' event fires after the OS has fully reaped the process,
+        // guaranteeing GPU memory and other resources are released.
+        await new Promise<void>((resolve) => {
+            const timeout = setTimeout(() => {
+                warn('llama-server did not exit within 10 seconds after kill');
+                resolve();
+            }, 10000);
+
+            proc.on('exit', () => {
+                clearTimeout(timeout);
+                resolve();
+            });
+
+            try {
+                proc.kill();
+            } catch {
+                // Process already exited between
+                // our check and the kill() call
+                clearTimeout(timeout);
+                resolve();
+            }
+        });
+
+        log('llama-server stopped');
     }
 
     /**
@@ -828,7 +877,7 @@ export class LlamaServer {
             const jsonBody = JSON.stringify(body);
             const options = {
                 method: 'POST',
-                agent: this.httpAgent,
+                agent: this.httpAgent!,
                 headers: {
                     'Content-Type': 'application/json',
                     'Content-Length': Buffer.byteLength(jsonBody),
