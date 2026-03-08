@@ -8,7 +8,6 @@ import {
     FileSearchResults,
     DocumentType,
     SearchResult,
-    FileLineRef,
     IndexSymbol,
     AttrKey,
     symbolTypeToString
@@ -259,24 +258,18 @@ export class SearchIndexTool implements vscode.LanguageModelTool<SearchIndexPara
                 ]);
             }
 
-            // Fetch container information for standard (non-KB) files in a single batch call
+            // Fetch symbols for standard (non-KB) files in a single batch call
             const standardFiles = fileResults.filter(f => f.docType !== DocumentType.KnowledgeBase);
-            const fileLineRefs: FileLineRef[] = [];
-            for (const fsr of standardFiles) {
-                for (const r of fsr.results) {
-                    fileLineRefs.push({ filePath: fsr.filePath, line: r.line });
-                }
-            }
-            const allContainers = await contentIndex.getContainers(fileLineRefs);
+            const uniqueStandardPaths = [...new Set(standardFiles.map(f => f.filePath))];
+            const symbolsMap = await contentIndex.getSymbols(uniqueStandardPaths);
 
             // Build a map from file path → per-result containers
             const containersByFile = new Map<string, (IndexSymbol | null)[]>();
-            let containerIdx = 0;
             for (const fsr of standardFiles) {
-                const fileContainers: (IndexSymbol | null)[] = [];
-                for (let i = 0; i < fsr.results.length; i++) {
-                    fileContainers.push(allContainers[containerIdx++]);
-                }
+                const fileSymbols = symbolsMap.get(fsr.filePath);
+                const fileContainers: (IndexSymbol | null)[] = fsr.results.map(r =>
+                    fileSymbols?.getContainer(r.line) ?? null
+                );
                 containersByFile.set(fsr.filePath, fileContainers);
             }
 

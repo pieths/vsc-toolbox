@@ -10,14 +10,12 @@ import { FileWatcher } from './fileWatcher';
 import {
     ContentIndexConfig,
     DocumentType,
-    FileLineRef,
     FileSearchResults,
     NearestEmbeddingResult,
     SearchInput,
     SearchResults
 } from './types';
-import { SymbolType } from './parsers/types';
-import type { IndexSymbol } from './parsers/types';
+import { FileSymbols } from './fileSymbols';
 import { log, warn, error } from '../logger';
 import { LlamaServer } from './embeddings/llamaServer';
 import { PathFilter } from './pathFilter';
@@ -416,32 +414,13 @@ export class ContentIndex {
             // Detect knowledge base documents among markdown files
             if (mdFileResults.length > 0) {
                 const mdFilePaths = mdFileResults.map(fsr => fsr.filePath);
-                const fileRefMap = this.cacheManager.get(mdFilePaths);
+                const symbolsMap = await this.cacheManager.getAllSymbols(mdFilePaths);
 
                 for (const fsr of mdFileResults) {
-                    const fileRef = fileRefMap.get(fsr.filePath);
-                    if (!fileRef) {
-                        continue;
-                    }
-
-                    const symbols = await this.cacheManager.getAllSymbols(fileRef, true);
-                    if (!symbols || symbols.length === 0) {
-                        continue;
-                    }
-
-                    // A knowledge base document has an "Overview" heading
-                    // as one of its first two symbols (either # or ##).
-                    const overviewSymbol = symbols.slice(0, 2).find(s =>
-                        (s.type === SymbolType.MarkdownHeading1 ||
-                            s.type === SymbolType.MarkdownHeading2) &&
-                        s.name === 'Overview'
-                    );
-                    if (overviewSymbol) {
+                    const fileSymbols = symbolsMap.get(fsr.filePath);
+                    if (fileSymbols && fileSymbols.docType === DocumentType.KnowledgeBase) {
                         fsr.docType = DocumentType.KnowledgeBase;
-                        fsr.overviewRange = {
-                            startLine: overviewSymbol.startLine + 1,
-                            endLine: overviewSymbol.endLine
-                        };
+                        fsr.overviewRange = fileSymbols.overviewRange;
                     }
                 }
             }
@@ -474,106 +453,24 @@ export class ContentIndex {
     }
 
     /**
-     * Get the innermost container (function, class, namespace, etc.) at a specific line.
+     * Get hydrated symbols for one or more files.
      *
-     * @param filePath - Absolute path to the source file
-     * @param line - 0-based line number to find the container for
-     * @returns IndexSymbol for the innermost container, or null if not found
+     * @param filePaths - Array of absolute file paths to load symbols for
+     * @returns Map of file path to FileSymbols (files not in the index or
+     *          whose idx file cannot be read are silently omitted)
      */
-    async getContainer(filePath: string, line: number): Promise<IndexSymbol | null> {
+    async getSymbols(filePaths: string[]): Promise<Map<string, FileSymbols>> {
         if (!this.initialized) {
             warn('ContentIndex: Not initialized');
-            return null;
+            return new Map();
         }
 
         if (!this.cacheManager.isReady()) {
             warn('ContentIndex: Index not ready');
-            return null;
+            return new Map();
         }
 
-        const fileRefMap = this.cacheManager.get([filePath]);
-        const fileRef = fileRefMap.get(filePath);
-        if (!fileRef) {
-            return null;  // File not in index
-        }
-
-        return this.cacheManager.getContainer(fileRef, line);
-    }
-
-    /**
-     * Get the innermost container (function, class, namespace, etc.) for multiple locations.
-     *
-     * @param queries - Array of FileLineRef objects to look up
-     * @returns Array of IndexSymbol (or null) in the same order as input queries
-     */
-    async getContainers(queries: FileLineRef[]): Promise<(IndexSymbol | null)[]> {
-        if (!this.initialized) {
-            warn('ContentIndex: Not initialized');
-            return queries.map(() => null);
-        }
-
-        if (!this.cacheManager.isReady()) {
-            warn('ContentIndex: Index not ready');
-            return queries.map(() => null);
-        }
-
-        if (queries.length === 0) {
-            return [];
-        }
-
-        const uniqueFilePaths = [...new Set(queries.map(q => q.filePath))];
-        const fileRefMap = this.cacheManager.get(uniqueFilePaths);
-
-        // Group queries by file path, tracking original indices
-        const queriesByFile = new Map<string, Array<{ originalIndex: number; line: number }>>();
-        queries.forEach((query, index) => {
-            const existing = queriesByFile.get(query.filePath) || [];
-            existing.push({ originalIndex: index, line: query.line });
-            queriesByFile.set(query.filePath, existing);
-        });
-
-        // Pre-allocate results array (maintains input order)
-        const results: (IndexSymbol | null)[] = new Array(queries.length).fill(null);
-
-        // Process each file's queries consecutively (keeps symbolCache hot)
-        for (const [filePath, fileQueries] of queriesByFile) {
-            const fileRef = fileRefMap.get(filePath);
-            if (fileRef) {
-                for (const { originalIndex, line } of fileQueries) {
-                    results[originalIndex] = await this.cacheManager.getContainer(fileRef, line);
-                }
-            }
-        }
-
-        return results;
-    }
-
-    /**
-     * Get the fully qualified name for a symbol at a specific location.
-     *
-     * @param filePath - Absolute path to the source file
-     * @param name - The symbol name to look up
-     * @param line - 0-based line number of the symbol
-     * @returns The fully qualified name (e.g., "namespace::Class::method") or the original name if not found
-     */
-    async getFullyQualifiedName(filePath: string, name: string, line: number): Promise<string> {
-        if (!this.initialized) {
-            warn('ContentIndex: Not initialized');
-            return name;
-        }
-
-        if (!this.cacheManager.isReady()) {
-            warn('ContentIndex: Index not ready');
-            return name;
-        }
-
-        const fileRefMap = this.cacheManager.get([filePath]);
-        const fileRef = fileRefMap.get(filePath);
-        if (!fileRef) {
-            return name;  // File not in index
-        }
-
-        return this.cacheManager.getFullyQualifiedName(fileRef, name, line);
+        return this.cacheManager.getAllSymbols(filePaths);
     }
 
     /**

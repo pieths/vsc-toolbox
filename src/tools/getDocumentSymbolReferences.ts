@@ -562,10 +562,9 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
             const lines = await fileCache.getLines(filePath);
 
             // Get container from ContentIndex (uses 0-based line numbers)
-            const container = await ContentIndex.getInstance().getContainer(
-                filePath,
-                location.range.start.line
-            );
+            const symbolsMap = await ContentIndex.getInstance().getSymbols([filePath]);
+            const fileSymbols = symbolsMap.get(filePath);
+            const container = fileSymbols?.getContainer(location.range.start.line) ?? null;
 
             // Calculate start and end lines, constrained by method boundaries if found
             let startLine = Math.max(0, location.range.start.line - numLinesBefore);

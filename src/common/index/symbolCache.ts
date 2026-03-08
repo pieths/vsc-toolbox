@@ -114,7 +114,7 @@ export class SymbolCache {
             const [_sha256, _version, _filePath, rawSymbols] = JSON.parse(content) as IndexFile;
 
             const fileParser = getParserForFile(filePath);
-            const symbols = fileParser.readIndex(rawSymbols);
+            const symbols = this.sortSymbols(fileParser.readIndex(rawSymbols));
 
             // Cache with the original mtime to avoid marking the
             // cached entry as newer than it could be.
@@ -126,25 +126,16 @@ export class SymbolCache {
     }
 
     /**
-     * From a list of candidate symbols, return the one with the
-     * tightest enclosing range (smallest line span, then latest
-     * start line as tiebreaker). Returns null if the list is empty.
+     * Sort symbols by position: earliest start line first, then
+     * smallest span (endLine - startLine) as tiebreaker.
      */
-    findInnermostSymbol(candidates: IndexSymbol[]): IndexSymbol | null {
-        if (candidates.length === 0) {
-            return null;
-        }
-        let best = candidates[0];
-        for (let i = 1; i < candidates.length; i++) {
-            const s = candidates[i];
-            const bestSpan = best.endLine - best.startLine;
-            const candidateSpan = s.endLine - s.startLine;
-            if (candidateSpan < bestSpan ||
-                (candidateSpan === bestSpan && s.startLine > best.startLine)) {
-                best = s;
+    private sortSymbols(symbols: IndexSymbol[]): IndexSymbol[] {
+        return symbols.sort((a, b) => {
+            if (a.startLine !== b.startLine) {
+                return a.startLine - b.startLine;
             }
-        }
-        return best;
+            return (a.endLine - a.startLine) - (b.endLine - b.startLine);
+        });
     }
 
     /**

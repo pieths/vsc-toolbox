@@ -6,16 +6,6 @@
  */
 
 /**
- * Reference to a specific line in a file.
- */
-export interface FileLineRef {
-    /** Absolute file path */
-    filePath: string;
-    /** 0-based line number */
-    line: number;
-}
-
-/**
  * Represents a single line match within a file.
  */
 export interface SearchResult {

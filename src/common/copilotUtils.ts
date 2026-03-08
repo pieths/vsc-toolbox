@@ -212,7 +212,9 @@ async function executeGetContainerTool(
 
         const contentIndex = ContentIndex.getInstance();
         // Tool API uses 1-based lines; getContainer expects 0-based
-        const container = await contentIndex.getContainer(normalizedPath, input.line - 1);
+        const symbolsMap = await contentIndex.getSymbols([normalizedPath]);
+        const fileSymbols = symbolsMap.get(normalizedPath);
+        const container = fileSymbols?.getContainer(input.line - 1) ?? null;
 
         const header = `File: \`${input.filePath}\`. Line ${input.line}. Container:`;
 

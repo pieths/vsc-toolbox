@@ -9,12 +9,12 @@
  */
 
 export { ContentIndex } from './contentIndex';
+export { FileSymbols } from './fileSymbols';
 export {
     SearchResult,
     FileSearchResults,
     DocumentType,
     SearchResults,
-    FileLineRef,
     NearestEmbeddingResult,
 } from './types';
 export { SymbolType, AttrKey, symbolTypeToString, CALLABLE_TYPES, CONTAINER_TYPES } from './parsers/types';

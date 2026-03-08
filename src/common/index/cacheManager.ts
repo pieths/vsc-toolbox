@@ -13,8 +13,7 @@ import { VectorDatabase } from './embeddings/vectorDatabase';
 import { EmbeddingProcessor } from './embeddings/embeddingProcessor';
 import { PathFilter } from './pathFilter';
 import { SymbolCache } from './symbolCache';
-import { AttrKey, CONTAINER_TYPES } from './parsers/types';
-import type { IndexSymbol } from './parsers/types';
+import { FileSymbols } from './fileSymbols';
 import { log, warn, error } from '../logger';
 
 /** Mutation queue entry — ordered for temporal "last action wins" collapse. */
@@ -31,18 +30,8 @@ type QueryEntry =
         reject: (e: unknown) => void
     }
     | {
-        type: 'getAllSymbols'; fileRef: FileRef; sort: boolean;
-        resolve: (v: IndexSymbol[] | null) => void;
-        reject: (e: unknown) => void
-    }
-    | {
-        type: 'getContainer'; fileRef: FileRef; line: number;
-        resolve: (v: IndexSymbol | null) => void;
-        reject: (e: unknown) => void
-    }
-    | {
-        type: 'getFQN'; fileRef: FileRef; name: string; line: number;
-        resolve: (v: string) => void;
+        type: 'getAllSymbols'; filePaths: string[];
+        resolve: (v: Map<string, FileSymbols>) => void;
         reject: (e: unknown) => void
     };
 
@@ -245,28 +234,6 @@ export class CacheManager {
      */
     getFileCount(): number {
         return this.cache.size;
-    }
-
-    /**
-     * Get FileRef handles for multiple paths.
-     * Returns whatever is in the cache immediately. Consistency is
-     * guaranteed at read time when the caller passes the FileRef
-     * to a drain-loop-gated query method.
-     *
-     * @param filePaths - Array of absolute file paths
-     * @returns Map of file path to FileRef (only includes paths that are in cache)
-     */
-    get(filePaths: string[]): Map<string, FileRef> {
-        const result = new Map<string, FileRef>();
-
-        for (const filePath of filePaths) {
-            const fileRef = this.cache.get(this.normalizePath(filePath));
-            if (fileRef) {
-                result.set(filePath, fileRef);
-            }
-        }
-
-        return result;
     }
 
     /**
@@ -548,8 +515,6 @@ export class CacheManager {
         switch (query.type) {
             case 'vectorSearch': return this.executeVectorSearch(query);
             case 'getAllSymbols': return this.executeGetAllSymbols(query);
-            case 'getContainer': return this.executeGetContainer(query);
-            case 'getFQN': return this.executeGetFQN(query);
         }
     }
 
@@ -581,57 +546,18 @@ export class CacheManager {
         query: Extract<QueryEntry, { type: 'getAllSymbols' }>,
     ): Promise<void> {
         try {
-            const symbols = await this.symbolCache.getSymbols(query.fileRef);
-            if (symbols && query.sort) {
-                query.resolve([...symbols].sort((a, b) => a.startLine - b.startLine));
-            } else {
-                query.resolve(symbols);
+            const results = new Map<string, FileSymbols>();
+            for (const filePath of query.filePaths) {
+                const fileRef = this.cache.get(this.normalizePath(filePath));
+                if (!fileRef) {
+                    continue;  // File not in index
+                }
+                const symbols = await this.symbolCache.getSymbols(fileRef);
+                if (symbols !== null) {
+                    results.set(filePath, new FileSymbols(fileRef, symbols));
+                }
             }
-        } catch (err) {
-            query.reject(err instanceof Error ? err : new Error(String(err)));
-        }
-    }
-
-    private async executeGetContainer(
-        query: Extract<QueryEntry, { type: 'getContainer' }>,
-    ): Promise<void> {
-        try {
-            const symbols = await this.symbolCache.getSymbols(query.fileRef);
-            if (symbols === null) {
-                query.resolve(null);
-                return;
-            }
-            const containers = symbols.filter(s =>
-                CONTAINER_TYPES.has(s.type) &&
-                s.startLine <= query.line &&
-                query.line <= s.endLine
-            );
-            query.resolve(this.symbolCache.findInnermostSymbol(containers));
-        } catch (err) {
-            query.reject(err instanceof Error ? err : new Error(String(err)));
-        }
-    }
-
-    private async executeGetFQN(
-        query: Extract<QueryEntry, { type: 'getFQN' }>,
-    ): Promise<void> {
-        try {
-            const symbols = await this.symbolCache.getSymbols(query.fileRef);
-            if (symbols === null) {
-                query.resolve(query.name);
-                return;
-            }
-            const matches = symbols.filter(s =>
-                s.name === query.name &&
-                s.startLine <= query.line &&
-                query.line <= s.endLine
-            );
-            const best = this.symbolCache.findInnermostSymbol(matches);
-            if (!best) {
-                query.resolve(query.name);
-                return;
-            }
-            query.resolve(best.attrs.get(AttrKey.FullyQualifiedName) ?? best.name);
+            query.resolve(results);
         } catch (err) {
             query.reject(err instanceof Error ? err : new Error(String(err)));
         }
@@ -715,51 +641,19 @@ export class CacheManager {
     // ── Drain-loop-gated query methods ──────────────────────────────────────
 
     /**
-     * Get all hydrated symbols for a file.
+     * Get hydrated symbols for one or more files.
      * The query is enqueued and processed by the drain loop to ensure
      * it executes against a consistent, quiescent snapshot.
      *
-     * @param fileRef - FileRef handle for the file
-     * @param sort - If true, sort symbols by start line (ascending)
-     * @returns Array of IndexSymbol objects, or null if the idx file cannot be read
-     */
-    async getAllSymbols(fileRef: FileRef, sort: boolean = false): Promise<IndexSymbol[] | null> {
-        return new Promise<IndexSymbol[] | null>((resolve, reject) => {
-            this.queryQueue.push({ type: 'getAllSymbols', fileRef, sort, resolve, reject });
-            this.wakeDrainLoop(false);
-        });
-    }
-
-    /**
-     * Get the innermost container (function, class, namespace, etc.)
-     * that contains a given line.
-     * The query is enqueued and processed by the drain loop to ensure
-     * it executes against a consistent, quiescent snapshot.
+     * Files not in the index or whose `*.idx` file cannot be read are
+     * silently omitted from the returned map.
      *
-     * @param fileRef - FileRef handle for the file
-     * @param line - 0-based line number
-     * @returns The innermost containing IndexSymbol, or null if none found
+     * @param filePaths - Array of absolute file paths to load symbols for
+     * @returns Map of file path to FileSymbols (only includes files that were successfully read)
      */
-    async getContainer(fileRef: FileRef, line: number): Promise<IndexSymbol | null> {
-        return new Promise<IndexSymbol | null>((resolve, reject) => {
-            this.queryQueue.push({ type: 'getContainer', fileRef, line, resolve, reject });
-            this.wakeDrainLoop(false);
-        });
-    }
-
-    /**
-     * Get the fully qualified name for a symbol at a given line.
-     * The query is enqueued and processed by the drain loop to ensure
-     * it executes against a consistent, quiescent snapshot.
-     *
-     * @param fileRef - FileRef handle for the file
-     * @param name - The symbol name to look up
-     * @param line - 0-based line number
-     * @returns The fully qualified name or the original name if not found
-     */
-    async getFullyQualifiedName(fileRef: FileRef, name: string, line: number): Promise<string> {
-        return new Promise<string>((resolve, reject) => {
-            this.queryQueue.push({ type: 'getFQN', fileRef, name, line, resolve, reject });
+    async getAllSymbols(filePaths: string[]): Promise<Map<string, FileSymbols>> {
+        return new Promise<Map<string, FileSymbols>>((resolve, reject) => {
+            this.queryQueue.push({ type: 'getAllSymbols', filePaths, resolve, reject });
             this.wakeDrainLoop(false);
         });
     }
