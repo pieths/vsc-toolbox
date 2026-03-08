@@ -239,6 +239,9 @@ export class VectorDatabase {
         } else {
             log('VectorDatabase: opened (ids recovered from table scan)');
         }
+
+        // Create scalar indexes on existing tables (no-op if they already exist)
+        await this.ensureScalarIndexes();
     }
 
     /**
@@ -327,6 +330,8 @@ export class VectorDatabase {
 
         if (!this.fileChunksTable) {
             this.fileChunksTable = await this.db!.createTable(TBL_FILE_CHUNKS, fileChunkRows);
+            await this.createIndexSafe(this.fileChunksTable, 'id');
+            await this.createIndexSafe(this.fileChunksTable, 'filePathId');
         } else {
             await this.fileChunksTable.add(fileChunkRows);
         }
@@ -339,6 +344,8 @@ export class VectorDatabase {
 
         if (!this.linksTable) {
             this.linksTable = await this.db!.createTable(TBL_LINKS, linkRows);
+            await this.createIndexSafe(this.linksTable, 'fileChunkId');
+            await this.createIndexSafe(this.linksTable, 'vectorId');
         } else {
             await this.linksTable.add(linkRows);
         }
@@ -382,6 +389,7 @@ export class VectorDatabase {
 
         if (!this.shadowChunksTable) {
             this.shadowChunksTable = await this.db!.createTable(TBL_SHADOW_CHUNKS, shadowRows);
+            await this.createIndexSafe(this.shadowChunksTable, 'fileChunkId');
         } else {
             await this.shadowChunksTable.add(shadowRows);
         }
@@ -394,6 +402,8 @@ export class VectorDatabase {
 
         if (!this.linksTable) {
             this.linksTable = await this.db!.createTable(TBL_LINKS, linkRows);
+            await this.createIndexSafe(this.linksTable, 'fileChunkId');
+            await this.createIndexSafe(this.linksTable, 'vectorId');
         } else {
             await this.linksTable.add(linkRows);
         }
@@ -638,6 +648,7 @@ export class VectorDatabase {
 
         if (!this.fileVersionsTable) {
             this.fileVersionsTable = await this.db!.createTable(TBL_FILE_VERSIONS, rows);
+            await this.createIndexSafe(this.fileVersionsTable, 'filePathId');
         } else {
             await this.fileVersionsTable
                 .mergeInsert('filePathId')
@@ -1052,6 +1063,7 @@ export class VectorDatabase {
         if (newRows.length > 0) {
             if (!this.filePathsTable) {
                 this.filePathsTable = await this.db!.createTable(TBL_FILE_PATHS, newRows);
+                await this.createIndexSafe(this.filePathsTable, 'id');
             } else {
                 await this.filePathsTable.add(newRows);
             }
@@ -1114,6 +1126,71 @@ export class VectorDatabase {
     private ensureOpen(): void {
         if (!this.db) {
             throw new Error('VectorDatabase: database is not open — call open() first');
+        }
+    }
+
+    /**
+     * Ensure scalar BTree indexes exist on all key filter columns.
+     *
+     * Uses `replace: false` so that existing indexes are left untouched
+     * (this is a no-op for columns that are already indexed).  Only the
+     * tables that are currently open are indexed — tables created lazily
+     * during insert will be indexed at creation time.
+     *
+     * Indexes are persisted on disk by LanceDB and survive across
+     * open/close cycles, so this only does real work on first run or
+     * after a database is created from scratch.
+     */
+    private async ensureScalarIndexes(): Promise<void> {
+        const t0 = Date.now();
+        let count = 0;
+
+        // file_chunks: filtered by id (deletes) and filePathId (lookups)
+        if (this.fileChunksTable) {
+            count += await this.createIndexSafe(this.fileChunksTable, 'id');
+            count += await this.createIndexSafe(this.fileChunksTable, 'filePathId');
+        }
+
+        // links: filtered by fileChunkId (deletes) and vectorId (search resolution)
+        if (this.linksTable) {
+            count += await this.createIndexSafe(this.linksTable, 'fileChunkId');
+            count += await this.createIndexSafe(this.linksTable, 'vectorId');
+        }
+
+        // shadow_chunks: filtered by fileChunkId (deletes)
+        if (this.shadowChunksTable) {
+            count += await this.createIndexSafe(this.shadowChunksTable, 'fileChunkId');
+        }
+
+        // file_versions: filtered by filePathId (upserts)
+        if (this.fileVersionsTable) {
+            count += await this.createIndexSafe(this.fileVersionsTable, 'filePathId');
+        }
+
+        // file_paths: filtered by id (deletes, lookups)
+        if (this.filePathsTable) {
+            count += await this.createIndexSafe(this.filePathsTable, 'id');
+        }
+
+        if (count > 0) {
+            log(`VectorDatabase: created ${count} scalar index(es) in ${Date.now() - t0}ms`);
+        }
+    }
+
+    /**
+     * Create a scalar BTree index on a column, ignoring errors if the
+     * index already exists or the table is empty.
+     *
+     * @returns 1 if the index was created, 0 if it already existed or
+     *          could not be created.
+     */
+    private async createIndexSafe(table: Table, column: string): Promise<number> {
+        try {
+            await table.createIndex(column, { replace: false });
+            return 1;
+        } catch {
+            // Index already exists or table is too small — safe to ignore
+            return 0;
         }
     }
 
