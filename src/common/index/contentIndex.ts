@@ -232,7 +232,7 @@ export class ContentIndex {
         this.fileWatcher?.dispose();
         this.fileWatcher = null;
 
-        this.threadPool?.dispose();
+        await this.threadPool?.dispose();
         this.threadPool = null;
 
         await this.llamaServer.stop();

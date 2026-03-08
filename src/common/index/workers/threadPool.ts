@@ -298,9 +298,11 @@ export class ThreadPool {
     }
 
     /**
-     * Shutdown all workers and clean up resources.
+     * Shutdown all workers and clean up resources. Sends a
+     * graceful shutdown message to the WorkerHost and waits
+     * for the child process to fully exit before returning.
      */
-    dispose(): void {
+    async dispose(): Promise<void> {
         if (this.disposed) {
             return;
         }
@@ -313,26 +315,56 @@ export class ThreadPool {
         }
         this.pendingRequests.clear();
 
-        // Send shutdown message and kill child process
-        if (this.childProcess?.connected) {
+        if (!this.childProcess) {
+            return;
+        }
+
+        const proc = this.childProcess;
+        this.childProcess = null;
+
+        // If the process already exited, nothing to wait for
+        if (proc.exitCode !== null || proc.signalCode !== null) {
+            log('[ThreadPool] Child process already exited');
+            return;
+        }
+
+        // Send graceful shutdown message so the WorkerHost can
+        // terminate its worker threads before exiting
+        if (proc.connected) {
             try {
-                this.childProcess.send({ type: 'shutdown' });
+                proc.send({ type: 'shutdown' });
             } catch {
                 // Ignore send errors during shutdown
             }
+
+            // Disconnect the IPC channel so it doesn't keep
+            // the child process referenced in the event loop
+            try {
+                proc.disconnect();
+            } catch {
+                // Already disconnected
+            }
         }
 
-        // Force-kill after a brief grace period
-        if (this.childProcess) {
-            const cp = this.childProcess;
-            this.childProcess = null;
-            setTimeout(() => {
+        // Wait for the child process to exit.
+        // Force-kill after 10 seconds as a safety net.
+        await new Promise<void>((resolve) => {
+            const timeout = setTimeout(() => {
+                warn('[ThreadPool] Child process did not exit within 10 seconds, force-killing...');
                 try {
-                    cp.kill();
+                    proc.kill();
                 } catch {
                     // Already dead
                 }
-            }, 2000);
-        }
+                resolve();
+            }, 10000);
+
+            proc.on('exit', () => {
+                clearTimeout(timeout);
+                resolve();
+            });
+        });
+
+        log('[ThreadPool] Child process stopped');
     }
 }
