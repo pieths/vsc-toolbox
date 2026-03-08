@@ -26,6 +26,8 @@ import { PathFilter } from './pathFilter';
 function getConfig(): ContentIndexConfig {
     const config = vscode.workspace.getConfiguration('vscToolbox.contentIndex');
 
+    const enable = config.get<boolean>('enable', false);
+
     let workerThreads = config.get<number>('workerThreads', 0);
     if (workerThreads === 0) {
         workerThreads = os.cpus().length; // Auto-detect
@@ -38,6 +40,7 @@ function getConfig(): ContentIndexConfig {
     const knowledgeBaseDirectory = config.get<string>('knowledgeBaseDirectory', '').trim();
 
     return {
+        enable,
         workerThreads,
         includePaths,
         excludePatterns,
@@ -57,6 +60,7 @@ function getConfig(): ContentIndexConfig {
  */
 export class ContentIndex {
     private static instance: ContentIndex | null = null;
+    private static enableWarningShown: boolean = false;
 
     private context: vscode.ExtensionContext | null = null;
     private cacheManager: CacheManager;
@@ -65,7 +69,8 @@ export class ContentIndex {
     private llamaServer: LlamaServer;
     private pathFilter: PathFilter | null = null;
     private statusBarItem: vscode.StatusBarItem | null = null;
-    private initialized: boolean = false;
+    private enabled: boolean = false;
+    private componentsStarted: boolean = false;
     private disposed: boolean = false;
     private configChangeNotificationShown: boolean = false;
 
@@ -84,18 +89,18 @@ export class ContentIndex {
     static getInstance(): ContentIndex {
         if (!ContentIndex.instance) {
             ContentIndex.instance = new ContentIndex();
+        } else if (!ContentIndex.instance.enabled && !ContentIndex.enableWarningShown) {
+            // Show a one-time warning when callers try to use the content
+            // index while it is disabled. This is in the `else` block so
+            // that the warning is not shown on the very first call (from
+            // extension.activate) which creates the instance before
+            // initialize() has had a chance to set the enabled flag.
+            ContentIndex.enableWarningShown = true;
+            vscode.window.showWarningMessage(
+                'VSC Toolbox: Content index is disabled. Enable "vscToolbox.contentIndex.enable" in settings to use indexing and search tools.');
         }
-        return ContentIndex.instance;
-    }
 
-    /**
-     * Reset the singleton instance (useful for testing).
-     */
-    static async resetInstance(): Promise<void> {
-        if (ContentIndex.instance) {
-            await ContentIndex.instance.dispose();
-            ContentIndex.instance = null;
-        }
+        return ContentIndex.instance;
     }
 
     /**
@@ -108,7 +113,9 @@ export class ContentIndex {
      * @param context - VS Code extension context for registering disposables
      */
     async initialize(context: vscode.ExtensionContext): Promise<void> {
-        if (this.initialized) {
+        // Use this.context as a guard to prevent duplicate initialization.
+        // Subscriptions (cleanup, config listener) must only be registered once.
+        if (this.context) {
             log('ContentIndex: Already initialized, skipping');
             return;
         }
@@ -117,8 +124,6 @@ export class ContentIndex {
             error('ContentIndex: Cannot initialize a disposed instance');
             return;
         }
-
-        this.context = context;
 
         // Register for cleanup (once)
         context.subscriptions.push({
@@ -134,11 +139,21 @@ export class ContentIndex {
             })
         );
 
+        this.context = context;
+
+        // Check if content index is enabled
+        const config = getConfig();
+        if (!config.enable) {
+            log('ContentIndex: Disabled in settings, skipping initialization');
+            return;
+        }
+
         // Wait briefly before indexing to allow VS Code and other extensions
         // to finish any post-startup file modifications that would trigger
         // unnecessary re-indexing (e.g., formatOnSave, insertFinalNewline).
         await new Promise(resolve => setTimeout(resolve, 10000));
 
+        this.enabled = true;
         await this.startComponents();
     }
 
@@ -153,7 +168,7 @@ export class ContentIndex {
             return;
         }
 
-        this.initialized = true; // Mark as initialized immediately to prevent re-entry
+        this.componentsStarted = true;
 
         try {
             const config = getConfig();
@@ -212,7 +227,7 @@ export class ContentIndex {
      * Called by dispose() for final cleanup and by reset() before restarting.
      */
     private async stopComponents(): Promise<void> {
-        this.initialized = false;
+        this.componentsStarted = false;
 
         this.fileWatcher?.dispose();
         this.fileWatcher = null;
@@ -259,6 +274,35 @@ export class ContentIndex {
      * a notification is visible are silently absorbed.
      */
     private handleConfigChange(): void {
+        const enabledInConfig = getConfig().enable;
+
+        if (!this.enabled && !enabledInConfig) {
+            // Was disabled, still disabled — nothing to do
+            return;
+        }
+
+        if (!this.enabled && enabledInConfig) {
+            // Turning on: start components directly (no delay needed)
+            log('ContentIndex: Enabling via config change');
+            this.enabled = true;
+            this.startComponents().catch(err => {
+                error(`ContentIndex: Enable after config change failed - ${err}`);
+            });
+            return;
+        }
+
+        if (this.enabled && !enabledInConfig) {
+            // Turning off: stop components directly
+            log('ContentIndex: Disabling via config change');
+            this.enabled = false;
+            ContentIndex.enableWarningShown = false;
+            this.stopComponents().catch(err => {
+                error(`ContentIndex: Disable after config change failed - ${err}`);
+            });
+            return;
+        }
+
+        // Still enabled — other settings changed, prompt for restart
         if (this.configChangeNotificationShown) {
             return; // Already showing a notification
         }
@@ -279,12 +323,12 @@ export class ContentIndex {
     }
 
     /**
-     * Check if the index is ready for searches.
+     * Check if the index is ready to be used.
      *
      * @returns true if indexing is complete
      */
     isReady(): boolean {
-        return this.initialized && this.cacheManager.isReady();
+        return this.componentsStarted && this.cacheManager.isReady();
     }
 
     /**
@@ -341,7 +385,7 @@ export class ContentIndex {
         exclude?: string,
         token?: vscode.CancellationToken
     ): Promise<FileSearchResults[]> {
-        if (!this.initialized || !this.threadPool) {
+        if (!this.componentsStarted || !this.threadPool) {
             warn('ContentIndex: Not initialized');
             return [];
         }
@@ -460,7 +504,7 @@ export class ContentIndex {
      *          whose idx file cannot be read are silently omitted)
      */
     async getSymbols(filePaths: string[]): Promise<Map<string, FileSymbols>> {
-        if (!this.initialized) {
+        if (!this.componentsStarted) {
             warn('ContentIndex: Not initialized');
             return new Map();
         }
@@ -481,7 +525,7 @@ export class ContentIndex {
      * @returns Array of nearest embedding results ordered from most to least similar
      */
     async searchEmbeddings(query: string, topK: number = 50): Promise<NearestEmbeddingResult[]> {
-        if (!this.initialized) {
+        if (!this.componentsStarted) {
             warn('ContentIndex: Not initialized');
             return [];
         }

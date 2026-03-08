@@ -17,13 +17,6 @@ export async function activate(
   initLogger(context);
   log('VSC Toolbox extension is activating...');
 
-  // Check if enabled
-  const config = vscode.workspace.getConfiguration('vscToolbox');
-  if (!config.get<boolean>('enable', true)) {
-    log('VSC Toolbox is disabled in settings');
-    return;
-  }
-
   try {
     ContentIndex.getInstance().initialize(context);
     log('ContentIndex initialized');

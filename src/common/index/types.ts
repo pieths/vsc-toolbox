@@ -281,6 +281,8 @@ export interface NearestEmbeddingResult {
  * Configuration for the content index functionality
  */
 export interface ContentIndexConfig {
+    /** Whether the content index is enabled */
+    enable: boolean;
     /** Number of worker threads (0 = auto-detect using os.cpus().length) */
     workerThreads: number;
     /** List of directory paths to include in search (empty = all workspace files) */
