@@ -229,6 +229,8 @@ export class ThreadPool {
             for (const output of outputs) {
                 if (output.status === IndexStatus.Indexed) {
                     log(`Content index: Indexed ${output.filePath}`);
+                } else if (output.status === IndexStatus.Deleted) {
+                    log(`Content index: Source deleted ${output.filePath}`);
                 } else if (output.status === IndexStatus.Failed && output.error) {
                     error(`Content index: Failed to index ${output.filePath}: ${output.error}`);
                 }

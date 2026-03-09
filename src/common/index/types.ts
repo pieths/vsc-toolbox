@@ -97,6 +97,8 @@ export const enum IndexStatus {
     Indexed,
     /** File was skipped (*.idx file was already up-to-date) */
     Skipped,
+    /** Source file no longer exists on disk */
+    Deleted,
     /** Indexing failed (error occurred) */
     Failed,
 }

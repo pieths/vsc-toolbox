@@ -128,8 +128,24 @@ function readIdxHeader(idxPath: string): { sha256: string; version: number } | n
  */
 export async function indexFile(input: IndexInput): Promise<IndexOutput> {
     try {
-        // Read source and compute hash
-        const sourceContent = fs.readFileSync(input.filePath);
+        // Read source and compute hash — detect deleted files early
+        let sourceContent: Buffer;
+        try {
+            sourceContent = fs.readFileSync(input.filePath);
+        } catch (err) {
+            if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+                // Source file was deleted before we could read it.
+                // Delete any existing *.idx file.
+                try { fs.unlinkSync(input.idxPath); } catch { /* ignore */ }
+                return {
+                    type: 'index',
+                    status: IndexStatus.Deleted,
+                    filePath: input.filePath,
+                    idxPath: null,
+                };
+            }
+            throw err; // Re-throw non-ENOENT errors for the outer catch
+        }
         const sha256 = crypto.createHash('sha256').update(sourceContent).digest('hex');
 
         // Look up the parser for this file

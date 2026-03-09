@@ -237,15 +237,16 @@ export class CacheManager {
     }
 
     /**
-     * Index a batch of files via worker threads and compute
-     * embeddings for files that were actually re-indexed.
+     * Index and compute embeddings for a batch
+     * of files via worker threads.
      *
      * @param fileRefs - Array of FileRef handles to index
+     * @returns Array of file paths whose source was deleted (ENOENT) before indexing
      */
-    private async indexFiles(fileRefs: FileRef[]): Promise<void> {
+    private async indexFiles(fileRefs: FileRef[]): Promise<string[]> {
         if (!this.threadPool) {
             warn('Content index: Cannot index - thread pool not set');
-            return;
+            return [];
         }
 
         const inputs: IndexInput[] = fileRefs.map(fi => ({
@@ -257,14 +258,28 @@ export class CacheManager {
         const startTime = Date.now();
         const outputs = await this.threadPool.indexAll(inputs);
 
-        await this.computeEmbeddings(fileRefs);
+        // Collect files whose source was deleted
+        // before the worker could read them
+        const deletedPaths = outputs
+            .filter(o => o.status === IndexStatus.Deleted)
+            .map(o => o.filePath);
+
+        // Only compute embeddings for files that were not deleted
+        const deletedSet = new Set(deletedPaths.map(p => this.normalizePath(p)));
+        const existingRefs = fileRefs.filter(
+            fi => !deletedSet.has(this.normalizePath(fi.getFilePath()))
+        );
+        await this.computeEmbeddings(existingRefs);
 
         const elapsed = Date.now() - startTime;
-        const indexed = outputs.filter(o => o.status === IndexStatus.Indexed);
+        const deletedCount = deletedPaths.length;
+        const indexedCount = outputs.filter(o => o.status === IndexStatus.Indexed).length;
         const skippedCount = outputs.filter(o => o.status === IndexStatus.Skipped).length;
-        if (indexed.length > 0 || skippedCount > 0) {
-            log(`Content index: Indexed ${indexed.length} files (${skippedCount} skipped) in ${elapsed}ms`);
+        if (indexedCount > 0 || skippedCount > 0 || deletedPaths.length > 0) {
+            log(`Content index: Indexed ${indexedCount} files (${skippedCount} skipped, ${deletedCount} deleted) in ${elapsed}ms`);
         }
+
+        return deletedPaths;
     }
 
     /**
@@ -472,17 +487,24 @@ export class CacheManager {
                     }
                 }
 
-                // 3. Process deletes — remove from cache and DB
+                // 3. Index dirty files first — workers detect ENOENT for
+                //    source files deleted before the watcher could notify
+                //    us. These deleted files should be removed from the
+                //    cache immediately.
+                if (dirtyFiles.length > 0) {
+                    const discoveredDeletes = await this.indexFiles(dirtyFiles);
+                    for (const dp of discoveredDeletes) {
+                        deletedFiles.push(dp);
+                    }
+                }
+
+                // 4. Process all deletes — both explicitly queued and
+                //    discovered during indexing — remove from cache and DB
                 for (const filePath of deletedFiles) {
                     this.remove(filePath);
                     if (this.vectorDatabase) {
                         await this.vectorDatabase.deleteByFilePath(filePath);
                     }
-                }
-
-                // 4. Index dirty files (includes post-validation)
-                if (dirtyFiles.length > 0) {
-                    await this.indexFiles(dirtyFiles);
                 }
 
                 // 5. Inner loop continues — picks up any new mutations
