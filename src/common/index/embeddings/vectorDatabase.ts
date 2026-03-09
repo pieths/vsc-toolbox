@@ -4,24 +4,16 @@
 /**
  * VectorDatabase — a wrapper around a LanceDB database instance.
  *
- * Uses a normalized multi-table schema so that vector similarity search
- * can resolve results back to file-backed chunks (and shadow chunks that
- * act as extra search context).
- *
  * Tables:
  *
- *   Vectors       — id, vector (float32[], fixed dimension)
- *   FilePaths     — id, filePath
+ *   Vectors       — id, vector (float32[], fixed dimension), fileChunkId
  *   FileChunks    — id, filePathId, startLine, endLine, sha256, vectorId
- *   FileVersions  — filePathId, sha256  (source file version that chunks correspond to)
- *   Links         — vectorId, fileChunkId  (maps vector → FileChunk)
- *   ShadowChunks  — text, vectorId, fileChunkId
+ *   FilePaths     — id, filePath, sha256  (source file version)
  *
- * The Links table is the join point used after a vector search: every
- * vector that appears in the Vectors table has at least one row in Links
- * pointing to the FileChunk it is associated with.  FileChunks own
- * their embedding vector directly (vectorId), while ShadowChunks provide
- * additional embedded text that also links back to a FileChunk via Links.
+ * Vectors and FileChunks have a 1:1 relationship via their mutual
+ * foreign keys (vectorId ↔ fileChunkId).  FilePaths stores both the
+ * file path string and the source-file SHA-256 hash that the chunks
+ * were generated from.
  *
  * LanceDB stores data in the Lance columnar format on disk and memory-maps
  * it at query time.  Vectors never enter the V8 heap, so this works within
@@ -67,24 +59,6 @@ export interface FileChunkInput {
     vector: Float32Array;
 }
 
-/** Input data for inserting a ShadowChunk. */
-export interface ShadowChunkInput {
-    /** The text content of the shadow chunk */
-    text: string;
-    /** Embedding vector for the text */
-    vector: Float32Array;
-    /** The id of the FileChunk this shadow chunk corresponds to */
-    fileChunkId: number;
-}
-
-/** A ShadowChunk record as stored in the database. */
-export interface ShadowChunkRecord {
-    /** The text content of the shadow chunk */
-    text: string;
-    /** The id of the FileChunk this shadow chunk corresponds to */
-    fileChunkId: number;
-}
-
 /** A FileChunk result returned from a nearest-neighbor search. */
 export interface FileChunkSearchResult {
     /** Unique FileChunk identifier */
@@ -106,9 +80,6 @@ export interface FileChunkSearchResult {
 const TBL_VECTORS = 'vectors';
 const TBL_FILE_PATHS = 'file_paths';
 const TBL_FILE_CHUNKS = 'file_chunks';
-const TBL_FILE_VERSIONS = 'file_versions';
-const TBL_LINKS = 'links';
-const TBL_SHADOW_CHUNKS = 'shadow_chunks';
 
 /** Name of the JSON file that persists auto-increment counters. */
 const META_FILE = 'meta.json';
@@ -130,9 +101,6 @@ export class VectorDatabase {
     private vectorsTable: Table | null = null;
     private filePathsTable: Table | null = null;
     private fileChunksTable: Table | null = null;
-    private fileVersionsTable: Table | null = null;
-    private linksTable: Table | null = null;
-    private shadowChunksTable: Table | null = null;
 
     private nextVectorId: number = 1;
     private nextFilePathId: number = 1;
@@ -190,13 +158,16 @@ export class VectorDatabase {
             if (!meta) {
                 this.nextFilePathId = await this.recoverNextId(this.filePathsTable, 'id');
             }
-            // Populate the in-memory cache
+            // Populate the in-memory caches
             const fpRows = await this.filePathsTable
                 .query()
-                .select(['id', 'filePath'])
-                .toArray() as { id: number; filePath: string }[];
+                .select(['id', 'filePath', 'sha256'])
+                .toArray() as { id: number; filePath: string; sha256: string }[];
             for (const row of fpRows) {
                 this.filePathCache.set(row.filePath, row.id);
+                if (row.sha256) {
+                    this.fileVersionCache.set(row.id, row.sha256);
+                }
             }
         }
 
@@ -206,29 +177,6 @@ export class VectorDatabase {
             if (!meta) {
                 this.nextFileChunkId = await this.recoverNextId(this.fileChunksTable, 'id');
             }
-        }
-
-        // ── FileVersions ────────────────────────────────────────────────
-        if (tableNames.includes(TBL_FILE_VERSIONS)) {
-            this.fileVersionsTable = await this.db.openTable(TBL_FILE_VERSIONS);
-            // Populate the in-memory cache
-            const fvRows = await this.fileVersionsTable
-                .query()
-                .select(['filePathId', 'sha256'])
-                .toArray() as { filePathId: number; sha256: string }[];
-            for (const row of fvRows) {
-                this.fileVersionCache.set(row.filePathId, row.sha256);
-            }
-        }
-
-        // ── Links ───────────────────────────────────────────────────────
-        if (tableNames.includes(TBL_LINKS)) {
-            this.linksTable = await this.db.openTable(TBL_LINKS);
-        }
-
-        // ── ShadowChunks ────────────────────────────────────────────────
-        if (tableNames.includes(TBL_SHADOW_CHUNKS)) {
-            this.shadowChunksTable = await this.db.openTable(TBL_SHADOW_CHUNKS);
         }
 
         if (meta) {
@@ -254,9 +202,6 @@ export class VectorDatabase {
             this.vectorsTable,
             this.filePathsTable,
             this.fileChunksTable,
-            this.fileVersionsTable,
-            this.linksTable,
-            this.shadowChunksTable,
         ];
         for (const t of tables) {
             t?.close();
@@ -264,9 +209,6 @@ export class VectorDatabase {
         this.vectorsTable = null;
         this.filePathsTable = null;
         this.fileChunksTable = null;
-        this.fileVersionsTable = null;
-        this.linksTable = null;
-        this.shadowChunksTable = null;
 
         this.db?.close();
         this.db = null;
@@ -278,25 +220,13 @@ export class VectorDatabase {
     // ── Insert ──────────────────────────────────────────────────────────────
 
     /**
-     * Add a single FileChunk to the database.
-     *
-     * Creates a vector, a FilePath (if needed), a FileChunk, and a Link.
-     *
-     * @returns The assigned FileChunk id.
-     */
-    async addFileChunk(chunk: FileChunkInput): Promise<number> {
-        const ids = await this.addFileChunks([chunk]);
-        return ids[0];
-    }
-
-    /**
      * Add multiple FileChunks to the database in a single batch.
      *
      * For each chunk this method will:
-     *   1. Insert the embedding vector into Vectors → vectorId
-     *   2. Ensure the filePath exists in FilePaths → filePathId
-     *   3. Insert the FileChunk → fileChunkId
-     *   4. Insert a Link (vectorId → fileChunkId)
+     *   1. Ensure the filePath exists in FilePaths → filePathId
+     *   2. Pre-allocate fileChunkId and vectorId
+     *   3. Insert the FileChunk
+     *   4. Insert the embedding vector into Vectors (with fileChunkId)
      *
      * @returns An array of the assigned FileChunk ids (in insertion order).
      */
@@ -307,26 +237,26 @@ export class VectorDatabase {
 
         this.ensureOpen();
 
-        // 1. Insert vectors
-        const vectorIds = await this.insertVectors(chunks.map(c => c.vector));
-
-        // 2. Ensure file paths exist
+        // 1. Ensure file paths exist
         const filePathIds = await this.ensureFilePaths(chunks.map(c => c.filePath));
 
-        // 3. Insert FileChunks
+        // 2. Pre-allocate ids for both tables
         const fileChunkIds: number[] = [];
-        const fileChunkRows = chunks.map((chunk, i) => {
-            const id = this.nextFileChunkId++;
-            fileChunkIds.push(id);
-            return {
-                id,
-                filePathId: filePathIds[i],
-                startLine: chunk.startLine,
-                endLine: chunk.endLine,
-                sha256: chunk.sha256,
-                vectorId: vectorIds[i],
-            };
-        });
+        const vectorIds: number[] = [];
+        for (let i = 0; i < chunks.length; i++) {
+            fileChunkIds.push(this.nextFileChunkId++);
+            vectorIds.push(this.nextVectorId++);
+        }
+
+        // 3. Insert FileChunks
+        const fileChunkRows = chunks.map((chunk, i) => ({
+            id: fileChunkIds[i],
+            filePathId: filePathIds[i],
+            startLine: chunk.startLine,
+            endLine: chunk.endLine,
+            sha256: chunk.sha256,
+            vectorId: vectorIds[i],
+        }));
 
         if (!this.fileChunksTable) {
             this.fileChunksTable = await this.db!.createTable(TBL_FILE_CHUNKS, fileChunkRows);
@@ -336,86 +266,22 @@ export class VectorDatabase {
             await this.fileChunksTable.add(fileChunkRows);
         }
 
-        // 4. Insert Links (vector → fileChunk)
-        const linkRows = vectorIds.map((vectorId, i) => ({
-            vectorId,
-            fileChunkId: fileChunkIds[i],
-        }));
-
-        if (!this.linksTable) {
-            this.linksTable = await this.db!.createTable(TBL_LINKS, linkRows);
-            await this.createIndexSafe(this.linksTable, 'fileChunkId');
-            await this.createIndexSafe(this.linksTable, 'vectorId');
-        } else {
-            await this.linksTable.add(linkRows);
-        }
+        // 4. Insert Vectors (with fileChunkId)
+        await this.insertVectors(
+            chunks.map(c => c.vector),
+            vectorIds,
+            fileChunkIds,
+        );
 
         log(`VectorDatabase: added ${chunks.length} file chunk(s)`);
         return fileChunkIds;
-    }
-
-    /**
-     * Add a single ShadowChunk to the database.
-     *
-     * A shadow chunk contains text that is embedded and linked to an
-     * existing FileChunk. This provides additional search context that
-     * helps vector search point to the correct file location.
-     *
-     * Creates a vector, a ShadowChunk row, and a Link.
-     */
-    async addShadowChunk(shadow: ShadowChunkInput): Promise<void> {
-        await this.addShadowChunks([shadow]);
-    }
-
-    /**
-     * Add multiple ShadowChunks to the database in a single batch.
-     */
-    async addShadowChunks(shadows: ShadowChunkInput[]): Promise<void> {
-        if (shadows.length === 0) {
-            return;
-        }
-
-        this.ensureOpen();
-
-        // 1. Insert vectors
-        const vectorIds = await this.insertVectors(shadows.map(s => s.vector));
-
-        // 2. Insert ShadowChunks
-        const shadowRows = shadows.map((s, i) => ({
-            text: s.text,
-            vectorId: vectorIds[i],
-            fileChunkId: s.fileChunkId,
-        }));
-
-        if (!this.shadowChunksTable) {
-            this.shadowChunksTable = await this.db!.createTable(TBL_SHADOW_CHUNKS, shadowRows);
-            await this.createIndexSafe(this.shadowChunksTable, 'fileChunkId');
-        } else {
-            await this.shadowChunksTable.add(shadowRows);
-        }
-
-        // 3. Insert Links (vector → fileChunk)
-        const linkRows = shadows.map((s, i) => ({
-            vectorId: vectorIds[i],
-            fileChunkId: s.fileChunkId,
-        }));
-
-        if (!this.linksTable) {
-            this.linksTable = await this.db!.createTable(TBL_LINKS, linkRows);
-            await this.createIndexSafe(this.linksTable, 'fileChunkId');
-            await this.createIndexSafe(this.linksTable, 'vectorId');
-        } else {
-            await this.linksTable.add(linkRows);
-        }
-
-        log(`VectorDatabase: added ${shadows.length} shadow chunk(s)`);
     }
 
     // ── Delete ──────────────────────────────────────────────────────────────
 
     /**
      * Delete everything associated with a file path: all FileChunks,
-     * their vectors, links, shadow chunks, and the FilePath entry itself.
+     * their vectors, and the FilePath entry itself.
      *
      * After this call the file path will no longer exist in the database
      * or in the in-memory cache.
@@ -437,92 +303,21 @@ export class VectorDatabase {
             .where(`filePathId = ${filePathId}`)
             .toArray() as { id: number }[];
 
-        // Delete all chunks (and their vectors, links, shadow chunks)
+        // Delete all chunks (and their vectors)
         if (chunkRows.length > 0) {
             await this.deleteFileChunks(chunkRows.map(r => r.id));
         }
 
-        // Delete the FileVersion entry
-        if (this.fileVersionsTable) {
-            await this.fileVersionsTable.delete(`filePathId = ${filePathId}`);
-        }
-        this.fileVersionCache.delete(filePathId);
-
         // Delete the FilePath entry itself
         await this.filePathsTable.delete(`id = ${filePathId}`);
         this.filePathCache.delete(filePath);
-    }
-
-    /**
-     * Delete a single FileChunk by its id.
-     *
-     * Also removes the associated vector, link(s), and any shadow chunks
-     * that reference this FileChunk.
-     */
-    async deleteFileChunkById(fileChunkId: number): Promise<void> {
-        await this.deleteFileChunks([fileChunkId]);
-    }
-
-    /**
-     * Delete all FileChunks (and their vectors, links, and shadow chunks)
-     * associated with a specific file path.
-     */
-    async deleteFileChunksByFilePath(filePath: string): Promise<void> {
-        if (!this.fileChunksTable || !this.filePathsTable) {
-            return;
-        }
-
-        const filePathId = this.filePathCache.get(filePath);
-        if (filePathId === undefined) {
-            return;
-        }
-
-        // Find all FileChunk ids for this file
-        const chunkRows = await this.fileChunksTable
-            .query()
-            .select(['id'])
-            .where(`filePathId = ${filePathId}`)
-            .toArray() as { id: number }[];
-
-        if (chunkRows.length === 0) {
-            return;
-        }
-
-        await this.deleteFileChunks(chunkRows.map(r => r.id));
-    }
-
-    /**
-     * Delete a FileChunk identified by file path + line range.
-     *
-     * Also removes the associated vector, link(s), and any shadow chunks.
-     */
-    async deleteFileChunkByLocation(filePath: string, startLine: number, endLine: number): Promise<void> {
-        if (!this.fileChunksTable) {
-            return;
-        }
-
-        const filePathId = this.filePathCache.get(filePath);
-        if (filePathId === undefined) {
-            return;
-        }
-
-        const chunkRows = await this.fileChunksTable
-            .query()
-            .select(['id'])
-            .where(`filePathId = ${filePathId} AND startLine = ${startLine} AND endLine = ${endLine}`)
-            .toArray() as { id: number }[];
-
-        if (chunkRows.length === 0) {
-            return;
-        }
-
-        await this.deleteFileChunks(chunkRows.map(r => r.id));
+        this.fileVersionCache.delete(filePathId);
     }
 
     /**
      * Delete multiple FileChunks by their ids in a single pass.
      *
-     * Also removes associated vectors, links, and shadow chunks.
+     * Also removes associated vectors.
      */
     async deleteFileChunks(fileChunkIds: number[]): Promise<void> {
         if (fileChunkIds.length === 0) {
@@ -532,7 +327,7 @@ export class VectorDatabase {
 
         const idList = fileChunkIds.join(', ');
 
-        // Collect vectorIds to delete (from FileChunks + ShadowChunks)
+        // Collect vectorIds to delete
         const vectorIdsToDelete = new Set<number>();
 
         if (this.fileChunksTable) {
@@ -544,29 +339,8 @@ export class VectorDatabase {
             for (const r of chunkRows) {
                 vectorIdsToDelete.add(r.vectorId);
             }
-        }
 
-        if (this.shadowChunksTable) {
-            const shadowRows = await this.shadowChunksTable
-                .query()
-                .select(['vectorId'])
-                .where(`fileChunkId IN (${idList})`)
-                .toArray() as { vectorId: number }[];
-            for (const r of shadowRows) {
-                vectorIdsToDelete.add(r.vectorId);
-            }
-
-            // Delete shadow chunks
-            await this.shadowChunksTable.delete(`fileChunkId IN (${idList})`);
-        }
-
-        // Delete links
-        if (this.linksTable) {
-            await this.linksTable.delete(`fileChunkId IN (${idList})`);
-        }
-
-        // Delete file chunks
-        if (this.fileChunksTable) {
+            // Delete file chunks
             await this.fileChunksTable.delete(`id IN (${idList})`);
         }
 
@@ -587,8 +361,7 @@ export class VectorDatabase {
      * applied in one pass — creating a single new table version instead
      * of one per row.
      *
-     * Only the line metadata is changed — the vector, links, and shadow
-     * chunks remain untouched.
+     * Only the line metadata is changed — the vector remains untouched.
      *
      * @param updates — FileChunkRecords with updated line numbers.
      */
@@ -617,49 +390,44 @@ export class VectorDatabase {
     /**
      * Set the source-file SHA-256 for one or more file paths.
      *
-     * Each entry in the FileVersions table records the SHA-256 of the
-     * source file that was used to produce the chunks stored in the
-     * database.  A non-empty sha256 means "chunks are valid for this
-     * file version"; an empty string means "no valid chunks."
+     * The sha256 column in the FilePaths table records the SHA-256 of
+     * the source file that was used to produce the chunks stored in the
+     * database.  A non-empty sha256 means "all chunks are valid for this
+     * file version"; an empty string means "some or all chunks are invalid."
      *
-     * Uses mergeInsert (upsert) keyed on `filePathId` so that existing
-     * entries are updated and new entries are inserted in a single
-     * atomic operation.
+     * Uses mergeInsert (upsert) keyed on `id` so that all updates are
+     * applied in a single pass.
      */
     async setFileVersions(updates: { filePath: string; sha256: string }[]): Promise<void> {
-        if (updates.length === 0) {
+        if (updates.length === 0 || !this.filePathsTable) {
             return;
         }
         this.ensureOpen();
 
-        // Resolve file paths to ids, skipping unknown paths
-        const rows: { filePathId: number; sha256: string }[] = [];
+        // Build full rows for mergeInsert (filePath is unchanged but required
+        // by whenMatchedUpdateAll since it writes all columns)
+        const rows: { id: number; filePath: string; sha256: string }[] = [];
         for (const u of updates) {
             const filePathId = this.filePathCache.get(u.filePath);
             if (filePathId === undefined) {
                 continue;
             }
-            rows.push({ filePathId, sha256: u.sha256 });
+            rows.push({ id: filePathId, filePath: u.filePath, sha256: u.sha256 });
         }
 
         if (rows.length === 0) {
             return;
         }
 
-        if (!this.fileVersionsTable) {
-            this.fileVersionsTable = await this.db!.createTable(TBL_FILE_VERSIONS, rows);
-            await this.createIndexSafe(this.fileVersionsTable, 'filePathId');
-        } else {
-            await this.fileVersionsTable
-                .mergeInsert('filePathId')
-                .whenMatchedUpdateAll()
-                .whenNotMatchedInsertAll()
-                .execute(rows);
-        }
+        await this.filePathsTable
+            .mergeInsert('id')
+            .whenMatchedUpdateAll()
+            .whenNotMatchedInsertAll()
+            .execute(rows);
 
         // Update the in-memory cache
         for (const row of rows) {
-            this.fileVersionCache.set(row.filePathId, row.sha256);
+            this.fileVersionCache.set(row.id, row.sha256);
         }
     }
 
@@ -669,9 +437,7 @@ export class VectorDatabase {
      * Find the nearest FileChunks to a query vector.
      *
      * Performs a vector similarity search on the Vectors table, then
-     * resolves through the Links table to return deduplicated FileChunk
-     * results. Both direct chunk vectors and shadow chunk vectors
-     * participate in the search.
+     * resolves the fileChunkId foreign key to return FileChunk metadata.
      *
      * @param queryVector — the embedding vector to search against.
      * @param topK — maximum number of FileChunk results to return (default 10).
@@ -681,58 +447,31 @@ export class VectorDatabase {
         queryVector: Float32Array,
         topK: number = 10,
     ): Promise<FileChunkSearchResult[]> {
-        if (!this.vectorsTable || !this.linksTable || !this.fileChunksTable) {
+        if (!this.vectorsTable || !this.fileChunksTable) {
             return [];
         }
 
         const vector = Array.from(queryVector);
 
-        // Search for more vectors than topK since multiple vectors can
-        // map to the same FileChunk (via shadow chunks)
-        const searchLimit = topK * 3;
         const vectorHits = await this.vectorsTable
             .vectorSearch(vector)
             .distanceType('cosine')
-            .select(['id'])
-            .limit(searchLimit)
-            .toArray() as { id: number; _distance: number }[];
+            .select(['id', 'fileChunkId'])
+            .limit(topK)
+            .toArray() as { id: number; fileChunkId: number; _distance: number }[];
 
         if (vectorHits.length === 0) {
             return [];
         }
 
-        // Resolve vectorIds → fileChunkIds via Links
-        const vectorIdList = vectorHits.map(v => v.id).join(', ');
-        const linkRows = await this.linksTable
-            .query()
-            .select(['vectorId', 'fileChunkId'])
-            .where(`vectorId IN (${vectorIdList})`)
-            .toArray() as { vectorId: number; fileChunkId: number }[];
-
-        // Build a map: fileChunkId → best (lowest) distance
-        const distanceByVectorId = new Map<number, number>();
+        // Build a map: fileChunkId → distance
+        const distanceByChunkId = new Map<number, number>();
         for (const hit of vectorHits) {
-            distanceByVectorId.set(hit.id, hit._distance);
-        }
-
-        const bestDistanceByChunkId = new Map<number, number>();
-        for (const link of linkRows) {
-            const dist = distanceByVectorId.get(link.vectorId);
-            if (dist === undefined) {
-                continue;
-            }
-            const current = bestDistanceByChunkId.get(link.fileChunkId);
-            if (current === undefined || dist < current) {
-                bestDistanceByChunkId.set(link.fileChunkId, dist);
-            }
-        }
-
-        if (bestDistanceByChunkId.size === 0) {
-            return [];
+            distanceByChunkId.set(hit.fileChunkId, hit._distance);
         }
 
         // Fetch FileChunk rows
-        const chunkIdList = Array.from(bestDistanceByChunkId.keys()).join(', ');
+        const chunkIdList = Array.from(distanceByChunkId.keys()).join(', ');
         const chunkRows = await this.fileChunksTable
             .query()
             .select(['id', 'filePathId', 'startLine', 'endLine', 'sha256'])
@@ -756,12 +495,12 @@ export class VectorDatabase {
             startLine: row.startLine,
             endLine: row.endLine,
             sha256: row.sha256,
-            _distance: bestDistanceByChunkId.get(row.id)!,
+            _distance: distanceByChunkId.get(row.id)!,
         }));
 
-        // Sort by distance ascending, then take topK
+        // Sort by distance ascending
         results.sort((a, b) => a._distance - b._distance);
-        return results.slice(0, topK);
+        return results;
     }
 
     // ── Query ───────────────────────────────────────────────────────────────
@@ -788,43 +527,6 @@ export class VectorDatabase {
         }
 
         return result;
-    }
-
-    /**
-     * Get all FileChunks associated with a given file path.
-     */
-    async getFileChunksByFilePath(filePath: string): Promise<FileChunkRecord[]> {
-        if (!this.fileChunksTable) {
-            return [];
-        }
-
-        const filePathId = this.filePathCache.get(filePath);
-        if (filePathId === undefined) {
-            return [];
-        }
-
-        const rows = await this.fileChunksTable
-            .query()
-            .select(['id', 'filePathId', 'startLine', 'endLine', 'sha256', 'vectorId'])
-            .where(`filePathId = ${filePathId}`)
-            .toArray() as {
-                id: number;
-                filePathId: number;
-                startLine: number;
-                endLine: number;
-                sha256: string;
-                vectorId: number;
-            }[];
-
-        return rows.map(row => ({
-            id: row.id,
-            filePath,
-            filePathId: row.filePathId,
-            startLine: row.startLine,
-            endLine: row.endLine,
-            sha256: row.sha256,
-            vectorId: row.vectorId,
-        }));
     }
 
     /**
@@ -896,60 +598,6 @@ export class VectorDatabase {
     }
 
     /**
-     * Get all ShadowChunks associated with a given FileChunk id.
-     */
-    async getShadowChunksByFileChunkId(fileChunkId: number): Promise<ShadowChunkRecord[]> {
-        if (!this.shadowChunksTable) {
-            return [];
-        }
-
-        const rows = await this.shadowChunksTable
-            .query()
-            .select(['text', 'fileChunkId'])
-            .where(`fileChunkId = ${fileChunkId}`)
-            .toArray() as ShadowChunkRecord[];
-
-        return rows;
-    }
-
-    /**
-     * Get FileChunks by an array of SHA-256 hashes.
-     */
-    async getFileChunksBySha256(hashes: string[]): Promise<FileChunkRecord[]> {
-        if (!this.fileChunksTable || hashes.length === 0) {
-            return [];
-        }
-
-        const escaped = hashes.map(h => `'${this.escapeSql(h)}'`).join(', ');
-        const rows = await this.fileChunksTable
-            .query()
-            .select(['id', 'filePathId', 'startLine', 'endLine', 'sha256', 'vectorId'])
-            .where(`sha256 IN (${escaped})`)
-            .toArray() as {
-                id: number;
-                filePathId: number;
-                startLine: number;
-                endLine: number;
-                sha256: string;
-                vectorId: number;
-            }[];
-
-        // Resolve file paths
-        const filePathIdSet = new Set(rows.map(r => r.filePathId));
-        const filePathMap = await this.resolveFilePathIds(Array.from(filePathIdSet));
-
-        return rows.map(row => ({
-            id: row.id,
-            filePath: filePathMap.get(row.filePathId) ?? '',
-            filePathId: row.filePathId,
-            startLine: row.startLine,
-            endLine: row.endLine,
-            sha256: row.sha256,
-            vectorId: row.vectorId,
-        }));
-    }
-
-    /**
      * Get the total number of FileChunks in the database.
      */
     async countFileChunks(): Promise<number> {
@@ -957,16 +605,6 @@ export class VectorDatabase {
             return 0;
         }
         return this.fileChunksTable.countRows();
-    }
-
-    /**
-     * Get the total number of ShadowChunks in the database.
-     */
-    async countShadowChunks(): Promise<number> {
-        if (!this.shadowChunksTable) {
-            return 0;
-        }
-        return this.shadowChunksTable.countRows();
     }
 
     /**
@@ -998,9 +636,6 @@ export class VectorDatabase {
             [TBL_VECTORS, this.vectorsTable],
             [TBL_FILE_PATHS, this.filePathsTable],
             [TBL_FILE_CHUNKS, this.fileChunksTable],
-            [TBL_FILE_VERSIONS, this.fileVersionsTable],
-            [TBL_LINKS, this.linksTable],
-            [TBL_SHADOW_CHUNKS, this.shadowChunksTable],
         ];
 
         for (const [name, table] of tables) {
@@ -1021,23 +656,28 @@ export class VectorDatabase {
     /**
      * Insert one or more vectors into the Vectors table.
      *
-     * @returns The assigned vector ids (in insertion order).
+     * @param vectors — the embedding vectors.
+     * @param vectorIds — pre-allocated vector ids.
+     * @param fileChunkIds — the FileChunk id each vector is linked to.
      */
-    private async insertVectors(vectors: Float32Array[]): Promise<number[]> {
-        const ids: number[] = [];
-        const rows = vectors.map(v => {
-            const id = this.nextVectorId++;
-            ids.push(id);
-            return { id, vector: Array.from(v) };
-        });
+    private async insertVectors(
+        vectors: Float32Array[],
+        vectorIds: number[],
+        fileChunkIds: number[],
+    ): Promise<void> {
+        const rows = vectors.map((v, i) => ({
+            id: vectorIds[i],
+            vector: Array.from(v),
+            fileChunkId: fileChunkIds[i],
+        }));
 
         if (!this.vectorsTable) {
             this.vectorsTable = await this.db!.createTable(TBL_VECTORS, rows);
+            await this.createIndexSafe(this.vectorsTable, 'id');
+            await this.createIndexSafe(this.vectorsTable, 'fileChunkId');
         } else {
             await this.vectorsTable.add(rows);
         }
-
-        return ids;
     }
 
     /**
@@ -1048,14 +688,14 @@ export class VectorDatabase {
      * @returns The filePathIds corresponding to each input path.
      */
     private async ensureFilePaths(filePaths: string[]): Promise<number[]> {
-        const newRows: { id: number; filePath: string }[] = [];
+        const newRows: { id: number; filePath: string; sha256: string }[] = [];
 
         const ids = filePaths.map(fp => {
             let id = this.filePathCache.get(fp);
             if (id === undefined) {
                 id = this.nextFilePathId++;
                 this.filePathCache.set(fp, id);
-                newRows.push({ id, filePath: fp });
+                newRows.push({ id, filePath: fp, sha256: '' });
             }
             return id;
         });
@@ -1114,13 +754,6 @@ export class VectorDatabase {
     }
 
     /**
-     * Escape single quotes in SQL string literals to prevent injection.
-     */
-    private escapeSql(value: string): string {
-        return value.replace(/'/g, "''");
-    }
-
-    /**
      * Assert that the database connection is open.
      */
     private ensureOpen(): void {
@@ -1151,20 +784,10 @@ export class VectorDatabase {
             count += await this.createIndexSafe(this.fileChunksTable, 'filePathId');
         }
 
-        // links: filtered by fileChunkId (deletes) and vectorId (search resolution)
-        if (this.linksTable) {
-            count += await this.createIndexSafe(this.linksTable, 'fileChunkId');
-            count += await this.createIndexSafe(this.linksTable, 'vectorId');
-        }
-
-        // shadow_chunks: filtered by fileChunkId (deletes)
-        if (this.shadowChunksTable) {
-            count += await this.createIndexSafe(this.shadowChunksTable, 'fileChunkId');
-        }
-
-        // file_versions: filtered by filePathId (upserts)
-        if (this.fileVersionsTable) {
-            count += await this.createIndexSafe(this.fileVersionsTable, 'filePathId');
+        // vectors: filtered by id (deletes) and fileChunkId (search resolution)
+        if (this.vectorsTable) {
+            count += await this.createIndexSafe(this.vectorsTable, 'id');
+            count += await this.createIndexSafe(this.vectorsTable, 'fileChunkId');
         }
 
         // file_paths: filtered by id (deletes, lookups)
@@ -1282,16 +905,11 @@ export class VectorDatabase {
      * delete orphaned rows.
      *
      * Detects:
-     *   1. Orphaned vectors   — Vectors with no row in Links.
-     *   2. Orphaned links     — Links whose vectorId or fileChunkId no
-     *                           longer exists.
-     *   3. Orphaned shadows   — ShadowChunks whose fileChunkId no longer
-     *                           exists.
-     *   4. Orphaned file paths — FilePaths that no FileChunk references.
-     *   5. Dangling chunks    — FileChunks whose vectorId no longer exists
-     *                           in Vectors.
-     *   6. Orphaned file versions — FileVersions whose filePathId no longer
-     *                               exists in FilePaths.
+     *   1. Orphaned vectors    — Vectors whose fileChunkId no longer
+     *                            exists in FileChunks.
+     *   2. Orphaned file paths — FilePaths that no FileChunk references.
+     *   3. Dangling chunks     — FileChunks whose vectorId no longer
+     *                            exists in Vectors.
      *
      * The check only reads lightweight id/FK columns — no vector data is
      * loaded — so the cost is proportional to the row count, not the
@@ -1302,33 +920,29 @@ export class VectorDatabase {
      */
     private async checkIntegrity(repair: boolean = false): Promise<{
         orphanedVectors: number;
-        orphanedLinks: number;
-        orphanedShadowChunks: number;
         orphanedFilePaths: number;
-        orphanedFileVersions: number;
         danglingFileChunks: number;
     }> {
         this.ensureOpen();
 
         const result = {
             orphanedVectors: 0,
-            orphanedLinks: 0,
-            orphanedShadowChunks: 0,
             orphanedFilePaths: 0,
-            orphanedFileVersions: 0,
             danglingFileChunks: 0,
         };
 
         // ── Collect id sets from each table ─────────────────────────────
 
         const vectorIds = new Set<number>();
+        const vectorFileChunkIds = new Set<number>();
         if (this.vectorsTable) {
             const rows = await this.vectorsTable
                 .query()
-                .select(['id'])
-                .toArray() as { id: number }[];
+                .select(['id', 'fileChunkId'])
+                .toArray() as { id: number; fileChunkId: number }[];
             for (const r of rows) {
                 vectorIds.add(r.id);
+                vectorFileChunkIds.add(r.fileChunkId);
             }
         }
 
@@ -1347,28 +961,6 @@ export class VectorDatabase {
             }
         }
 
-        const linkRows: { vectorId: number; fileChunkId: number }[] = [];
-        const linkedVectorIds = new Set<number>();
-        if (this.linksTable) {
-            const rows = await this.linksTable
-                .query()
-                .select(['vectorId', 'fileChunkId'])
-                .toArray() as { vectorId: number; fileChunkId: number }[];
-            for (const r of rows) {
-                linkRows.push(r);
-                linkedVectorIds.add(r.vectorId);
-            }
-        }
-
-        const shadowRows: { vectorId: number; fileChunkId: number }[] = [];
-        if (this.shadowChunksTable) {
-            const rows = await this.shadowChunksTable
-                .query()
-                .select(['vectorId', 'fileChunkId'])
-                .toArray() as { vectorId: number; fileChunkId: number }[];
-            shadowRows.push(...rows);
-        }
-
         const filePathIds = new Set<number>();
         if (this.filePathsTable) {
             const rows = await this.filePathsTable
@@ -1380,38 +972,29 @@ export class VectorDatabase {
             }
         }
 
-        // ── 1. Orphaned vectors — in Vectors but not referenced by Links ─
+        // ── 1. Orphaned vectors — fileChunkId not in FileChunks ──────────
         const orphanedVectorIds: number[] = [];
-        for (const id of vectorIds) {
-            if (!linkedVectorIds.has(id)) {
-                orphanedVectorIds.push(id);
+        for (const fcId of vectorFileChunkIds) {
+            if (!fileChunkIds.has(fcId)) {
+                // Find all vector ids that reference this missing fileChunkId
+                // (already collected above, but we need the vector id)
+            }
+        }
+        // Re-scan to collect actual vector ids whose fileChunkId is missing
+        if (this.vectorsTable) {
+            const rows = await this.vectorsTable
+                .query()
+                .select(['id', 'fileChunkId'])
+                .toArray() as { id: number; fileChunkId: number }[];
+            for (const r of rows) {
+                if (!fileChunkIds.has(r.fileChunkId)) {
+                    orphanedVectorIds.push(r.id);
+                }
             }
         }
         result.orphanedVectors = orphanedVectorIds.length;
 
-        // ── 2. Orphaned links — vectorId or fileChunkId doesn't exist ────
-        const orphanedLinkVectorIds: number[] = [];
-        const orphanedLinkChunkIds: number[] = [];
-        for (const link of linkRows) {
-            if (!vectorIds.has(link.vectorId)) {
-                orphanedLinkVectorIds.push(link.vectorId);
-            }
-            if (!fileChunkIds.has(link.fileChunkId)) {
-                orphanedLinkChunkIds.push(link.fileChunkId);
-            }
-        }
-        result.orphanedLinks = orphanedLinkVectorIds.length + orphanedLinkChunkIds.length;
-
-        // ── 3. Orphaned shadow chunks — fileChunkId doesn't exist ────────
-        const orphanedShadowVectorIds: number[] = [];
-        for (const shadow of shadowRows) {
-            if (!fileChunkIds.has(shadow.fileChunkId)) {
-                orphanedShadowVectorIds.push(shadow.vectorId);
-            }
-        }
-        result.orphanedShadowChunks = orphanedShadowVectorIds.length;
-
-        // ── 4. Orphaned file paths — no FileChunk references them ────────
+        // ── 2. Orphaned file paths — no FileChunk references them ────────
         const orphanedFilePathIds: number[] = [];
         for (const id of filePathIds) {
             if (!fileChunkFilePathIds.has(id)) {
@@ -1420,40 +1003,18 @@ export class VectorDatabase {
         }
         result.orphanedFilePaths = orphanedFilePathIds.length;
 
-        // ── 5. Dangling file chunks — vectorId not in Vectors ────────────
-        const danglingChunkIds: number[] = [];
+        // ── 3. Dangling file chunks — vectorId not in Vectors ────────────
+        const danglingChunkVectorIds: number[] = [];
         for (const vid of fileChunkVectorIds) {
             if (!vectorIds.has(vid)) {
-                danglingChunkIds.push(vid);
+                danglingChunkVectorIds.push(vid);
             }
         }
-        result.danglingFileChunks = danglingChunkIds.length;
-
-        // ── 6. Orphaned file versions — filePathId not in FilePaths ──────
-        const fileVersionFilePathIds = new Set<number>();
-        if (this.fileVersionsTable) {
-            const rows = await this.fileVersionsTable
-                .query()
-                .select(['filePathId'])
-                .toArray() as { filePathId: number }[];
-            for (const r of rows) {
-                fileVersionFilePathIds.add(r.filePathId);
-            }
-        }
-        const orphanedFileVersionPathIds: number[] = [];
-        for (const id of fileVersionFilePathIds) {
-            if (!filePathIds.has(id)) {
-                orphanedFileVersionPathIds.push(id);
-            }
-        }
-        result.orphanedFileVersions = orphanedFileVersionPathIds.length;
+        result.danglingFileChunks = danglingChunkVectorIds.length;
 
         // ── Log summary ─────────────────────────────────────────────────
         const total = result.orphanedVectors
-            + result.orphanedLinks
-            + result.orphanedShadowChunks
             + result.orphanedFilePaths
-            + result.orphanedFileVersions
             + result.danglingFileChunks;
 
         if (total === 0) {
@@ -1464,10 +1025,7 @@ export class VectorDatabase {
         warn(
             `VectorDatabase: integrity check found ${total} issue(s): ` +
             `${result.orphanedVectors} orphaned vector(s), ` +
-            `${result.orphanedLinks} orphaned link(s), ` +
-            `${result.orphanedShadowChunks} orphaned shadow chunk(s), ` +
             `${result.orphanedFilePaths} orphaned file path(s), ` +
-            `${result.orphanedFileVersions} orphaned file version(s), ` +
             `${result.danglingFileChunks} dangling file chunk(s)`
         );
 
@@ -1483,79 +1041,31 @@ export class VectorDatabase {
             await this.vectorsTable.delete(`id IN (${idList})`);
         }
 
-        // Delete orphaned links (by dangling vectorId)
-        if (this.linksTable && orphanedLinkVectorIds.length > 0) {
-            const idList = orphanedLinkVectorIds.join(', ');
-            await this.linksTable.delete(`vectorId IN (${idList})`);
-        }
-
-        // Delete orphaned links (by dangling fileChunkId)
-        if (this.linksTable && orphanedLinkChunkIds.length > 0) {
-            const idList = orphanedLinkChunkIds.join(', ');
-            await this.linksTable.delete(`fileChunkId IN (${idList})`);
-        }
-
-        // Delete orphaned shadow chunks and their vectors
-        if (this.shadowChunksTable && orphanedShadowVectorIds.length > 0) {
-            const chunkIdList = orphanedShadowVectorIds
-                .map(vid => {
-                    const s = shadowRows.find(r => r.vectorId === vid);
-                    return s?.fileChunkId;
-                })
-                .filter((id): id is number => id !== undefined);
-            // Delete shadow chunks whose fileChunkId is invalid
-            if (chunkIdList.length > 0) {
-                const idList = [...new Set(chunkIdList)].join(', ');
-                await this.shadowChunksTable.delete(`fileChunkId IN (${idList})`);
-            }
-            // Delete the associated vectors
-            if (this.vectorsTable) {
-                const idList = orphanedShadowVectorIds.join(', ');
-                await this.vectorsTable.delete(`id IN (${idList})`);
-            }
-            // Delete the associated links
-            if (this.linksTable) {
-                const idList = orphanedShadowVectorIds.join(', ');
-                await this.linksTable.delete(`vectorId IN (${idList})`);
-            }
-        }
-
         // Delete orphaned file paths
         if (this.filePathsTable && orphanedFilePathIds.length > 0) {
             const idList = orphanedFilePathIds.join(', ');
             await this.filePathsTable.delete(`id IN (${idList})`);
-            // Also evict from the in-memory cache
+            // Also evict from the in-memory caches
             for (const [fp, fpId] of this.filePathCache) {
                 if (orphanedFilePathIds.includes(fpId)) {
                     this.filePathCache.delete(fp);
+                    this.fileVersionCache.delete(fpId);
                 }
             }
         }
 
         // Delete dangling file chunks (those whose vectorId is missing)
-        // Use the full deleteFileChunks path so links/shadows are also cleaned up
-        if (danglingChunkIds.length > 0 && this.fileChunksTable) {
-            // Find the actual fileChunk ids (danglingChunkIds holds vectorIds)
+        if (danglingChunkVectorIds.length > 0 && this.fileChunksTable) {
             const rows = await this.fileChunksTable
                 .query()
                 .select(['id', 'vectorId'])
                 .toArray() as { id: number; vectorId: number }[];
-            const danglingVectorIdSet = new Set(danglingChunkIds);
+            const danglingVectorIdSet = new Set(danglingChunkVectorIds);
             const chunkIdsToDelete = rows
                 .filter(r => danglingVectorIdSet.has(r.vectorId))
                 .map(r => r.id);
             if (chunkIdsToDelete.length > 0) {
                 await this.deleteFileChunks(chunkIdsToDelete);
-            }
-        }
-
-        // Delete orphaned file versions
-        if (this.fileVersionsTable && orphanedFileVersionPathIds.length > 0) {
-            const idList = orphanedFileVersionPathIds.join(', ');
-            await this.fileVersionsTable.delete(`filePathId IN (${idList})`);
-            // Also evict from the in-memory cache
-            for (const id of orphanedFileVersionPathIds) {
-                this.fileVersionCache.delete(id);
             }
         }
 
