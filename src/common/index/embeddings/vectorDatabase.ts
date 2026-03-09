@@ -506,6 +506,18 @@ export class VectorDatabase {
     // ── Query ───────────────────────────────────────────────────────────────
 
     /**
+     * Get all file paths known to the database.
+     *
+     * Returns the keys of the in-memory cache that is populated at
+     * {@link open} time — no database query is needed.
+     *
+     * @returns Array of absolute file path strings.
+     */
+    getAllFilePaths(): string[] {
+        return Array.from(this.filePathCache.keys());
+    }
+
+    /**
      * Get the stored source-file SHA-256 for multiple file paths.
      *
      * @param filePaths — the file paths to look up.

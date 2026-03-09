@@ -66,6 +66,15 @@ export class CacheManager {
     private readonly debounceMs = 500;
 
     /**
+     * Set to true by {@link buildInitialIndex} once the initial mutation
+     * queue has been fully assembled.  Until then, {@link startDrainLoop}
+     * is a no-op — this prevents the FileWatcher's debounced mutations
+     * from starting the drain loop before all components are ready and
+     * the complete set of initial mutations has been queued.
+     */
+    private mutationQueueInitialized = false;
+
+    /**
      * Normalize a file path for use as a cache key.
      * Converts to lowercase to handle Windows case-insensitive paths consistently.
      * This ensures paths from fs.readdir (original casing) match paths from
@@ -172,6 +181,35 @@ export class CacheManager {
             for (const [_key, fileRef] of this.cache) {
                 this.fileMutationQueue.push({ action: 'dirty', filePath: fileRef.getFilePath() });
             }
+
+            // Also push any file paths known to the vector database that
+            // were NOT found on disk. These may have been deleted while
+            // the extension was inactive. The drain loop will attempt to
+            // index them, the worker will hit ENOENT and return Deleted,
+            // and the drain loop will clean them out of the cache and DB.
+            //
+            // These are pushed as 'dirty' (not 'delete') so that the
+            // worker thread determines ground truth by reading the file.
+            // This avoids a race where a FileWatcher 'dirty' arrives
+            // for a newly created file during findFilesInDirectory — if we
+            // used 'delete' here, "last action wins" would discard the
+            // watcher's 'dirty' and incorrectly remove the file.
+            if (this.vectorDatabase) {
+                const discoveredPaths = new Set(
+                    filePaths.map(fp => this.normalizePath(fp))
+                );
+                for (const dbPath of this.vectorDatabase.getAllFilePaths()) {
+                    if (!discoveredPaths.has(this.normalizePath(dbPath))) {
+                        this.fileMutationQueue.push({ action: 'dirty', filePath: dbPath });
+                    }
+                }
+            }
+
+            // Initial mutation queue is fully assembled — allow
+            // the drain loop to start. Any mutations queued by the
+            // FileWatcher during the directory scan are still in the
+            // queue and will be processed together with the initial batch.
+            this.mutationQueueInitialized = true;
 
             // Drain all mutations — blocks until the
             // inner drain loop fully converges
@@ -421,7 +459,7 @@ export class CacheManager {
      * so both the immediate and debounced paths share the same logic.
      */
     private startDrainLoop(): void {
-        if (this.drainLoopRunning) {
+        if (this.drainLoopRunning || !this.mutationQueueInitialized) {
             return;
         }
         this.drainLoopRunning = true;
@@ -642,6 +680,7 @@ export class CacheManager {
         this.cache.clear();
         this.indexingComplete = false;
         this.indexingPromise = null;
+        this.mutationQueueInitialized = false;
 
         log('Content index: CacheManager disposed');
     }
