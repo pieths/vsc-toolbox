@@ -984,6 +984,46 @@ describe('openFile - directory handling', () => {
         }
     });
 
+    it('resolves directory path with double backslashes (source code style)', async () => {
+        const tmpDir = createTempDir('testdir');
+        let revealedUri: any;
+        vscode.commands.executeCommand = async (command: string, uri: any) => {
+            if (command === 'revealFileInOS') {
+                revealedUri = uri;
+            }
+        };
+        try {
+            // Simulate a line from source code where backslashes are escaped:
+            //     "D:\\cs\\src\\base",
+            const doubleSlashPath = tmpDir.replace(/\\/g, '\\\\');
+            const line = `        "${doubleSlashPath}",`;
+            const col = 16;
+
+            // Mock the active editor so findPathAtCursor has context
+            vscode.window.activeTextEditor = {
+                document: {
+                    lineAt: () => ({ text: line }),
+                    isUntitled: true,
+                },
+                selection: { active: { line: 0, character: col } },
+            };
+
+            const find = getPrivate(cmd).findPathAtCursor;
+            const result = await find.call(cmd, line, col);
+
+            assert.equal(result?.type, 'file');
+            // The resolved path should have normalized (single) backslashes
+            assert.equal(result?.path, tmpDir);
+
+            // Verify openFile treats it as a directory
+            await getPrivate(cmd).openFile(result.path);
+            assert.ok(revealedUri, 'should have called revealFileInOS');
+            assert.equal(revealedUri.fsPath, tmpDir);
+        } finally {
+            fs.rmSync(path.dirname(tmpDir), { recursive: true, force: true });
+        }
+    });
+
     it('shows error message when file cannot be opened', async () => {
         let errorMessage = '';
         vscode.window.showErrorMessage = async (msg: string) => {

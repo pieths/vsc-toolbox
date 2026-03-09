@@ -335,7 +335,7 @@ export class OpenFileUnderCursorCommand {
      * workspace folders, workspace search for bare filenames.
      */
     private async resolveFilePath(filePath: string): Promise<string | undefined> {
-        const normalizedPath = filePath.replace(/\//g, path.sep);
+        const normalizedPath = path.normalize(filePath);
 
         // 1. Try as absolute path
         if (path.isAbsolute(normalizedPath)) {
