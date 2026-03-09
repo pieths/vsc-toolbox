@@ -280,38 +280,53 @@ export class VectorDatabase {
     // ── Delete ──────────────────────────────────────────────────────────────
 
     /**
-     * Delete everything associated with a file path: all FileChunks,
-     * their vectors, and the FilePath entry itself.
+     * Delete everything associated with one or more file paths: all
+     * FileChunks, their vectors, and the FilePath entries themselves.
      *
-     * After this call the file path will no longer exist in the database
-     * or in the in-memory cache.
+     * After this call the file paths will no longer exist in the
+     * database or in the in-memory caches.
      */
-    async deleteByFilePath(filePath: string): Promise<void> {
-        if (!this.fileChunksTable || !this.filePathsTable) {
+    async deleteByFilePaths(filePaths: string[]): Promise<void> {
+        if (!this.fileChunksTable || !this.filePathsTable || filePaths.length === 0) {
             return;
         }
 
-        const filePathId = this.filePathCache.get(filePath);
-        if (filePathId === undefined) {
+        // Resolve file paths to filePathIds, skipping unknown paths
+        const filePathIds: number[] = [];
+        const resolvedPaths: string[] = [];
+        for (const fp of filePaths) {
+            const id = this.filePathCache.get(fp);
+            if (id !== undefined) {
+                filePathIds.push(id);
+                resolvedPaths.push(fp);
+            }
+        }
+
+        if (filePathIds.length === 0) {
             return;
         }
 
-        // Find all FileChunk ids for this file
+        // Find all FileChunk ids for these files in one query
+        const fpIdList = filePathIds.join(', ');
         const chunkRows = await this.fileChunksTable
             .query()
             .select(['id'])
-            .where(`filePathId = ${filePathId}`)
+            .where(`filePathId IN (${fpIdList})`)
             .toArray() as { id: number }[];
 
-        // Delete all chunks (and their vectors)
+        // Delete all chunks (and their vectors) in one batch
         if (chunkRows.length > 0) {
             await this.deleteFileChunks(chunkRows.map(r => r.id));
         }
 
-        // Delete the FilePath entry itself
-        await this.filePathsTable.delete(`id = ${filePathId}`);
-        this.filePathCache.delete(filePath);
-        this.fileVersionCache.delete(filePathId);
+        // Delete the FilePath entries in one query
+        await this.filePathsTable.delete(`id IN (${fpIdList})`);
+
+        // Evict from in-memory caches
+        for (let i = 0; i < resolvedPaths.length; i++) {
+            this.filePathCache.delete(resolvedPaths[i]);
+            this.fileVersionCache.delete(filePathIds[i]);
+        }
     }
 
     /**

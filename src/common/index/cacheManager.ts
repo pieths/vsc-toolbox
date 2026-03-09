@@ -540,9 +540,9 @@ export class CacheManager {
                 //    discovered during indexing — remove from cache and DB
                 for (const filePath of deletedFiles) {
                     this.remove(filePath);
-                    if (this.vectorDatabase) {
-                        await this.vectorDatabase.deleteByFilePath(filePath);
-                    }
+                }
+                if (this.vectorDatabase && deletedFiles.length > 0) {
+                    await this.vectorDatabase.deleteByFilePaths(deletedFiles);
                 }
 
                 // 5. Inner loop continues — picks up any new mutations
