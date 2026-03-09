@@ -647,12 +647,15 @@ export class VectorDatabase {
     // ── Maintenance ─────────────────────────────────────────────────────────
 
     /**
-     * Optimize the database by compacting data files and cleaning up
-     * old versions for all tables.
+     * Optimize the database by compacting data files, cleaning up
+     * old versions, and updating indices for all tables.
      *
-     * LanceDB uses logical deletes (a deletion bitmap).  Over time,
-     * compaction rewrites data files to physically remove deleted rows
-     * and reclaim disk space.
+     * Covers three operations:
+     *   - **Compaction**: merges small files into larger ones and
+     *     physically removes logically-deleted rows to reclaim disk space.
+     *   - **Prune**: removes old table versions.
+     *   - **Index**: updates existing scalar BTree indices with any
+     *     new data added since the last optimization.
      *
      * Call this during idle periods or when a user explicitly requests it.
      */

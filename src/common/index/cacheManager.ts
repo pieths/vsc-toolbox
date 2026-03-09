@@ -22,8 +22,8 @@ interface FileMutationEntry {
     filePath: string;
 }
 
-/** Pending query, resolved by the drain loop after all mutations are processed. */
-type QueryEntry =
+/** Pending task, resolved by the drain loop after all mutations are processed. */
+type TaskEntry =
     | {
         type: 'vectorSearch'; vector: Float32Array; topK: number;
         resolve: (v: NearestEmbeddingResult[]) => void;
@@ -32,6 +32,11 @@ type QueryEntry =
     | {
         type: 'getAllSymbols'; filePaths: string[];
         resolve: (v: Map<string, FileSymbols>) => void;
+        reject: (e: unknown) => void
+    }
+    | {
+        type: 'compact';
+        resolve: (v: void) => void;
         reject: (e: unknown) => void
     };
 
@@ -59,7 +64,7 @@ export class CacheManager {
 
     // ── Dirty-set drain loop state ──────────────────────────────────────────
     private fileMutationQueue: FileMutationEntry[] = [];
-    private queryQueue: QueryEntry[] = [];
+    private taskQueue: TaskEntry[] = [];
     private drainLoopRunning = false;
     private drainLoopPromise: Promise<void> | null = null;
     private debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -214,6 +219,14 @@ export class CacheManager {
             // Drain all mutations — blocks until the
             // inner drain loop fully converges
             await this.awaitDrainLoop();
+
+            // Optimize the vector database — compacts data files,
+            // prunes old table versions, and updates scalar indices
+            // with data added during the initial drain. Runs inside
+            // the drain loop to avoid concurrent DB access.
+            if (this.vectorDatabase) {
+                await this.compactDatabase();
+            }
 
             this.indexingComplete = true;
             log(`Content index: Added ${this.cache.size} files to cache`);
@@ -474,7 +487,7 @@ export class CacheManager {
      */
     private async awaitDrainLoop(): Promise<void> {
         if (!this.drainLoopRunning &&
-            (this.fileMutationQueue.length > 0 || this.queryQueue.length > 0)) {
+            (this.fileMutationQueue.length > 0 || this.taskQueue.length > 0)) {
             this.wakeDrainLoop(false);
         }
         if (this.drainLoopPromise) {
@@ -493,7 +506,7 @@ export class CacheManager {
      * outer loop process queued queries.
      */
     private async runDrainLoop(): Promise<void> {
-        while (this.fileMutationQueue.length > 0 || this.queryQueue.length > 0) {
+        while (this.fileMutationQueue.length > 0 || this.taskQueue.length > 0) {
 
             // Inner loop: drain ALL mutations until the
             // idx files and DB are fully consistent.
@@ -551,35 +564,36 @@ export class CacheManager {
 
             // ── DB and idx files are fully consistent at this point ──
 
-            // 6. Dispatch queued queries against the quiescent snapshot
-            if (this.queryQueue.length > 0) {
-                const queries = [...this.queryQueue];
-                this.queryQueue.length = 0;
-                for (const query of queries) {
-                    await this.executeQuery(query);
+            // 6. Dispatch queued tasks against the quiescent snapshot
+            if (this.taskQueue.length > 0) {
+                const tasks = [...this.taskQueue];
+                this.taskQueue.length = 0;
+                for (const task of tasks) {
+                    await this.executeTask(task);
                 }
             }
 
             // 7. Outer loop continues — if new mutations arrived during
-            //    query processing, the inner loop will drain them before
-            //    the next batch of queries executes
+            //    task processing, the inner loop will drain them before
+            //    the next batch of tasks executes
         }
     }
 
-    // ── Query execution handlers ────────────────────────────────────────────
+    // ── Task execution handlers ──────────────────────────────────────────────
 
     /**
-     * Dispatch a single query to the appropriate handler.
+     * Dispatch a single task to the appropriate handler.
      */
-    private async executeQuery(query: QueryEntry): Promise<void> {
-        switch (query.type) {
-            case 'vectorSearch': return this.executeVectorSearch(query);
-            case 'getAllSymbols': return this.executeGetAllSymbols(query);
+    private async executeTask(task: TaskEntry): Promise<void> {
+        switch (task.type) {
+            case 'vectorSearch': return this.executeVectorSearch(task);
+            case 'getAllSymbols': return this.executeGetAllSymbols(task);
+            case 'compact': return this.executeCompact(task);
         }
     }
 
     private async executeVectorSearch(
-        query: Extract<QueryEntry, { type: 'vectorSearch' }>,
+        query: Extract<TaskEntry, { type: 'vectorSearch' }>,
     ): Promise<void> {
         try {
             if (!this.vectorDatabase) {
@@ -603,7 +617,7 @@ export class CacheManager {
     }
 
     private async executeGetAllSymbols(
-        query: Extract<QueryEntry, { type: 'getAllSymbols' }>,
+        query: Extract<TaskEntry, { type: 'getAllSymbols' }>,
     ): Promise<void> {
         try {
             const results = new Map<string, FileSymbols>();
@@ -620,6 +634,21 @@ export class CacheManager {
             query.resolve(results);
         } catch (err) {
             query.reject(err instanceof Error ? err : new Error(String(err)));
+        }
+    }
+
+    private async executeCompact(
+        task: Extract<TaskEntry, { type: 'compact' }>,
+    ): Promise<void> {
+        try {
+            if (!this.vectorDatabase) {
+                task.resolve();
+                return;
+            }
+            await this.vectorDatabase.compact();
+            task.resolve();
+        } catch (err) {
+            task.reject(err instanceof Error ? err : new Error(String(err)));
         }
     }
 
@@ -656,12 +685,12 @@ export class CacheManager {
             this.debounceTimer = null;
         }
 
-        // Clear queues and reject pending queries
+        // Clear queues and reject pending tasks
         this.fileMutationQueue.length = 0;
-        for (const query of this.queryQueue) {
-            query.reject(new Error('CacheManager disposed'));
+        for (const task of this.taskQueue) {
+            task.reject(new Error('CacheManager disposed'));
         }
-        this.queryQueue.length = 0;
+        this.taskQueue.length = 0;
 
         // Wait for any in-flight drain loop to finish
         if (this.drainLoopPromise) {
@@ -699,11 +728,11 @@ export class CacheManager {
         return this.pathFilter?.getFileExtensions() ?? [];
     }
 
-    // ── Drain-loop-gated query methods ──────────────────────────────────────
+    // ── Drain-loop-serialized task methods ───────────────────────────────────
 
     /**
      * Get hydrated symbols for one or more files.
-     * The query is enqueued and processed by the drain loop to ensure
+     * The task is enqueued and processed by the drain loop to ensure
      * it executes against a consistent, quiescent snapshot.
      *
      * Files not in the index or whose `*.idx` file cannot be read are
@@ -714,19 +743,19 @@ export class CacheManager {
      */
     async getAllSymbols(filePaths: string[]): Promise<Map<string, FileSymbols>> {
         return new Promise<Map<string, FileSymbols>>((resolve, reject) => {
-            this.queryQueue.push({ type: 'getAllSymbols', filePaths, resolve, reject });
+            this.taskQueue.push({ type: 'getAllSymbols', filePaths, resolve, reject });
             this.wakeDrainLoop(false);
         });
     }
 
     /**
      * Search the vector database for the nearest embeddings to a query vector.
-     * The query is enqueued and processed by the drain loop to ensure
+     * The task is enqueued and processed by the drain loop to ensure
      * it executes against a consistent, quiescent database snapshot.
      *
-     * If the drain loop is idle (no dirty files, no deletes), the query
+     * If the drain loop is idle (no dirty files, no deletes), the task
      * executes immediately — the loop wakes, skips mutations, runs the
-     * query, and exits.
+     * task, and exits.
      *
      * @param queryVector - Embedding vector for the query (Float32Array of length `dims`)
      * @param topK - Maximum number of results to return
@@ -743,7 +772,22 @@ export class CacheManager {
         }
 
         return new Promise<NearestEmbeddingResult[]>((resolve, reject) => {
-            this.queryQueue.push({ type: 'vectorSearch', vector: queryVector, topK, resolve, reject });
+            this.taskQueue.push({ type: 'vectorSearch', vector: queryVector, topK, resolve, reject });
+            this.wakeDrainLoop(false);
+        });
+    }
+
+    /**
+     * Optimize the vector database — compacts data files to reclaim
+     * disk space from logically-deleted rows, prunes old table
+     * versions, and updates scalar indices with new data.
+     *
+     * The task is enqueued and processed by the drain loop to ensure
+     * it runs during a quiescent window with no concurrent DB access.
+     */
+    async compactDatabase(): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            this.taskQueue.push({ type: 'compact', resolve, reject });
             this.wakeDrainLoop(false);
         });
     }
