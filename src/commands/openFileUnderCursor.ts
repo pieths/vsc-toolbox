@@ -114,6 +114,18 @@ export class OpenFileUnderCursorCommand {
                 const matchEnd = match.index + match[0].length;
 
                 if (cursorCol >= matchStart && cursorCol <= matchEnd) {
+                    // Peek past the match for a line/column suffix that
+                    // the path regex itself didn't capture (e.g. :42, :42:10,
+                    // (42), (42,10), #L42, #L42-L50).
+                    const suffix = this.peekLineColumnSuffix(lineText, matchEnd);
+                    if (suffix) {
+                        const extended = match[0] + suffix;
+                        const result = await this.tryAsPath(extended, pattern.type);
+                        if (result) {
+                            return result;
+                        }
+                    }
+
                     const result = await this.tryAsPath(match[0], pattern.type);
                     if (result) {
                         return result;
@@ -327,6 +339,26 @@ export class OpenFileUnderCursorCommand {
         }
 
         return undefined;
+    }
+
+    /**
+     * Peek at the text immediately after a regex match to see if there's a
+     * line/column suffix that wasn't captured by the path regex.
+     *
+     * Supported suffix formats:
+     *   :42          (line only)
+     *   :42:10       (line and column)
+     *   (42)         (line only)
+     *   (42,10)      (line and column)
+     *   #L42         (GitHub-style line)
+     *   #L42-L50     (GitHub-style line range)
+     *
+     * Returns the suffix string if found, or undefined.
+     */
+    private peekLineColumnSuffix(lineText: string, matchEnd: number): string | undefined {
+        const rest = lineText.substring(matchEnd);
+        const suffixMatch = rest.match(/^(?::\d+(?::\d+)?|\(\d+(?:,\s*\d+)?\)|#L\d+(?:-L\d+)?)/);
+        return suffixMatch?.[0];
     }
 
     /**
