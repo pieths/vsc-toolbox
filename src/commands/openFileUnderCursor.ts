@@ -423,9 +423,9 @@ export class OpenFileUnderCursorCommand {
         try {
             const uri = vscode.Uri.file(filePath);
 
-            // If it's a directory, open it in the OS file explorer
+            // If it's a directory, open it directly in the OS file explorer
             if (fs.statSync(filePath).isDirectory()) {
-                await vscode.commands.executeCommand('revealFileInOS', uri);
+                await vscode.env.openExternal(uri);
                 return;
             }
 

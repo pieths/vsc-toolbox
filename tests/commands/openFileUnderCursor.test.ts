@@ -924,18 +924,17 @@ describe('openFile - directory handling', () => {
     const openFile = (p: string, line?: number, col?: number) =>
         getPrivate(cmd).openFile(p, line, col);
 
-    it('calls revealFileInOS for directories', async () => {
+    it('opens directory directly via openExternal', async () => {
         const tmpDir = createTempDir('testdir');
-        let revealedUri: any;
-        vscode.commands.executeCommand = async (command: string, uri: any) => {
-            if (command === 'revealFileInOS') {
-                revealedUri = uri;
-            }
+        let openedUri: any;
+        vscode.env.openExternal = async (uri: any) => {
+            openedUri = uri;
+            return true;
         };
         try {
             await openFile(tmpDir);
-            assert.ok(revealedUri);
-            assert.equal(revealedUri.fsPath, tmpDir);
+            assert.ok(openedUri, 'should have called openExternal');
+            assert.equal(openedUri.fsPath, tmpDir);
         } finally {
             fs.rmSync(path.dirname(tmpDir), { recursive: true, force: true });
         }
@@ -986,11 +985,10 @@ describe('openFile - directory handling', () => {
 
     it('resolves directory path with double backslashes (source code style)', async () => {
         const tmpDir = createTempDir('testdir');
-        let revealedUri: any;
-        vscode.commands.executeCommand = async (command: string, uri: any) => {
-            if (command === 'revealFileInOS') {
-                revealedUri = uri;
-            }
+        let openedUri: any;
+        vscode.env.openExternal = async (uri: any) => {
+            openedUri = uri;
+            return true;
         };
         try {
             // Simulate a line from source code where backslashes are escaped:
@@ -1017,8 +1015,8 @@ describe('openFile - directory handling', () => {
 
             // Verify openFile treats it as a directory
             await getPrivate(cmd).openFile(result.path);
-            assert.ok(revealedUri, 'should have called revealFileInOS');
-            assert.equal(revealedUri.fsPath, tmpDir);
+            assert.ok(openedUri, 'should have called openExternal');
+            assert.equal(openedUri.fsPath, tmpDir);
         } finally {
             fs.rmSync(path.dirname(tmpDir), { recursive: true, force: true });
         }
