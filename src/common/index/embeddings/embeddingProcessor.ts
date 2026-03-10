@@ -243,6 +243,9 @@ export class EmbeddingProcessor {
 
         if (!vectors) {
             warn(`Content index: Failed to embed batch of ${texts.length} chunks`);
+            for (const m of this.chunksToEmbed) {
+                warn(`  Failed chunk: ${m.filePath}:${m.chunk.startLine}-${m.chunk.endLine}`);
+            }
             return { vectors: 0, files: 0 };
         }
 
@@ -254,8 +257,9 @@ export class EmbeddingProcessor {
                 failedCount++;
                 // Blank the file version for this file so we don't mark
                 // that all chunks are valid when some embeddings failed.
-                const failedPath = this.chunksToEmbed[i].filePath;
-                this.fileVersionUpdates.set(failedPath, '');
+                const failed = this.chunksToEmbed[i];
+                warn(`Content index: Embedding failed for ${failed.filePath}:${failed.chunk.startLine}-${failed.chunk.endLine}`);
+                this.fileVersionUpdates.set(failed.filePath, '');
                 continue;
             }
             const m = this.chunksToEmbed[i];
