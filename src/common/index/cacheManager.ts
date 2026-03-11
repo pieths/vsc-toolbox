@@ -187,25 +187,36 @@ export class CacheManager {
                 this.fileMutationQueue.push({ action: 'dirty', filePath: fileRef.getFilePath() });
             }
 
-            // Also push any file paths known to the vector database that
-            // were NOT found on disk. These may have been deleted while
-            // the extension was inactive. The drain loop will attempt to
-            // index them, the worker will hit ENOENT and return Deleted,
-            // and the drain loop will clean them out of the cache and DB.
+            // Also reconcile file paths known to the vector database
+            // that were NOT found on disk during the directory scan.
             //
-            // These are pushed as 'dirty' (not 'delete') so that the
-            // worker thread determines ground truth by reading the file.
-            // This avoids a race where a FileWatcher 'dirty' arrives
-            // for a newly created file during findFilesInDirectory — if we
-            // used 'delete' here, "last action wins" would discard the
-            // watcher's 'dirty' and incorrectly remove the file.
+            // Two cases:
+            // (a) The file still passes shouldIncludeFile() — push as
+            //     'dirty' so the worker thread determines ground truth
+            //     by reading the file. If it hits ENOENT the drain loop
+            //     will delete it. Using 'dirty' (not 'delete') avoids
+            //     a race where a FileWatcher 'dirty' arrives for a newly
+            //     created file during findFilesInDirectory — "last action
+            //     wins" would discard the watcher's 'dirty' and
+            //     incorrectly remove the file.
+            //
+            // (b) The file no longer passes shouldIncludeFile() (e.g.
+            //     include paths or extensions changed) — push as 'delete'
+            //     to unconditionally remove it from cache and DB. No race
+            //     is possible because add() also gates on
+            //     shouldIncludeFile(), so the FileWatcher would never
+            //     enqueue a 'dirty' for this file.
             if (this.vectorDatabase) {
                 const discoveredPaths = new Set(
                     filePaths.map(fp => this.normalizePath(fp))
                 );
                 for (const dbPath of this.vectorDatabase.getAllFilePaths()) {
                     if (!discoveredPaths.has(this.normalizePath(dbPath))) {
-                        this.fileMutationQueue.push({ action: 'dirty', filePath: dbPath });
+                        if (this.pathFilter!.shouldIncludeFile(dbPath)) {
+                            this.fileMutationQueue.push({ action: 'dirty', filePath: dbPath });
+                        } else {
+                            this.fileMutationQueue.push({ action: 'delete', filePath: dbPath });
+                        }
                     }
                 }
             }
@@ -552,6 +563,7 @@ export class CacheManager {
                 // 4. Process all deletes — both explicitly queued and
                 //    discovered during indexing — remove from cache and DB
                 for (const filePath of deletedFiles) {
+                    log(`Content index: Removed file ${filePath}`);
                     this.remove(filePath);
                 }
                 if (this.vectorDatabase && deletedFiles.length > 0) {
