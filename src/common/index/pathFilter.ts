@@ -64,7 +64,15 @@ export class PathFilter {
         resolvedPaths = this.removeRedundantPaths(resolvedPaths);
 
         this.includePaths = resolvedPaths;
-        this.normalizedIncludePaths = resolvedPaths.map(p => path.normalize(p).toLowerCase());
+        this.normalizedIncludePaths = resolvedPaths.map(p => {
+            const normalized = path.normalize(p).toLowerCase();
+            // Ensure trailing separator so startsWith() matches
+            // only at directory boundaries (e.g. "chrome\" won't
+            // match "chromeos\").
+            return normalized.endsWith(path.sep)
+                ? normalized
+                : normalized + path.sep;
+        });
         this.fileExtensions = fileExtensions.map(ext => ext.toLowerCase());
 
         // Compile all exclude patterns into a single matcher for fast testing.
