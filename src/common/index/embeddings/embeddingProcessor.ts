@@ -11,18 +11,23 @@ import { log, warn } from '../../logger';
 /**
  * Method-object that encapsulates the embedding pipeline for a set of files.
  *
- * For each batch of files the flow is:
- *   1. Compute chunks via worker threads.
- *   2. Diff each file's chunks against the database — collect only chunks
- *      whose SHA-256 values differ (or that are new).
- *   3. Embed all changed chunk texts in a single embedBatch call.
- *   4. Delete stale stored chunks in a single deleteFileChunks call.
- *   5. Insert new chunks in a single addFileChunks call.
+ * Files are processed in small batches (chunking + diffing), and the diff
+ * state is accumulated across batches.  When the total pending work reaches
+ * a threshold (or no more files remain), the accumulated changes are flushed
+ * to the database in one pass — minimising the number of LanceDB versions
+ * created.
+ *
+ * Flush performs:
+ *   1. Embed all changed chunk texts in a single embedBatch call.
+ *   2. Delete stale stored chunks in a single deleteFileChunks call.
+ *   3. Insert new chunks in a single addFileChunks call.
+ *   4. Update file versions in a single setFileVersions call.
  */
 export class EmbeddingProcessor {
     private readonly batchSize = 50;
+    private readonly flushThreshold = 300;
 
-    // Accumulated diff state (reset per batch)
+    // Accumulated diff state (reset on flush)
     private chunksToEmbed: { filePath: string; chunk: Chunk }[] = [];
     private chunkIdsToDelete: number[] = [];
     private movedChunks: FileChunkRecord[] = [];
@@ -73,14 +78,25 @@ export class EmbeddingProcessor {
             const batchStart = Date.now();
 
             try {
-                const result = await this.processBatch(batch);
-                totalChunks += result.chunks;
-                totalVectors += result.vectors;
-                totalFiles += result.files;
+                await this.processBatch(batch);
             } catch (err) {
                 warn(`Content index: Batch failed (files ${i + 1}–${Math.min(i + this.batchSize, files.length)}): ${err}`);
-            } finally {
-                this.resetDiff();
+            }
+
+            const moreFilesToProcess = (i + this.batchSize) < files.length;
+            const pendingWork = this.chunksToEmbed.length;
+
+            if (pendingWork >= this.flushThreshold || !moreFilesToProcess) {
+                try {
+                    const result = await this.flush();
+                    totalChunks += result.chunks;
+                    totalVectors += result.vectors;
+                    totalFiles += result.files;
+                } catch (err) {
+                    warn(`Content index: Flush failed: ${err}`);
+                } finally {
+                    this.resetDiff();
+                }
             }
 
             recentBatchDurations.push(Date.now() - batchStart);
@@ -101,19 +117,28 @@ export class EmbeddingProcessor {
     }
 
     /**
-     * Process a single batch: compute chunks, diff, embed, and persist.
+     * Process a single batch: compute chunks and diff against the database.
+     *
+     * The diff state is accumulated across batches and flushed by the
+     * caller when a threshold is reached or no more files remain.
      */
-    private async processBatch(batch: FileRef[]): Promise<{ chunks: number; vectors: number; files: number }> {
+    private async processBatch(batch: FileRef[]): Promise<void> {
         const chunkOutputs = await this.computeChunks(batch);
 
         // Filter out skipped files — their chunks and versions are already
         // up-to-date in the database, so diff doesn't need to see them.
         const activeOutputs = chunkOutputs.filter(o => o.status !== ComputeChunksStatus.Skipped);
         if (activeOutputs.length === 0) {
-            return { chunks: 0, vectors: 0, files: 0 };
+            return;
         }
         await this.diff(activeOutputs);
+    }
 
+    /**
+     * Flush accumulated diff state: embed, persist to the database,
+     * and update file versions.
+     */
+    private async flush(): Promise<{ chunks: number; vectors: number; files: number }> {
         const chunks = this.chunksToEmbed.length;
         const result = await this.embedAndStore();
 
@@ -308,7 +333,7 @@ export class EmbeddingProcessor {
     }
 
     /**
-     * Reset diff state for the next batch.
+     * Reset diff state for the next flush cycle.
      */
     private resetDiff(): void {
         this.chunksToEmbed = [];
