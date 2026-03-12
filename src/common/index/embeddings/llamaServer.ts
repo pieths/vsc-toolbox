@@ -618,6 +618,10 @@ export class LlamaServer {
                 '-np', String(this.parallelSlots),
                 '-t', '16',                  // CPU threads (used for non-GPU layers)
                 ...deviceArgs,
+                // In CPU mode, explicitly disable GPU offloading.
+                // -dev none: don't use any accelerator devices
+                // -ngl 0:   don't offload any model layers to GPU
+                ...(!useGpu ? ['-dev', 'none', '-ngl', '0'] : []),
             ];
 
             // Start server process
