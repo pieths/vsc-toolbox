@@ -71,11 +71,11 @@ export class EmbeddingProcessor {
             ? await this.vectorDatabase.getFileVersions(allPaths)
             : new Map();
 
-        const recentBatchDurations: number[] = [];
+        const recentSegmentDurations: number[] = [];
+        let segmentStart = Date.now();
 
         for (let i = 0; i < files.length; i += this.batchSize) {
             const batch = files.slice(i, i + this.batchSize);
-            const batchStart = Date.now();
 
             try {
                 await this.processBatch(batch);
@@ -96,18 +96,19 @@ export class EmbeddingProcessor {
                     warn(`Content index: Flush failed: ${err}`);
                 } finally {
                     this.resetDiff();
+
+                    recentSegmentDurations.push(Date.now() - segmentStart);
+                    if (recentSegmentDurations.length > 10) {
+                        recentSegmentDurations.shift();
+                    }
+                    segmentStart = Date.now();
                 }
-            }
 
-            recentBatchDurations.push(Date.now() - batchStart);
-            if (recentBatchDurations.length > 10) {
-                recentBatchDurations.shift();
+                const processed = Math.min(i + this.batchSize, files.length);
+                const remainingBatches = Math.ceil((files.length - processed) / this.batchSize);
+                const eta = this.formatTimeRemaining(recentSegmentDurations, remainingBatches);
+                log(`Content index: Embedding progress: ${processed}/${files.length} files${eta}`);
             }
-
-            const processed = Math.min(i + this.batchSize, files.length);
-            const remainingBatches = Math.ceil((files.length - processed) / this.batchSize);
-            const eta = this.formatTimeRemaining(recentBatchDurations, remainingBatches);
-            log(`Content index: Embedding progress: ${processed}/${files.length} files${eta}`);
         }
 
         const elapsed = Date.now() - startTime;
