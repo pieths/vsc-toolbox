@@ -73,9 +73,11 @@ export class EmbeddingProcessor {
 
         const recentSegmentDurations: number[] = [];
         let segmentStart = Date.now();
+        let batchesInSegment = 0;
 
         for (let i = 0; i < files.length; i += this.batchSize) {
             const batch = files.slice(i, i + this.batchSize);
+            batchesInSegment++;
 
             try {
                 await this.processBatch(batch);
@@ -97,11 +99,12 @@ export class EmbeddingProcessor {
                 } finally {
                     this.resetDiff();
 
-                    recentSegmentDurations.push(Date.now() - segmentStart);
+                    recentSegmentDurations.push((Date.now() - segmentStart) / batchesInSegment);
                     if (recentSegmentDurations.length > 10) {
                         recentSegmentDurations.shift();
                     }
                     segmentStart = Date.now();
+                    batchesInSegment = 0;
                 }
 
                 const processed = Math.min(i + this.batchSize, files.length);
