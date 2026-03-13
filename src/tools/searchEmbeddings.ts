@@ -2,7 +2,14 @@
 // SPDX-License-Identifier: MIT
 
 import * as vscode from 'vscode';
-import { ContentIndex, NearestEmbeddingResult } from '../common/index';
+import {
+    ContentIndex,
+    NearestEmbeddingResult,
+    AttrKey,
+    symbolTypeToString,
+    CALLABLE_TYPES,
+} from '../common/index';
+import type { IndexSymbol } from '../common/index';
 import { sendRequestWithReadFileAccess } from '../common/copilotUtils';
 import { log } from '../common/logger';
 import { createMarkdownCodeBlock } from '../common/markdownUtils';
@@ -20,6 +27,47 @@ interface SearchEmbeddingsParams {
 }
 
 /**
+ * Format a container context line for an embedding result.
+ * Returns an empty string when no context is needed (no container,
+ * or the chunk already includes the container header).
+ *
+ * @param container - Innermost container symbol, or null
+ * @param chunkStartLine - 1-based start line of the embedding chunk
+ * @returns A single Markdown line (with trailing newlines) or empty string
+ */
+function formatContainerContext(
+    container: IndexSymbol | null,
+    chunkStartLine: number
+): string {
+    if (!container) {
+        return '';
+    }
+
+    // If the chunk starts at or before the container's first line, the full
+    // header is already visible in the code block — no extra context needed.
+    // container.startLine is 0-based; chunkStartLine is 1-based.
+    if ((chunkStartLine - 1) <= container.startLine) {
+        return '';
+    }
+
+    const kind = symbolTypeToString(container.type);
+    const label = CALLABLE_TYPES.has(container.type)
+        ? (container.attrs.get(AttrKey.Signature) ?? container.attrs.get(AttrKey.FullyQualifiedName) ?? container.name)
+        : (container.attrs.get(AttrKey.FullyQualifiedName) ?? container.name);
+
+    return `Contained in [${kind}]: ${label} (lines ${container.startLine + 1}-${container.endLine + 1})\n\n`;
+}
+
+/**
+ * A single embedding search result with its file content and optional container.
+ */
+interface ResultWithContext {
+    embedding: NearestEmbeddingResult;
+    lines: string[];
+    container: IndexSymbol | null;
+}
+
+/**
  * Format embedding search results as Markdown, preserving result order.
  *
  * @param results - Array of nearest embedding results with their file content
@@ -28,7 +76,7 @@ interface SearchEmbeddingsParams {
  * @returns Formatted Markdown string
  */
 function formatResults(
-    results: { embedding: NearestEmbeddingResult; lines: string[] }[],
+    results: ResultWithContext[],
     query: string,
     includeIds: boolean = false
 ): string {
@@ -40,9 +88,10 @@ function formatResults(
     markdown += `Found **${results.length}** matches.\n\n`;
 
     for (let i = 0; i < results.length; i++) {
-        const { embedding, lines } = results[i];
+        const { embedding, lines, container } = results[i];
         const idPrefix = includeIds ? `<<RESULT_${String(i * 3).padStart(3, '0')}>> ` : '';
         markdown += `## ${idPrefix}${embedding.filePath} (score: ${embedding.score.toFixed(4)})\n\n`;
+        markdown += formatContainerContext(container, embedding.startLine);
         markdown += `Showing lines ${embedding.startLine} - ${embedding.endLine}:\n\n`;
         const range = new vscode.Range(
             0, 0,
@@ -103,7 +152,7 @@ export class SearchEmbeddingsTool implements vscode.LanguageModelTool<SearchEmbe
 
             // Read file content for each result, caching files to avoid re-reads
             const fileCache = new ScopedFileCache();
-            const resultsWithContent: { embedding: NearestEmbeddingResult; lines: string[] }[] = [];
+            const resultsWithContext: ResultWithContext[] = [];
             for (const embedding of results) {
                 if (token.isCancellationRequested) {
                     return new vscode.LanguageModelToolResult([
@@ -114,10 +163,21 @@ export class SearchEmbeddingsTool implements vscode.LanguageModelTool<SearchEmbe
                     const allLines = await fileCache.getLines(embedding.filePath);
                     // startLine and endLine are 1-based inclusive
                     const lines = allLines.slice(embedding.startLine - 1, embedding.endLine);
-                    resultsWithContent.push({ embedding, lines });
+                    resultsWithContext.push({ embedding, lines, container: null });
                 } catch {
                     // If we can't read the file, include the result with an error note
-                    resultsWithContent.push({ embedding, lines: ['[unable to read file content]'] });
+                    resultsWithContext.push({ embedding, lines: ['[unable to read file content]'], container: null });
+                }
+            }
+
+            // Fetch container symbols for each result
+            const uniquePaths = [...new Set(results.map(r => r.filePath))];
+            const symbolsMap = await contentIndex.getSymbols(uniquePaths);
+            for (const item of resultsWithContext) {
+                const fileSymbols = symbolsMap.get(item.embedding.filePath);
+                if (fileSymbols) {
+                    // embedding.startLine is 1-based; getContainer expects 0-based
+                    item.container = fileSymbols.getContainer(item.embedding.startLine - 1);
                 }
             }
 
@@ -128,15 +188,15 @@ export class SearchEmbeddingsTool implements vscode.LanguageModelTool<SearchEmbe
             let markdown: string;
             if (enableReranker) {
                 // Format with IDs so the LLM can reference results by index
-                const markdownWithIds = formatResults(resultsWithContent, query, true);
-                const orderedIds = await this.applyLlmReranker(markdownWithIds, query, token, fileCache, resultsWithContent.length);
+                const markdownWithIds = formatResults(resultsWithContext, query, true);
+                const orderedIds = await this.applyLlmReranker(markdownWithIds, query, token, fileCache, resultsWithContext.length);
                 // Reconstruct clean markdown from the selected/reordered subset
                 const rerankedResults = orderedIds
-                    .filter(id => id >= 0 && id < resultsWithContent.length)
-                    .map(id => resultsWithContent[id]);
-                markdown = formatResults(rerankedResults.length > 0 ? rerankedResults : resultsWithContent, query);
+                    .filter(id => id >= 0 && id < resultsWithContext.length)
+                    .map(id => resultsWithContext[id]);
+                markdown = formatResults(rerankedResults.length > 0 ? rerankedResults : resultsWithContext, query);
             } else {
-                markdown = formatResults(resultsWithContent, query);
+                markdown = formatResults(resultsWithContext, query);
             }
 
             return new vscode.LanguageModelToolResult([
