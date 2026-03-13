@@ -11,11 +11,14 @@ import type { Chunk } from '../types';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-/** Maximum number of lines per chunk for embedding. */
-export const MAX_CHUNK_LINES = 150;
+/** Approximate number of tokens per chunk for embedding. */
+export const MAX_CHUNK_TOKENS = 1024;
+
+/** Approximate character budget per chunk (~3.5 chars/token). */
+export const MAX_CHUNK_CHARS = Math.floor(MAX_CHUNK_TOKENS * 3.5);
 
 /** Number of overlapping lines between consecutive chunks (~10%). */
-export const OVERLAP_LINES = 15;
+export const OVERLAP_LINES = 8;
 
 /** Minimum character length for a chunk to be kept (filters trivial fragments). */
 export const MIN_CHUNK_CHARS = 75;
@@ -45,8 +48,30 @@ function getChunkHash(text: string): string {
 // ── Low-level splitting ─────────────────────────────────────────────────────
 
 /**
- * Split a line range into chunks of at most {@link MAX_CHUNK_LINES} lines
- * with {@link OVERLAP_LINES} overlap.
+ * Scan forward from `start`, accumulating character counts (including
+ * newline separators), and return the 0-based exclusive end line where
+ * the next line would exceed `maxChars`. At least one line is always
+ * included so that a single oversized line doesn't cause an infinite loop.
+ */
+function findChunkEndByBudget(
+    lines: readonly string[],
+    start: number,
+    end: number,
+    maxChars: number,
+): number {
+    let charCount = 0;
+    for (let i = start; i < end; i++) {
+        charCount += lines[i].length + 1; // +1 for '\n' separator
+        if (charCount > maxChars) {
+            return Math.max(i, start + 1); // always include at least one line
+        }
+    }
+    return end;
+}
+
+/**
+ * Split a line range into token-budget-sized chunks (≈ {@link MAX_CHUNK_TOKENS}
+ * tokens at ~3.5 chars/token) with {@link OVERLAP_LINES} overlap.
  * Chunks that are empty or below {@link MIN_CHUNK_CHARS} are discarded.
  * An optional `isBoilerplate` predicate lets parsers filter out
  * language-specific boilerplate chunks. No context prefix is applied —
@@ -74,11 +99,10 @@ export function splitIntoChunks(
     isBoilerplate?: BoilerplateFilter,
 ): Chunk[] {
     const chunks: Chunk[] = [];
-    const stride = MAX_CHUNK_LINES - OVERLAP_LINES;
     let current = startLine;
 
     while (current < endLine) {
-        const chunkEnd = Math.min(current + MAX_CHUNK_LINES, endLine);
+        const chunkEnd = findChunkEndByBudget(lines, current, endLine, MAX_CHUNK_CHARS);
 
         // Trim leading and trailing blank lines from the chunk range.
         let trimStart = current;
@@ -104,7 +128,7 @@ export function splitIntoChunks(
             break;
         }
 
-        current += stride;
+        current = Math.max(chunkEnd - OVERLAP_LINES, current + 1);
     }
 
     return chunks;
