@@ -6,6 +6,7 @@ import { ThreadPool } from '../workers/threadPool';
 import { Chunk, ComputeChunksInput, ComputeChunksOutput, ComputeChunksStatus } from '../types';
 import { LlamaServer } from './llamaServer';
 import { FileChunkInput, FileChunkRecord, VectorDatabase } from './vectorDatabase';
+import { VectorCacheClient } from '../vectorCache/vectorCacheClient';
 import { log, warn } from '../../logger';
 
 /**
@@ -41,6 +42,7 @@ export class EmbeddingProcessor {
         private readonly vectorDatabase: VectorDatabase | null,
         private readonly llamaServer: LlamaServer,
         private readonly threadPool: ThreadPool,
+        private readonly vectorCacheClient: VectorCacheClient | null = null,
     ) { }
 
     /**
@@ -267,49 +269,116 @@ export class EmbeddingProcessor {
             return { vectors: 0, files: 0 };
         }
 
-        const texts = this.chunksToEmbed.map(m => m.chunk.text);
-        const vectors = await this.llamaServer.embedBatch(texts, true);
-
-        if (!vectors) {
-            warn(`Content index: Failed to embed batch of ${texts.length} chunks`);
-            for (const m of this.chunksToEmbed) {
-                warn(`  Failed chunk: ${m.filePath}:${m.chunk.startLine}-${m.chunk.endLine}`);
-            }
-            return { vectors: 0, files: 0 };
-        }
-
-        const newChunks: FileChunkInput[] = [];
-        let failedCount = 0;
-
-        for (let i = 0; i < vectors.length; i++) {
-            if (!vectors[i]) {
-                failedCount++;
-                // Blank the file version for this file so we don't mark
-                // that all chunks are valid when some embeddings failed.
-                const failed = this.chunksToEmbed[i];
-                warn(`Content index: Embedding failed for ${failed.filePath}:${failed.chunk.startLine}-${failed.chunk.endLine}`);
-                this.fileVersionUpdates.set(failed.filePath, '');
-                continue;
-            }
-            const m = this.chunksToEmbed[i];
-            newChunks.push({
-                filePath: m.filePath,
-                startLine: m.chunk.startLine,
-                endLine: m.chunk.endLine,
-                sha256: m.chunk.sha256,
-                vector: vectors[i],
-            });
-        }
-
-        if (failedCount > 0) {
-            warn(`Content index: ${failedCount}/${vectors.length} embeddings failed`);
-        }
+        const newChunks = await this.resolveEmbeddings();
 
         if (this.vectorDatabase && newChunks.length > 0) {
             await this.vectorDatabase.addFileChunks(newChunks);
         }
 
         return { vectors: newChunks.length, files: this.changedFilePaths.size };
+    }
+
+    /**
+     * Resolve embedding vectors for all chunks queued in {@link chunksToEmbed}.
+     *
+     * Fills a single vectors array progressively:
+     *   1. Fill from the local vector cache (cache hits).
+     *   2. Embed remaining misses via llamaServer.
+     *   3. Fire-and-forget: push newly-embedded vectors to the cache.
+     *   4. Build FileChunkInput[] from the resolved vectors.
+     *
+     * Chunks that remain null after all sources are exhausted are logged
+     * as failures and have their file version blanked so they are retried
+     * on the next pass.
+     *
+     * @returns Array of FileChunkInputs ready for insertion into the main DB.
+     */
+    private async resolveEmbeddings(): Promise<FileChunkInput[]> {
+        const chunks = this.chunksToEmbed;
+        const sha256s = chunks.map(m => m.chunk.sha256);
+        const vectors: (Float32Array | null)[] = new Array(chunks.length).fill(null);
+
+        // ── 1. Fill from local vector cache ──────────────────────────
+        if (this.vectorCacheClient) {
+            const cached = await this.vectorCacheClient.getEmbeddings(sha256s);
+            for (let i = 0; i < cached.length; i++) {
+                vectors[i] = cached[i];
+            }
+        }
+
+        // ── 2. Identify what's still missing ─────────────────────────
+        const missingIndices: number[] = [];
+        for (let i = 0; i < vectors.length; i++) {
+            if (vectors[i] === null) {
+                missingIndices.push(i);
+            }
+        }
+
+        const cacheHitCount = chunks.length - missingIndices.length;
+        if (cacheHitCount > 0) {
+            log(`Content index: Vector cache: ${cacheHitCount} hits, ${missingIndices.length} misses`);
+        }
+
+        // ── 3. Embed misses via llamaServer ──────────────────────────
+        const newlyEmbeddedSha256s: string[] = [];
+        const newlyEmbeddedVectors: Float32Array[] = [];
+
+        if (missingIndices.length > 0) {
+            const texts = missingIndices.map(i => chunks[i].chunk.text);
+            const embedded = await this.llamaServer.embedBatch(texts, true);
+
+            if (embedded) {
+                for (let j = 0; j < missingIndices.length; j++) {
+                    const originalIndex = missingIndices[j];
+                    const embeddedVector = embedded[j];
+                    if (embeddedVector) {
+                        vectors[originalIndex] = embeddedVector;
+                        newlyEmbeddedSha256s.push(sha256s[originalIndex]);
+                        newlyEmbeddedVectors.push(embeddedVector);
+                    }
+                }
+            } else {
+                warn(`Content index: Failed to embed batch of ${texts.length} chunks`);
+                for (const i of missingIndices) {
+                    warn(`  Failed chunk: ${chunks[i].filePath}:${chunks[i].chunk.startLine}-${chunks[i].chunk.endLine}`);
+                }
+            }
+        }
+
+        // ── 4. Fire-and-forget: push newly-embedded vectors to cache ─
+        if (this.vectorCacheClient && newlyEmbeddedSha256s.length > 0) {
+            this.vectorCacheClient.addEmbeddings(newlyEmbeddedSha256s, newlyEmbeddedVectors);
+        }
+
+        // ── 5. Build results from resolved vectors ───────────────────
+        const newChunks: FileChunkInput[] = [];
+        let failedCount = 0;
+
+        for (let i = 0; i < chunks.length; i++) {
+            const vector = vectors[i];
+            if (!vector) {
+                failedCount++;
+                warn(`Content index: Embedding failed for ${chunks[i].filePath}:${chunks[i].chunk.startLine}-${chunks[i].chunk.endLine}`);
+                // Blank the file version for this file so we don't mark
+                // that all chunks are valid when some embeddings failed.
+                this.fileVersionUpdates.set(chunks[i].filePath, '');
+                continue;
+            }
+
+            newChunks.push({
+                filePath: chunks[i].filePath,
+                startLine: chunks[i].chunk.startLine,
+                endLine: chunks[i].chunk.endLine,
+                sha256: sha256s[i],
+                vector,
+            });
+        }
+
+        if (failedCount > 0) {
+            warn(`Content index: ${failedCount}/${chunks.length} embeddings failed`);
+        }
+
+        return newChunks;
     }
 
     /**

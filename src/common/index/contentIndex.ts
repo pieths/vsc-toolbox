@@ -206,7 +206,8 @@ export class ContentIndex {
                 this.pathFilter,
                 this.threadPool,
                 this.llamaServer,
-                enableEmbeddings
+                enableEmbeddings,
+                nodePath
             );
 
             const fileCount = this.cacheManager.getFileCount();

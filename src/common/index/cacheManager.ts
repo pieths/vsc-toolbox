@@ -11,6 +11,7 @@ import { IndexInput, IndexStatus, NearestEmbeddingResult } from './types';
 import { LlamaServer } from './embeddings/llamaServer';
 import { VectorDatabase } from './embeddings/vectorDatabase';
 import { EmbeddingProcessor } from './embeddings/embeddingProcessor';
+import { VectorCacheClient } from './vectorCache/vectorCacheClient';
 import { PathFilter } from './pathFilter';
 import { SymbolCache } from './symbolCache';
 import { FileSymbols } from './fileSymbols';
@@ -59,6 +60,7 @@ export class CacheManager {
     private threadPool: ThreadPool | null = null;
     private llamaServer: LlamaServer | null = null;
     private vectorDatabase: VectorDatabase | null = null;
+    private vectorCacheClient: VectorCacheClient | null = null;
     private embeddingProcessor: EmbeddingProcessor | null = null;
     private symbolCache = new SymbolCache();
 
@@ -102,7 +104,8 @@ export class CacheManager {
         pathFilter: PathFilter,
         threadPool: ThreadPool,
         llamaServer: LlamaServer,
-        enableEmbeddings: boolean = false
+        enableEmbeddings: boolean = false,
+        nodePath: string = ''
     ): Promise<void> {
         this.pathFilter = pathFilter;
         this.threadPool = threadPool;
@@ -122,10 +125,22 @@ export class CacheManager {
             await this.vectorDatabase.open();
             log(`Content index: VectorDatabase opened at ${dbPath}`);
 
+            // Create vector cache client (child process with separate LanceDB)
+            if (nodePath) {
+                const cachePath = path.join(this.cacheDir, 'vectorcache');
+                this.vectorCacheClient = new VectorCacheClient(
+                    nodePath,
+                    cachePath,
+                    this.llamaServer.getDimensions(),
+                );
+                log(`Content index: VectorCacheClient created at ${cachePath}`);
+            }
+
             this.embeddingProcessor = new EmbeddingProcessor(
                 this.vectorDatabase,
                 this.llamaServer,
                 this.threadPool,
+                this.vectorCacheClient,
             );
         }
 
@@ -712,6 +727,11 @@ export class CacheManager {
         if (this.vectorDatabase) {
             await this.vectorDatabase.close();
             this.vectorDatabase = null;
+        }
+
+        if (this.vectorCacheClient) {
+            await this.vectorCacheClient.dispose();
+            this.vectorCacheClient = null;
         }
 
         this.embeddingProcessor = null;

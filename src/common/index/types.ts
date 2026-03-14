@@ -265,6 +265,73 @@ export type WorkerBatchResponse =
     | IndexBatchResponse
     | ComputeChunksBatchResponse;
 
+// ── IPC messages (VectorCacheClient ↔ VectorCacheHost) ───────────────
+
+/** Request sent from VectorCacheClient to VectorCacheHost to initialize */
+export interface VectorCacheInitRequest {
+    type: 'init';
+    dbPath: string;
+    vectorDimension: number;
+}
+
+/** Response sent from VectorCacheHost to VectorCacheClient after init */
+export interface VectorCacheInitAckResponse {
+    type: 'init-ack';
+    entryCount: number;
+}
+
+/** Request sent from VectorCacheClient to VectorCacheHost to shut down */
+export interface VectorCacheShutdownRequest {
+    type: 'shutdown';
+}
+
+/** Log message sent from VectorCacheHost to VectorCacheClient */
+export interface VectorCacheLogMessage {
+    type: 'log';
+    level: 'debug' | 'info' | 'warn' | 'error';
+    message: string;
+}
+
+/** Get embeddings request sent from VectorCacheClient to VectorCacheHost */
+export interface VectorCacheGetEmbeddingsRequest {
+    type: 'getEmbeddings';
+    messageId: number;
+    sha256s: string[];
+}
+
+/** Get embeddings response sent from VectorCacheHost to VectorCacheClient */
+export interface VectorCacheGetEmbeddingsResponse {
+    type: 'getEmbeddings';
+    messageId: number;
+    /** Parallel array: number[] for cache hits, null for misses */
+    vectors: (number[] | null)[];
+}
+
+/** Add embeddings request sent from VectorCacheClient to VectorCacheHost */
+export interface VectorCacheAddEmbeddingsRequest {
+    type: 'addEmbeddings';
+    messageId: number;
+    sha256s: string[];
+    /** Vectors as number[][] for IPC transfer (converted to Float32Array in host) */
+    vectors: number[][];
+}
+
+/** Add embeddings response (ack) sent from VectorCacheHost to VectorCacheClient */
+export interface VectorCacheAddEmbeddingsResponse {
+    type: 'addEmbeddings';
+    messageId: number;
+}
+
+/** Any batch request from VectorCacheClient to VectorCacheHost */
+export type VectorCacheBatchRequest =
+    | VectorCacheGetEmbeddingsRequest
+    | VectorCacheAddEmbeddingsRequest;
+
+/** Any batch response from VectorCacheHost to VectorCacheClient */
+export type VectorCacheBatchResponse =
+    | VectorCacheGetEmbeddingsResponse
+    | VectorCacheAddEmbeddingsResponse;
+
 /**
  * A single result from a nearest-embedding search.
  */

@@ -71,20 +71,32 @@ const workerHostConfig = {
     outfile: 'out/workerHost.js',
 };
 
+// Vector cache host — child process that owns the vector cache LanceDB database.
+// Needs @lancedb/lancedb-win32-x64-msvc as external since it dynamically
+// imports @lancedb/lancedb which depends on the native addon.
+const vectorCacheHostConfig = {
+    ...sharedOptions,
+    entryPoints: ['src/common/index/vectorCache/vectorCacheHost.ts'],
+    outfile: 'out/vectorCacheHost.js',
+    external: ['@lancedb/lancedb-win32-x64-msvc'],
+};
+
 async function main() {
     if (watch) {
-        const [ctx1, ctx2, ctx3] = await Promise.all([
+        const [ctx1, ctx2, ctx3, ctx4] = await Promise.all([
             esbuild.context(extensionConfig),
             esbuild.context(workerConfig),
             esbuild.context(workerHostConfig),
+            esbuild.context(vectorCacheHostConfig),
         ]);
-        await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch()]);
+        await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch()]);
         console.log('[watch] build started');
     } else {
         await Promise.all([
             esbuild.build(extensionConfig),
             esbuild.build(workerConfig),
             esbuild.build(workerHostConfig),
+            esbuild.build(vectorCacheHostConfig),
         ]);
         console.log('build complete');
     }
