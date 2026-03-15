@@ -167,7 +167,24 @@ export class EmbeddingProcessor {
             storedSha256: this.storedFileVersions.get(fi.getFilePath()),
         }));
 
-        return this.threadPool.computeChunksAll(inputs);
+        const outputs = await this.threadPool.computeChunksAll(inputs);
+
+        // Deduplicate chunks by sha256 within each file. Duplicate chunks
+        // can appear when preprocessor guards produce identical blocks
+        // (e.g. #ifdef/#else with the same function body). Keeping only
+        // the first occurrence prevents ambiguous mergeInsert errors in the
+        // database and avoids orphaned rows.
+        for (const output of outputs) {
+            if (output.chunks.length <= 1) { continue; }
+            const seen = new Set<string>();
+            output.chunks = output.chunks.filter(c => {
+                if (seen.has(c.sha256)) { return false; }
+                seen.add(c.sha256);
+                return true;
+            });
+        }
+
+        return outputs;
     }
 
     /**
