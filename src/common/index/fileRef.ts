@@ -23,10 +23,12 @@ import * as path from 'path';
 export class FileRef {
     private filePath: string;
     private idxPath: string;
+    private workspacePath: string;
 
-    constructor(filePath: string, cacheDir: string) {
+    constructor(filePath: string, cacheDir: string, workspaceRoot: string = '') {
         this.filePath = filePath;
         this.idxPath = this.computeIdxPath(cacheDir);
+        this.workspacePath = this.computeWorkspacePath(workspaceRoot);
     }
 
     /**
@@ -46,6 +48,24 @@ export class FileRef {
     }
 
     /**
+     * Compute the workspace-relative path for this file.
+     *
+     * If the file is under the workspace root, returns a forward-slash
+     * normalized relative path (e.g. `src/media/foo.cpp`).  Otherwise
+     * returns the empty string.
+     *
+     * Forward slashes are used regardless of OS so that chunk prefixes
+     * (and therefore embedding vectors) are platform-independent.
+     */
+    private computeWorkspacePath(workspaceRoot: string): string {
+        if (!workspaceRoot) { return ''; }
+        const relative = path.relative(workspaceRoot, this.filePath);
+        // path.relative returns a '..' prefix if the file is outside the root
+        if (relative.startsWith('..')) { return ''; }
+        return relative.replace(/\\/g, '/');
+    }
+
+    /**
      * Get the file path.
      */
     getFilePath(): string {
@@ -57,5 +77,13 @@ export class FileRef {
      */
     getIdxPath(): string {
         return this.idxPath;
+    }
+
+    /**
+     * Get the workspace-relative path (forward-slash normalized).
+     * Empty string if the file is not inside the workspace.
+     */
+    getWorkspacePath(): string {
+        return this.workspacePath;
     }
 }

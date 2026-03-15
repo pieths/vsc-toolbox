@@ -151,6 +151,12 @@ export interface ComputeChunksInput {
     idxPath: string;
     /** SHA-256 of the source file version currently stored in the database, if any */
     storedSha256?: string;
+    /**
+     * Workspace-relative path (forward-slash normalized), used for
+     * chunk context prefixes. Empty string if the file is outside
+     * the workspace.
+     */
+    workspacePath: string;
 }
 
 /**

@@ -220,7 +220,8 @@ export interface IFileParser {
      *
      * @param sourceLines - The source file split into lines
      * @param symbols     - The `IndexSymbol[]` from `readIndex()`
-     * @param filePath    - Absolute path (used for the context prefix)
+     * @param filePath    - Display path for the context prefix
+     *                      (workspace-relative or filename-only)
      * @returns Array of Chunk objects
      */
     computeChunks(

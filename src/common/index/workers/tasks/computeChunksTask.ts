@@ -10,6 +10,7 @@
  */
 
 import * as fs from 'fs';
+import * as path from 'path';
 import * as crypto from 'crypto';
 import { ComputeChunksStatus } from '../../types';
 import type { ComputeChunksInput, ComputeChunksOutput } from '../../types';
@@ -22,7 +23,8 @@ import { getParserForFile } from '../../parsers/registry';
  * 1. Read the source file and split into lines.
  * 2. Look up the parser via the registry.
  * 3. Read and parse the `*.idx` file → hydrate symbols.
- * 4. Delegate to `parser.computeChunks()`.
+ * 4. Compute display path (workspace-relative or filename-only).
+ * 5. Delegate to `parser.computeChunks()` with the display path.
  *
  * @param input - Input containing file path and idx path
  * @returns Output with extracted chunks
@@ -67,7 +69,11 @@ export async function computeChunks(input: ComputeChunksInput): Promise<ComputeC
         // Delegate chunking to the parser
         const content = contentBuffer.toString('utf8');
         const sourceLines = content.split('\n');
-        const chunks = fileParser.computeChunks(sourceLines, symbols, input.filePath);
+
+        // Use workspace-relative path for chunk prefixes when available,
+        // otherwise fall back to just the filename.
+        const displayPath = input.workspacePath || path.basename(input.filePath);
+        const chunks = fileParser.computeChunks(sourceLines, symbols, displayPath);
 
         return {
             type: 'computeChunks',

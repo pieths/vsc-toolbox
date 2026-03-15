@@ -165,6 +165,7 @@ export class EmbeddingProcessor {
             filePath: fi.getFilePath(),
             idxPath: fi.getIdxPath(),
             storedSha256: this.storedFileVersions.get(fi.getFilePath()),
+            workspacePath: fi.getWorkspacePath(),
         }));
 
         const outputs = await this.threadPool.computeChunksAll(inputs);

@@ -63,6 +63,7 @@ export class CacheManager {
     private vectorCacheClient: VectorCacheClient | null = null;
     private embeddingProcessor: EmbeddingProcessor | null = null;
     private symbolCache = new SymbolCache();
+    private workspaceRoot: string = '';
 
     // ── Dirty-set drain loop state ──────────────────────────────────────────
     private fileMutationQueue: FileMutationEntry[] = [];
@@ -114,6 +115,7 @@ export class CacheManager {
 
         // Compute cache directory once from first workspace folder
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        this.workspaceRoot = workspaceFolder?.uri.fsPath ?? '';
         this.cacheDir = workspaceFolder
             ? path.join(workspaceFolder.uri.fsPath, '.cache', 'vsctoolbox', 'index')
             : '';
@@ -191,7 +193,7 @@ export class CacheManager {
                     log(`Content index: Duplicate path: "${filePath}" (existing: "${this.cache.get(key)!.getFilePath()}")`);
                     continue;
                 }
-                const fileRef = new FileRef(filePath, this.symbolsCacheDir);
+                const fileRef = new FileRef(filePath, this.symbolsCacheDir, this.workspaceRoot);
                 this.cache.set(key, fileRef);
             }
 
@@ -556,7 +558,7 @@ export class CacheManager {
                     } else {
                         let fi = this.cache.get(normalizedPath);
                         if (!fi) {
-                            fi = new FileRef(filePath, this.symbolsCacheDir);
+                            fi = new FileRef(filePath, this.symbolsCacheDir, this.workspaceRoot);
                             this.cache.set(normalizedPath, fi);
                             log(`Content index: Added new file ${filePath}`);
                         }
@@ -739,6 +741,7 @@ export class CacheManager {
         this.llamaServer = null;
         this.pathFilter = null;
         this.cache.clear();
+        this.workspaceRoot = '';
         this.indexingComplete = false;
         this.indexingPromise = null;
         this.mutationQueueInitialized = false;
