@@ -130,11 +130,11 @@ export interface Chunk {
     /** Full text content from startLine to endLine (inclusive) */
     text: string;
     /**
-     * SHA-256 hex digest of the chunk text.
-     * Does not include the additional prefix.
-     * This is solely the hash of the text content
-     * between the startLine and endLine (inclusive)
-     * as extracted from the file.
+     * SHA-256 hex digest of the full chunk text, including the
+     * context prefix. Computed in the worker thread after the
+     * parser returns chunks with prefixes applied.
+     *
+     * Empty string until computed by the worker.
      */
     sha256: string;
 }

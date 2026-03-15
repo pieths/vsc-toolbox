@@ -574,11 +574,11 @@ describe('chunking: single heading section', () => {
             'chunk should include heading section name prefix');
     });
 
-    it('chunks should have SHA-256 digests', () => {
+    it('sha256 should be empty at parser level (computed by worker task)', () => {
         const { chunks } = chunkFixture(CHUNK_SINGLE_SECTION_SOURCE);
         for (const chunk of chunks) {
-            assert.ok(chunk.sha256, 'chunk should have a sha256 digest');
-            assert.equal(chunk.sha256.length, 64, 'sha256 should be 64 hex chars');
+            assert.equal(chunk.sha256, '',
+                'sha256 should be empty at parser level');
         }
     });
 

@@ -2100,15 +2100,12 @@ describe('chunking: line numbers are 1-based inclusive', () => {
 // -- Chunk SHA-256 digest -----------------------------------------------------
 
 describe('chunking: SHA-256 digest', () => {
-    it('should have a 64-char hex sha256 on each chunk', () => {
+    it('sha256 should be empty at parser level (computed by worker task)', () => {
         const { chunks } = chunkFixture(CHUNK_LINE_NUMBERS_SOURCE);
         assert.ok(chunks.length >= 1);
         for (const chunk of chunks) {
-            assert.ok(chunk.sha256, 'chunk should have a sha256 field');
-            assert.equal(chunk.sha256.length, 64,
-                'sha256 should be a 64-char hex string');
-            assert.ok(/^[0-9a-f]{64}$/.test(chunk.sha256),
-                'sha256 should be lowercase hex');
+            assert.equal(chunk.sha256, '',
+                'sha256 should be empty at parser level');
         }
     });
 });

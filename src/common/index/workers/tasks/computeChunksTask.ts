@@ -18,6 +18,16 @@ import type { IndexFile } from '../../parsers/types';
 import { getParserForFile } from '../../parsers/registry';
 
 /**
+ * Compute a SHA-256 hex digest of the given text.
+ *
+ * @param text - The raw chunk text
+ * @returns 64-character lowercase hex digest
+ */
+function getChunkHash(text: string): string {
+    return crypto.createHash('sha256').update(text).digest('hex');
+}
+
+/**
  * Compute text chunks for a file.
  *
  * 1. Read the source file and split into lines.
@@ -74,6 +84,12 @@ export async function computeChunks(input: ComputeChunksInput): Promise<ComputeC
         // otherwise fall back to just the filename.
         const displayPath = input.workspacePath || path.basename(input.filePath);
         const chunks = fileParser.computeChunks(sourceLines, symbols, displayPath);
+
+        // Compute sha256 over the final chunk text (including context prefix)
+        // so that the hash accurately reflects what gets embedded.
+        for (const chunk of chunks) {
+            chunk.sha256 = getChunkHash(chunk.text);
+        }
 
         return {
             type: 'computeChunks',

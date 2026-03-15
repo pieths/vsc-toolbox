@@ -6,7 +6,6 @@
  * suitable for embedding search.
  */
 
-import * as crypto from 'crypto';
 import type { Chunk } from '../types';
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -30,20 +29,6 @@ export const MIN_CHUNK_CHARS = 75;
  * Return `true` to discard the chunk.
  */
 export type BoilerplateFilter = (trimmedText: string) => boolean;
-
-// ── Hashing ─────────────────────────────────────────────────────────────────
-
-/**
- * Compute a SHA-256 hex digest of the given text.
- * Used to fingerprint chunk content **before** context prefixes are applied,
- * so that staleness checks are independent of prefix changes.
- *
- * @param text - The raw chunk text
- * @returns 64-character lowercase hex digest
- */
-function getChunkHash(text: string): string {
-    return crypto.createHash('sha256').update(text).digest('hex');
-}
 
 // ── Low-level splitting ─────────────────────────────────────────────────────
 
@@ -119,8 +104,7 @@ export function splitIntoChunks(
         const trimmed = text.trim();
         if (trimmed && trimmed.length >= MIN_CHUNK_CHARS &&
             !(isBoilerplate && isBoilerplate(trimmed))) {
-            const sha256 = getChunkHash(text);
-            chunks.push({ startLine: trimStart, endLine: trimEnd, text, sha256 });
+            chunks.push({ startLine: trimStart, endLine: trimEnd, text, sha256: '' });
         }
 
         // If this chunk reached the end, we're done
