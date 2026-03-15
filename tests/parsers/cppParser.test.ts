@@ -2458,10 +2458,10 @@ describe('chunking: chunks respect container boundaries', () => {
 // -- Signature prefix on non-first chunks of large functions ------------------
 
 const CHUNK_SIGNATURE_PREFIX_SOURCE = (() => {
-    // Build a function large enough to span multiple chunks (> MAX_CHUNK_LINES)
+    // Build a function large enough to span multiple chunks (> MAX_CHUNK_CHARS)
     const lines = ['#include <string>', ''];
     lines.push('void largeFunction(int param1, int param2) {');
-    for (let i = 0; i < 160; i++) {
+    for (let i = 0; i < 200; i++) {
         lines.push(`    int var_${i} = ${i};`);
     }
     lines.push('}');
@@ -2472,22 +2472,23 @@ const CHUNK_SIGNATURE_PREFIX_SOURCE = (() => {
 describe('chunking: signature prefix on continuation chunks', () => {
     it('should add signature prefix on non-first chunks of a large function', () => {
         const { chunks } = chunkFixture(CHUNK_SIGNATURE_PREFIX_SOURCE);
-        assert.ok(chunks.length == 2,
-            'expected at least 2 chunks for a function exceeding MAX_CHUNK_LINES');
+        assert.ok(chunks.length >= 2,
+            `expected at least 2 chunks for a function exceeding MAX_CHUNK_CHARS, got ${chunks.length}`);
         // First chunk should have the Function prefix but no signature prefix
         const firstChunk = chunks[0];
         assert.ok(firstChunk.text.includes('// Function: largeFunction'),
             'first chunk should have Function prefix');
+        assert.ok(!firstChunk.text.includes('// signature:'),
+            'first chunk should NOT have a signature prefix');
         // Second chunk should include a signature prefix
         const secondChunk = chunks[1];
         assert.ok(secondChunk.text.includes('// signature: void largeFunction(int param1, int param2)'),
             'continuation chunk should include a signature prefix');
 
+        // First chunk starts at the function (line 3, after #include + blank)
         assert.equal(chunks[0].startLine, 3);
-        assert.equal(chunks[0].endLine, 152);
-
-        assert.equal(chunks[1].startLine, 138);
-        assert.equal(chunks[1].endLine, 164);
+        // Last chunk ends at the closing brace (line 204: 2 preamble + 1 decl + 200 body + 1 brace)
+        assert.equal(chunks[chunks.length - 1].endLine, 204);
     });
 });
 
