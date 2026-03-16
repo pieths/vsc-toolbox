@@ -314,10 +314,12 @@ const MODELS: ModelConfig[] = [
 ];
 
 /**
- * Response from the OpenAI-compatible /v1/embeddings endpoint.
+ * Response from the OpenAI-compatible /v1/embeddings endpoint
+ * when using encoding_format: 'base64'. The embedding field is a
+ * base64-encoded string of little-endian f32 bytes.
  */
 interface EmbeddingResponse {
-    data: { embedding: number[]; index: number }[];
+    data: { embedding: string; index: number }[];
 }
 
 /**
@@ -775,12 +777,18 @@ export class LlamaServer {
                 : text;
             const response = await this.httpPost(
                 `http://127.0.0.1:${this.port}/v1/embeddings`,
-                { input }
+                { input, encoding_format: 'base64' }
             );
 
             const data = JSON.parse(response) as EmbeddingResponse;
             if (data.data && data.data.length > 0) {
-                return new Float32Array(data.data[0].embedding);
+                const buf = Buffer.from(data.data[0].embedding, 'base64');
+                // Copy into a new ArrayBuffer via Uint8Array to guarantee
+                // 4-byte alignment. Node's Buffer.from(string, 'base64')
+                // may return a view into a shared internal pool whose
+                // byteOffset is not aligned to 4 bytes, which would cause
+                // Float32Array to throw a RangeError.
+                return new Float32Array(new Uint8Array(buf).buffer);
             }
 
             logError('Unexpected embedding response format');
