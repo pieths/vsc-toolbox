@@ -2,33 +2,47 @@
 // SPDX-License-Identifier: MIT
 
 /**
- * VectorCacheDatabase — a LanceDB wrapper for the vector cache.
+ * VectorCacheDatabase — a SQLite-backed key-value cache for embeddings.
  *
- * Stores `(sha256, vector)` pairs in a single table.  This database
- * lives in the vector cache child process and is entirely separate
- * from the main VectorDatabase used by the embedding pipeline.
+ * Stores `(sha256, data)` pairs in a single table where `data` is a
+ * base64-encoded f32 embedding string. This database lives in the
+ * vector cache child process and is entirely separate from the main
+ * VectorDatabase used by the embedding pipeline.
+ *
+ * Uses Node's built-in `node:sqlite` module (available since v22.5)
+ * with WAL mode for fast concurrent reads and writes. Prepared
+ * statements with parameter binding are used for all queries to
+ * avoid SQL parsing overhead on every call.
  *
  * No foreign keys, no line numbers, no file paths — just content
  * hashes mapped to their embedding vectors.
  */
 
 import * as fs from 'fs';
-import type { Connection, Table } from '@lancedb/lancedb';
-
-const TBL_VECTOR_CACHE = 'vector_cache';
+import * as path from 'path';
+import { DatabaseSync } from 'node:sqlite';
 
 export class VectorCacheDatabase {
     private readonly dbPath: string;
     private readonly vectorDimension: number;
-    private db: Connection | null = null;
-    private table: Table | null = null;
+    private db: DatabaseSync | null = null;
+
+    // Prepared statements — pre-compiled SQL templates that are created
+    // once and reused for every call. SQLite parses and compiles the SQL
+    // into an optimized query plan on the first prepare() call, then
+    // subsequent executions just bind new parameter values (the ? placeholders)
+    // and run the pre-compiled plan. This avoids re-parsing the SQL string
+    // on every query, which is the dominant cost for simple lookups.
+    private stmtGet: ReturnType<DatabaseSync['prepare']> | null = null;
+    private stmtInsert: ReturnType<DatabaseSync['prepare']> | null = null;
+    private stmtSelectAllSha256s: ReturnType<DatabaseSync['prepare']> | null = null;
 
     /**
      * Create a VectorCacheDatabase instance.
      *
      * Call {@link open} before using any other methods.
      *
-     * @param dbPath — directory where the LanceDB data files will be stored.
+     * @param dbPath — directory where the SQLite database file will be stored.
      * @param vectorDimension — the fixed length of every embedding vector.
      */
     constructor(dbPath: string, vectorDimension: number) {
@@ -45,29 +59,43 @@ export class VectorCacheDatabase {
      *          (for populating the bloom filter at startup).
      */
     async open(): Promise<string[]> {
-        const lancedb = await import('@lancedb/lancedb');
-
         await fs.promises.mkdir(this.dbPath, { recursive: true });
-        this.db = await lancedb.connect(this.dbPath);
 
-        const tableNames = await this.db.tableNames();
+        const dbFilePath = path.join(this.dbPath, 'vector_cache.db');
+        this.db = new DatabaseSync(dbFilePath);
+
+        // Enable WAL mode for fast concurrent reads/writes.
+        // WAL keeps data on disk but uses memory-mapped I/O for reads,
+        // so hot data stays in the OS page cache automatically.
+        // Fully crash-safe: committed transactions are fsync'd to disk
+        // before COMMIT returns; after a crash, SQLite replays the WAL
+        // and discards any uncommitted partial writes.
+        this.db.exec('PRAGMA journal_mode = WAL');
+
+        // Set page cache to ~50MB (12500 pages × 4KB) — enough to keep
+        // the BTree index resident for fast lookups while capping memory.
+        // At 500K entries the index is ~36MB; at 20M entries ~2.4GB, so
+        // 50MB keeps the upper BTree levels cached for fast traversal.
+        this.db.exec('PRAGMA cache_size = 12500');
+
+        // Create the cache table if it doesn't exist
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS vector_cache (
+                sha256 TEXT PRIMARY KEY NOT NULL,
+                data TEXT NOT NULL
+            )
+        `);
+
+        // Prepare reusable statements
+        this.stmtGet = this.db.prepare('SELECT data FROM vector_cache WHERE sha256 = ?');
+        this.stmtInsert = this.db.prepare('INSERT OR REPLACE INTO vector_cache (sha256, data) VALUES (?, ?)');
+        this.stmtSelectAllSha256s = this.db.prepare('SELECT sha256 FROM vector_cache');
+
+        // Scan sha256 column to populate the bloom filter
         const sha256s: string[] = [];
-
-        if (tableNames.includes(TBL_VECTOR_CACHE)) {
-            this.table = await this.db.openTable(TBL_VECTOR_CACHE);
-
-            // Scan sha256 column only (no vector data loaded) to
-            // populate the bloom filter.
-            const rows = await this.table
-                .query()
-                .select(['sha256'])
-                .toArray() as { sha256: string }[];
-            for (const row of rows) {
-                sha256s.push(row.sha256);
-            }
-
-            // Compact on startup to keep the table fast
-            await this.compact();
+        const rows = this.stmtSelectAllSha256s.all() as { sha256: string }[];
+        for (const row of rows) {
+            sha256s.push(row.sha256);
         }
 
         return sha256s;
@@ -77,8 +105,9 @@ export class VectorCacheDatabase {
      * Close the database connection and release resources.
      */
     async close(): Promise<void> {
-        this.table?.close();
-        this.table = null;
+        this.stmtGet = null;
+        this.stmtInsert = null;
+        this.stmtSelectAllSha256s = null;
         this.db?.close();
         this.db = null;
     }
@@ -98,16 +127,18 @@ export class VectorCacheDatabase {
 
         this.ensureOpen();
 
-        const rows = sha256s.map((sha256, i) => ({
-            sha256,
-            data: vectors[i],
-        }));
-
-        if (!this.table) {
-            this.table = await this.db!.createTable(TBL_VECTOR_CACHE, rows);
-            await this.createIndexSafe(this.table, 'sha256');
-        } else {
-            await this.table.add(rows);
+        // Wrap all inserts in a single transaction for performance.
+        // Without this, each INSERT is an implicit transaction with
+        // its own fsync — ~100x slower.
+        this.db!.exec('BEGIN');
+        try {
+            for (let i = 0; i < sha256s.length; i++) {
+                this.stmtInsert!.run(sha256s[i], vectors[i]);
+            }
+            this.db!.exec('COMMIT');
+        } catch (err) {
+            this.db!.exec('ROLLBACK');
+            throw err;
         }
     }
 
@@ -123,20 +154,24 @@ export class VectorCacheDatabase {
     async get(sha256s: string[]): Promise<Map<string, string>> {
         const result = new Map<string, string>();
 
-        if (sha256s.length === 0 || !this.table) {
+        if (sha256s.length === 0 || !this.stmtGet) {
             return result;
         }
 
-        // Build an IN clause with quoted sha256 strings
-        const quoted = sha256s.map(s => `'${s}'`).join(', ');
-        const rows = await this.table
-            .query()
-            .select(['sha256', 'data'])
-            .where(`sha256 IN (${quoted})`)
-            .toArray() as { sha256: string; data: string }[];
-
-        for (const row of rows) {
-            result.set(row.sha256, row.data);
+        // Wrap reads in a single transaction to avoid per-call implicit
+        // transaction overhead in WAL mode.
+        this.db!.exec('BEGIN');
+        try {
+            for (const sha256 of sha256s) {
+                const row = this.stmtGet.get(sha256) as { data: string } | undefined;
+                if (row) {
+                    result.set(sha256, row.data);
+                }
+            }
+            this.db!.exec('COMMIT');
+        } catch (err) {
+            this.db!.exec('ROLLBACK');
+            throw err;
         }
 
         return result;
@@ -145,24 +180,22 @@ export class VectorCacheDatabase {
     // ── Maintenance ─────────────────────────────────────────────────────────
 
     /**
-     * Compact the cache table — merges small data files, physically
-     * removes logically-deleted rows, prunes old table versions, and
-     * updates scalar indices.
+     * Compact the database — in SQLite this runs VACUUM to reclaim
+     * disk space from deleted rows and defragment the database file.
      *
-     * Should be called periodically since the cache only ever grows.
+     * Note: VACUUM rewrites the entire database file and can be slow
+     * for large databases. For the vector cache (append-only, no deletes),
+     * this is rarely needed.
      */
     async compact(): Promise<{ filesRemoved: number; bytesRemoved: number } | null> {
-        if (!this.table) {
+        if (!this.db) {
             return null;
         }
         try {
-            const stats = await this.table.optimize();
-            return {
-                filesRemoved: stats.compaction.filesRemoved,
-                bytesRemoved: stats.prune.bytesRemoved,
-            };
+            // WAL checkpoint — merge WAL back into main database
+            this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+            return { filesRemoved: 0, bytesRemoved: 0 };
         } catch {
-            // Table may be empty or too small — safe to ignore
             return null;
         }
     }
@@ -175,18 +208,6 @@ export class VectorCacheDatabase {
     private ensureOpen(): void {
         if (!this.db) {
             throw new Error('VectorCacheDatabase: database is not open — call open() first');
-        }
-    }
-
-    /**
-     * Create a scalar BTree index on a column, ignoring errors if the
-     * index already exists or the table is empty.
-     */
-    private async createIndexSafe(table: Table, column: string): Promise<void> {
-        try {
-            await table.createIndex(column, { replace: false });
-        } catch {
-            // Index already exists or table is too small — safe to ignore
         }
     }
 }
