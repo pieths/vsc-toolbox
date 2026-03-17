@@ -428,7 +428,7 @@ export class EmbeddingProcessor {
         const minutes = Math.floor(totalSeconds / 60);
         const seconds = totalSeconds % 60;
         if (minutes > 0) {
-            return ` (~${minutes}m ${seconds}s remaining)`;
+            return ` (~${minutes}m remaining)`;
         }
         return ` (~${seconds}s remaining)`;
     }
