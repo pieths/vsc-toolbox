@@ -12,7 +12,6 @@ import {
     DocumentType,
     FileSearchResults,
     NearestEmbeddingResult,
-    SearchInput,
     SearchResults
 } from './types';
 import { FileSymbols } from './fileSymbols';
@@ -409,23 +408,13 @@ export class ContentIndex {
                 return [];
             }
 
-            // Prepare search inputs
-            const searchInputs: SearchInput[] = [];
-            for (const filePath of allFiles) {
-                searchInputs.push({
-                    type: 'search',
-                    filePath,
-                    query
-                });
-            }
-
             // Check for cancellation
             if (token?.isCancellationRequested) {
                 return [];
             }
 
             // Distribute search across worker threads
-            const outputs = await this.threadPool.searchAll(searchInputs);
+            const outputs = await this.threadPool.searchAll(query, allFiles);
 
             // Check for cancellation
             if (token?.isCancellationRequested) {

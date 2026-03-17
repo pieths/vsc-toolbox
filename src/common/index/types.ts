@@ -52,19 +52,7 @@ export interface SearchResults {
 }
 
 /**
- * Input data sent to a worker thread for searching
- */
-export interface SearchInput {
-    /** Discriminator for message type */
-    type: 'search';
-    /** Absolute file path to search */
-    filePath: string;
-    /** Glob query string (space-separated AND terms with * and ? wildcards) */
-    query: string;
-}
-
-/**
- * Output data returned from a worker thread
+ * Search output data returned from a worker thread
  */
 export interface SearchOutput {
     /** Discriminator for message type */
@@ -221,7 +209,10 @@ export interface WorkerShutdownRequest {
 export interface SearchBatchRequest {
     type: 'searchBatch';
     messageId: number;
-    inputs: SearchInput[];
+    /** Glob query string (space-separated AND terms with * and ? wildcards) */
+    query: string;
+    /** Absolute file paths to search */
+    filePaths: string[];
 }
 
 /** Batch search response sent from WorkerHost to ThreadPool over IPC */

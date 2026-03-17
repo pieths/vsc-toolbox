@@ -16,7 +16,6 @@
 import { Worker } from 'worker_threads';
 import * as path from 'path';
 import type {
-    SearchInput,
     SearchOutput,
     IndexInput,
     IndexOutput,
@@ -34,7 +33,7 @@ import type {
 type ParentMessage = WorkerInitRequest | WorkerShutdownRequest | WorkerBatchRequest;
 
 type WorkerPayloadInput =
-    | { type: 'searchBatch'; inputs: SearchInput[] }
+    | { type: 'searchBatch'; query: string; filePaths: string[] }
     | { type: 'indexBatch'; inputs: IndexInput[] }
     | { type: 'computeChunksBatch'; inputs: ComputeChunksInput[] };
 
@@ -110,20 +109,20 @@ function splitIntoChunks<T>(array: T[], n: number): T[][] {
  * Each worker receives a sub-batch and returns its results.
  */
 function handleSearchBatch(request: SearchBatchRequest): void {
-    const { messageId, inputs } = request;
+    const { messageId, query, filePaths } = request;
 
-    if (inputs.length === 0) {
+    if (filePaths.length === 0) {
         process.send?.({ type: 'searchBatch', messageId, outputs: [] });
         return;
     }
 
-    const chunks = splitIntoChunks(inputs, workers.length);
+    const chunks = splitIntoChunks(filePaths, workers.length);
     let completedWorkers = 0;
     const allOutputs: SearchOutput[][] = new Array(chunks.length);
 
     for (let i = 0; i < chunks.length; i++) {
         const worker = workers[i];
-        const payload: WorkerPayloadInput = { type: 'searchBatch', inputs: chunks[i] };
+        const payload: WorkerPayloadInput = { type: 'searchBatch', query, filePaths: chunks[i] };
 
         const onMessage = (msg: WorkerMessage) => {
             if (msg.type === 'log') {

@@ -11,14 +11,12 @@
 
 import { parentPort } from 'worker_threads';
 import type {
-    SearchInput,
-    SearchOutput,
     IndexInput,
     IndexOutput,
     ComputeChunksInput,
     WorkerLogMessage,
 } from '../types';
-import { searchFile } from './tasks/searchFileTask';
+import { searchFiles } from './tasks/searchFileTask';
 import { indexFile } from './tasks/indexFileTask';
 import { computeChunks } from './tasks/computeChunksTask';
 import { setLogHandler, workerLog } from './workerLogger';
@@ -39,13 +37,9 @@ process.on('unhandledRejection', (reason) => {
 
 // Listen for batch messages from WorkerHost
 if (parentPort) {
-    parentPort.on('message', async (msg: { type: string; inputs: any[] }) => {
+    parentPort.on('message', async (msg: any) => {
         if (msg.type === 'searchBatch') {
-            const inputs = msg.inputs as SearchInput[];
-            const outputs: SearchOutput[] = [];
-            for (const input of inputs) {
-                outputs.push(await searchFile(input));
-            }
+            const outputs = searchFiles(msg.query, msg.filePaths);
             parentPort!.postMessage({ type: 'searchBatch', outputs });
         } else if (msg.type === 'indexBatch') {
             const inputs = msg.inputs as IndexInput[];

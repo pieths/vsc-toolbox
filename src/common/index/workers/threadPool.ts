@@ -4,7 +4,6 @@
 import { fork, ChildProcess } from 'child_process';
 import * as path from 'path';
 import {
-    SearchInput,
     SearchOutput,
     IndexInput,
     IndexOutput,
@@ -166,17 +165,13 @@ export class ThreadPool {
     /**
      * Search multiple files in parallel.
      *
-     * @param inputs - Array of search inputs to process
-     * @returns Promise that resolves with all search results
+     * @param query - Glob query string
+     * @param filePaths - Absolute file paths to search
+     * @returns Promise that resolves with search results (only files with matches)
      */
-    async searchAll(inputs: SearchInput[]): Promise<SearchOutput[]> {
+    async searchAll(query: string, filePaths: string[]): Promise<SearchOutput[]> {
         if (this.disposed) {
-            return inputs.map(input => ({
-                type: 'search' as const,
-                filePath: input.filePath,
-                results: [],
-                error: 'Thread pool has been disposed'
-            }));
+            return [];
         }
 
         await this.initPromise;
@@ -186,15 +181,11 @@ export class ThreadPool {
             return await this.sendBatch({
                 type: 'searchBatch',
                 messageId,
-                inputs,
+                query,
+                filePaths,
             });
         } catch (err) {
-            return inputs.map(input => ({
-                type: 'search' as const,
-                filePath: input.filePath,
-                results: [],
-                error: err instanceof Error ? err.message : String(err),
-            }));
+            return [];
         }
     }
 
