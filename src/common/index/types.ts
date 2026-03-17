@@ -300,8 +300,8 @@ export interface VectorCacheGetEmbeddingsRequest {
 export interface VectorCacheGetEmbeddingsResponse {
     type: 'getEmbeddings';
     messageId: number;
-    /** Parallel array: number[] for cache hits, null for misses */
-    vectors: (number[] | null)[];
+    /** Parallel array: base64-encoded f32 string for cache hits, null for misses */
+    vectors: (string | null)[];
 }
 
 /** Add embeddings request sent from VectorCacheClient to VectorCacheHost */
@@ -309,8 +309,8 @@ export interface VectorCacheAddEmbeddingsRequest {
     type: 'addEmbeddings';
     messageId: number;
     sha256s: string[];
-    /** Vectors as number[][] for IPC transfer (converted to Float32Array in host) */
-    vectors: number[][];
+    /** Vectors as base64-encoded f32 strings */
+    vectors: string[];
 }
 
 /** Add embeddings response (ack) sent from VectorCacheHost to VectorCacheClient */

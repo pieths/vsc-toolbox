@@ -531,11 +531,20 @@ export class ContentIndex {
         }
 
         const prefixedQuery = this.llamaServer.getQueryPrefix() + query;
-        const queryVector = await this.llamaServer.embed(prefixedQuery);
-        if (!queryVector) {
+        const queryVectorB64 = await this.llamaServer.embed(prefixedQuery);
+        if (!queryVectorB64) {
             warn('ContentIndex: Failed to embed query');
             return [];
         }
+
+        // Convert base64 → Float32Array for vector search.
+        // Copy into a new ArrayBuffer via Uint8Array to guarantee
+        // 4-byte alignment. Node's Buffer.from(string, 'base64')
+        // may return a view into a shared internal pool whose
+        // byteOffset is not aligned to 4 bytes, which would cause
+        // Float32Array to throw a RangeError.
+        const buf = Buffer.from(queryVectorB64, 'base64');
+        const queryVector = new Float32Array(new Uint8Array(buf).buffer);
 
         return this.cacheManager.getNearestEmbeddings(queryVector, topK);
     }

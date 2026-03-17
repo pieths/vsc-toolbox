@@ -314,7 +314,7 @@ export class EmbeddingProcessor {
     private async resolveEmbeddings(): Promise<FileChunkInput[]> {
         const chunks = this.chunksToEmbed;
         const sha256s = chunks.map(m => m.chunk.sha256);
-        const vectors: (Float32Array | null)[] = new Array(chunks.length).fill(null);
+        const vectors: (string | null)[] = new Array(chunks.length).fill(null);
 
         // ── 1. Fill from local vector cache ──────────────────────────
         if (this.vectorCacheClient) {
@@ -339,7 +339,7 @@ export class EmbeddingProcessor {
 
         // ── 3. Embed misses via llamaServer ──────────────────────────
         const newlyEmbeddedSha256s: string[] = [];
-        const newlyEmbeddedVectors: Float32Array[] = [];
+        const newlyEmbeddedVectors: string[] = [];
 
         if (missingIndices.length > 0) {
             const texts = missingIndices.map(i => chunks[i].chunk.text);
@@ -373,8 +373,8 @@ export class EmbeddingProcessor {
         let failedCount = 0;
 
         for (let i = 0; i < chunks.length; i++) {
-            const vector = vectors[i];
-            if (!vector) {
+            const vectorB64 = vectors[i];
+            if (!vectorB64) {
                 failedCount++;
                 warn(`Content index: Embedding failed for ${chunks[i].filePath}:${chunks[i].chunk.startLine}-${chunks[i].chunk.endLine}`);
                 // Blank the file version for this file so we don't mark
@@ -382,6 +382,16 @@ export class EmbeddingProcessor {
                 this.fileVersionUpdates.set(chunks[i].filePath, '');
                 continue;
             }
+
+            // Convert base64 → Float32Array only at the final boundary
+            // where VectorDatabase needs it for LanceDB insertion.
+            // Copy into a new ArrayBuffer via Uint8Array to guarantee
+            // 4-byte alignment. Node's Buffer.from(string, 'base64')
+            // may return a view into a shared internal pool whose
+            // byteOffset is not aligned to 4 bytes, which would cause
+            // Float32Array to throw a RangeError.
+            const buf = Buffer.from(vectorB64, 'base64');
+            const vector = new Float32Array(new Uint8Array(buf).buffer);
 
             newChunks.push({
                 filePath: chunks[i].filePath,

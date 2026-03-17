@@ -763,9 +763,9 @@ export class LlamaServer {
      *
      * @param text - The text to embed
      * @param forIndexing - If true, prepend the model's indexPrefix instead of leaving text as-is
-     * @returns The embedding vector as a Float32Array, or null on error
+     * @returns The embedding as a base64-encoded string of little-endian f32 bytes, or null on error
      */
-    async embed(text: string, forIndexing?: boolean): Promise<Float32Array | null> {
+    async embed(text: string, forIndexing?: boolean): Promise<string | null> {
         if (!this.ready) {
             warn('LlamaServer.embed() called but server is not ready');
             return null;
@@ -782,13 +782,7 @@ export class LlamaServer {
 
             const data = JSON.parse(response) as EmbeddingResponse;
             if (data.data && data.data.length > 0) {
-                const buf = Buffer.from(data.data[0].embedding, 'base64');
-                // Copy into a new ArrayBuffer via Uint8Array to guarantee
-                // 4-byte alignment. Node's Buffer.from(string, 'base64')
-                // may return a view into a shared internal pool whose
-                // byteOffset is not aligned to 4 bytes, which would cause
-                // Float32Array to throw a RangeError.
-                return new Float32Array(new Uint8Array(buf).buffer);
+                return data.data[0].embedding;
             }
 
             logError('Unexpected embedding response format');
@@ -806,9 +800,9 @@ export class LlamaServer {
      *
      * @param texts - Array of texts to embed
      * @param forIndexing - If true, prepend the model's indexPrefix to each text
-     * @returns Array of embedding vectors (Float32Array), or null on error
+     * @returns Array of base64-encoded embedding strings, or null on error
      */
-    async embedBatch(texts: string[], forIndexing?: boolean): Promise<Float32Array[] | null> {
+    async embedBatch(texts: string[], forIndexing?: boolean): Promise<string[] | null> {
         if (!this.ready) {
             warn('LlamaServer.embedBatch() called but server is not ready');
             return null;
@@ -818,7 +812,7 @@ export class LlamaServer {
             return [];
         }
 
-        const results: Float32Array[] = new Array(texts.length);
+        const results: string[] = new Array(texts.length);
         let errorCount = 0;
 
         // Simple concurrency semaphore

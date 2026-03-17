@@ -88,9 +88,10 @@ export class VectorCacheDatabase {
     /**
      * Add embedding vectors to the cache.
      *
-     * @param entries — parallel arrays of sha256 hashes and vectors.
+     * @param sha256s — content hashes.
+     * @param vectors — parallel array of base64-encoded f32 embedding strings.
      */
-    async add(sha256s: string[], vectors: Float32Array[]): Promise<void> {
+    async add(sha256s: string[], vectors: string[]): Promise<void> {
         if (sha256s.length === 0) {
             return;
         }
@@ -99,7 +100,7 @@ export class VectorCacheDatabase {
 
         const rows = sha256s.map((sha256, i) => ({
             sha256,
-            vector: Array.from(vectors[i]),
+            data: vectors[i],
         }));
 
         if (!this.table) {
@@ -116,11 +117,11 @@ export class VectorCacheDatabase {
      * Look up cached vectors for the given SHA-256 hashes.
      *
      * @param sha256s — the hashes to look up.
-     * @returns A Map from sha256 → Float32Array for all cache hits.
+     * @returns A Map from sha256 → base64-encoded f32 string for all cache hits.
      *          Misses are simply absent from the map.
      */
-    async get(sha256s: string[]): Promise<Map<string, Float32Array>> {
-        const result = new Map<string, Float32Array>();
+    async get(sha256s: string[]): Promise<Map<string, string>> {
+        const result = new Map<string, string>();
 
         if (sha256s.length === 0 || !this.table) {
             return result;
@@ -130,12 +131,12 @@ export class VectorCacheDatabase {
         const quoted = sha256s.map(s => `'${s}'`).join(', ');
         const rows = await this.table
             .query()
-            .select(['sha256', 'vector'])
+            .select(['sha256', 'data'])
             .where(`sha256 IN (${quoted})`)
-            .toArray() as { sha256: string; vector: number[] }[];
+            .toArray() as { sha256: string; data: string }[];
 
         for (const row of rows) {
-            result.set(row.sha256, new Float32Array(row.vector));
+            result.set(row.sha256, row.data);
         }
 
         return result;

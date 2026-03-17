@@ -170,9 +170,9 @@ export class VectorCacheClient {
      * Look up cached vectors for the given SHA-256 hashes.
      *
      * Returns an array of the same length as the input. Each element is
-     * either a Float32Array (cache hit) or null (cache miss).
+     * either a base64-encoded f32 string (cache hit) or null (cache miss).
      */
-    async getEmbeddings(sha256s: string[]): Promise<(Float32Array | null)[]> {
+    async getEmbeddings(sha256s: string[]): Promise<(string | null)[]> {
         if (this.disposed || sha256s.length === 0) {
             return sha256s.map(() => null);
         }
@@ -187,8 +187,7 @@ export class VectorCacheClient {
                 sha256s,
             });
 
-            // Convert number[][] back to Float32Array[] (IPC transfers as plain arrays)
-            return response.vectors.map(v => v !== null ? new Float32Array(v) : null);
+            return response.vectors;
         } catch (err) {
             warn(`[VectorCacheClient] getEmbeddings failed: ${err}`);
             return sha256s.map(() => null);
@@ -206,7 +205,7 @@ export class VectorCacheClient {
      * every returned promise so that errors are always logged,
      * regardless of whether the caller awaits.
      */
-    addEmbeddings(sha256s: string[], vectors: Float32Array[]): Promise<void> {
+    addEmbeddings(sha256s: string[], vectors: string[]): Promise<void> {
         if (this.disposed || sha256s.length === 0) {
             return Promise.resolve();
         }
@@ -215,14 +214,12 @@ export class VectorCacheClient {
             await this.initPromise;
 
             const messageId = this.nextMessageId++;
-            // Convert Float32Array[] to number[][] for IPC transfer
-            const vectorArrays = vectors.map(v => Array.from(v));
 
             await this.sendRequest({
                 type: 'addEmbeddings',
                 messageId,
                 sha256s,
-                vectors: vectorArrays,
+                vectors,
             });
         };
 

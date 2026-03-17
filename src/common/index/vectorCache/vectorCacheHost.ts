@@ -124,15 +124,14 @@ async function handleGetEmbeddings(msg: VectorCacheGetEmbeddingsRequest): Promis
     // Query DB only for possible hits
     const cachedMap = possibleHits.length > 0
         ? await db.get(possibleHits)
-        : new Map<string, Float32Array>();
+        : new Map<string, string>();
 
-    // Build response array: Float32Array for hits, null for misses.
-    // Convert Float32Array to plain number[] for IPC transfer.
-    const vectors: (number[] | null)[] = new Array(sha256s.length).fill(null);
+    // Build response array: base64 string for hits, null for misses.
+    const vectors: (string | null)[] = new Array(sha256s.length).fill(null);
     for (const idx of possibleHitIndices) {
         const vec = cachedMap.get(sha256s[idx]);
         if (vec) {
-            vectors[idx] = Array.from(vec);
+            vectors[idx] = vec;
         }
     }
 
@@ -147,9 +146,7 @@ async function handleAddEmbeddings(msg: VectorCacheAddEmbeddingsRequest): Promis
     const { messageId, sha256s, vectors } = msg;
 
     if (db && bloomFilter) {
-        // Convert number[][] back to Float32Array[]
-        const float32Vectors = vectors.map((v: number[]) => new Float32Array(v));
-        await db.add(sha256s, float32Vectors);
+        await db.add(sha256s, vectors);
 
         // Update bloom filter
         for (const sha256 of sha256s) {

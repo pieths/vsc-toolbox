@@ -466,10 +466,8 @@ export class VectorDatabase {
             return [];
         }
 
-        const vector = Array.from(queryVector);
-
         const vectorHits = await this.vectorsTable
-            .vectorSearch(vector)
+            .vectorSearch(queryVector)
             .distanceType('cosine')
             .select(['id', 'fileChunkId'])
             .limit(topK)
@@ -697,7 +695,7 @@ export class VectorDatabase {
     ): Promise<void> {
         const rows = vectors.map((v, i) => ({
             id: vectorIds[i],
-            vector: Array.from(v),
+            vector: v,
             fileChunkId: fileChunkIds[i],
         }));
 
