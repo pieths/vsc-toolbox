@@ -357,7 +357,7 @@
     "test": "node --test out-test/tests/**/*.test.js"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
+    "@types/node": "^22.0.0",
     "@types/picomatch": "^4.0.2",
     "@types/vscode": "^1.85.0",
     "esbuild": "^0.27.3",
