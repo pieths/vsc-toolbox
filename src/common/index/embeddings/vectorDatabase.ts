@@ -2,27 +2,36 @@
 // SPDX-License-Identifier: MIT
 
 /**
- * VectorDatabase — a wrapper around a LanceDB database instance.
+ * VectorDatabase — dual-storage database for file chunk metadata and embeddings.
  *
- * Tables:
+ * Storage:
  *
- *   Vectors       — id, vector (float32[], fixed dimension), fileChunkId
- *   FileChunks    — id, filePathId, startLine, endLine, sha256, vectorId
- *   FilePaths     — id, filePath, sha256  (source file version)
+ *   SQLite (metadata.db, WAL mode):
+ *     file_paths  — id (AUTOINCREMENT), filePath, sha256
+ *     file_chunks — id (AUTOINCREMENT), filePathId, startLine, endLine, sha256, vectorId
+ *
+ *   LanceDB (vectors/ subdirectory):
+ *     vectors     — id, vector (float32[], fixed dimension), fileChunkId
+ *
+ * SQLite handles all scalar metadata operations (inserts, deletes, lookups,
+ * updates) using prepared statements and transactions for maximum throughput.
+ * LanceDB handles only vector storage and nearest-neighbor search.
  *
  * Vectors and FileChunks have a 1:1 relationship via their mutual
- * foreign keys (vectorId ↔ fileChunkId).  FilePaths stores both the
+ * foreign keys (vectorId ↔ fileChunkId). FilePaths stores both the
  * file path string and the source-file SHA-256 hash that the chunks
  * were generated from.
  *
- * LanceDB stores data in the Lance columnar format on disk and memory-maps
- * it at query time.  Vectors never enter the V8 heap, so this works within
- * the Electron extension host memory limits.
+ * SQLite's AUTOINCREMENT handles id generation for file_paths and file_chunks,
+ * eliminating the need for manual id counters and the meta.json persistence
+ * file. Only the LanceDB vectors table still requires a manual id counter
+ * (recovered from a table scan on startup).
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Connection, Table } from '@lancedb/lancedb';
+import { DatabaseSync } from 'node:sqlite';
 import { log, warn, error } from '../../logger';
 
 // ── Public types ────────────────────────────────────────────────────────────
@@ -77,39 +86,58 @@ export interface FileChunkSearchResult {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
+/** LanceDB table name for vectors. */
 const TBL_VECTORS = 'vectors';
-const TBL_FILE_PATHS = 'file_paths';
-const TBL_FILE_CHUNKS = 'file_chunks';
 
-/** Name of the JSON file that persists auto-increment counters. */
-const META_FILE = 'meta.json';
+/** SQLite database filename within dbPath. */
+const SQLITE_DB_FILE = 'metadata.db';
 
-/** Shape of the persisted metadata. */
-interface DatabaseMeta {
-    nextVectorId: number;
-    nextFilePathId: number;
-    nextFileChunkId: number;
-}
+/** LanceDB subdirectory within dbPath (vectors stored separately). */
+const LANCEDB_DIR = 'vectors';
 
 // ── Class ───────────────────────────────────────────────────────────────────
 
 export class VectorDatabase {
     private readonly dbPath: string;
     private readonly vectorDimension: number;
-    private db: Connection | null = null;
 
+    // ── SQLite (file_paths + file_chunks metadata) ──────────────────────
+    private sqliteDb: DatabaseSync | null = null;
+
+    // Prepared statements — pre-compiled SQL templates created once in
+    // open() and reused for every call. SQLite compiles the SQL into an
+    // optimized query plan on prepare(), then subsequent executions just
+    // bind new parameter values and run the pre-compiled plan.
+    // Same loop-in-transaction pattern as VectorCacheDatabase.
+    private stmtInsertFilePath: ReturnType<DatabaseSync['prepare']> | null = null;
+    private stmtDeleteFilePath: ReturnType<DatabaseSync['prepare']> | null = null;
+    private stmtUpdateFileVersion: ReturnType<DatabaseSync['prepare']> | null = null;
+    private stmtInsertFileChunk: ReturnType<DatabaseSync['prepare']> | null = null;
+    private stmtDeleteFileChunkById: ReturnType<DatabaseSync['prepare']> | null = null;
+    private stmtDeleteChunksByFilePathId: ReturnType<DatabaseSync['prepare']> | null = null;
+    private stmtGetChunksByFilePathId: ReturnType<DatabaseSync['prepare']> | null = null;
+    private stmtGetChunkById: ReturnType<DatabaseSync['prepare']> | null = null;
+    private stmtUpdateChunkLines: ReturnType<DatabaseSync['prepare']> | null = null;
+    private stmtCountFileChunks: ReturnType<DatabaseSync['prepare']> | null = null;
+
+    // ── LanceDB (vectors only) ──────────────────────────────────────────
+    private lanceDb: Connection | null = null;
     private vectorsTable: Table | null = null;
-    private filePathsTable: Table | null = null;
-    private fileChunksTable: Table | null = null;
 
+    /**
+     * Counter for LanceDB vector IDs.  SQLite tables use AUTOINCREMENT
+     * but LanceDB has no built-in auto-increment, so we maintain this
+     * manually and recover it from a table scan on startup.
+     */
     private nextVectorId: number = 1;
-    private nextFilePathId: number = 1;
-    private nextFileChunkId: number = 1;
 
-    /** In-memory cache mapping filePath → filePathId for fast lookups. */
+    /** In-memory cache: filePath → filePathId (forward lookup). */
     private filePathCache = new Map<string, number>();
 
-    /** In-memory cache mapping filePathId → sha256 for file version lookups. */
+    /** In-memory cache: filePathId → filePath (reverse lookup). */
+    private filePathIdToPath = new Map<number, string>();
+
+    /** In-memory cache: filePathId → sha256 (file version lookup). */
     private fileVersionCache = new Map<number, string>();
 
     /**
@@ -117,7 +145,8 @@ export class VectorDatabase {
      *
      * Call {@link open} before using any other methods.
      *
-     * @param dbPath — directory where the LanceDB data files will be stored.
+     * @param dbPath — directory where database files will be stored.
+     *                 SQLite at `dbPath/metadata.db`, LanceDB at `dbPath/vectors/`.
      * @param vectorDimension — the fixed length of every embedding vector.
      */
     constructor(dbPath: string, vectorDimension: number) {
@@ -130,90 +159,146 @@ export class VectorDatabase {
     /**
      * Open (or create) the database and all tables.
      *
-     * If tables already exist on disk they will be opened and the next
-     * auto-increment ids will be recovered from the existing data.
+     * Creates the SQLite database with WAL mode and prepared statements,
+     * opens the LanceDB connection for vectors, and populates in-memory
+     * caches from the SQLite file_paths table.
      */
     async open(): Promise<void> {
-        const lancedb = await import('@lancedb/lancedb');
-
         await fs.promises.mkdir(this.dbPath, { recursive: true });
-        this.db = await lancedb.connect(this.dbPath);
 
-        const tableNames = await this.db.tableNames();
+        // ── SQLite setup ────────────────────────────────────────────────
 
-        // ── Try to load persisted metadata ───────────────────────────────
-        const meta = await this.loadMeta();
+        const dbFilePath = path.join(this.dbPath, SQLITE_DB_FILE);
+        this.sqliteDb = new DatabaseSync(dbFilePath);
 
-        // ── Vectors ─────────────────────────────────────────────────────
+        // WAL mode for fast concurrent reads/writes. Fully crash-safe:
+        // committed transactions are fsync'd to disk before COMMIT returns.
+        this.sqliteDb.exec('PRAGMA journal_mode = WAL');
+
+        // 50MB page cache (12500 pages × 4KB) — enough to keep BTree
+        // indexes resident in memory for fast lookups after warmup.
+        this.sqliteDb.exec('PRAGMA cache_size = 12500');
+
+        // Create tables (AUTOINCREMENT provides monotonically increasing
+        // IDs that are never reused, even after deletes)
+        this.sqliteDb.exec(`
+            CREATE TABLE IF NOT EXISTS file_paths (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                filePath TEXT NOT NULL UNIQUE,
+                sha256 TEXT NOT NULL DEFAULT ''
+            )
+        `);
+
+        this.sqliteDb.exec(`
+            CREATE TABLE IF NOT EXISTS file_chunks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                filePathId INTEGER NOT NULL,
+                startLine INTEGER NOT NULL,
+                endLine INTEGER NOT NULL,
+                sha256 TEXT NOT NULL,
+                vectorId INTEGER NOT NULL,
+                FOREIGN KEY (filePathId) REFERENCES file_paths(id)
+            )
+        `);
+        this.sqliteDb.exec(
+            'CREATE INDEX IF NOT EXISTS idx_file_chunks_filePathId ON file_chunks(filePathId)'
+        );
+
+        // ── Prepare reusable statements ─────────────────────────────────
+
+        this.stmtInsertFilePath = this.sqliteDb.prepare(
+            'INSERT INTO file_paths (filePath, sha256) VALUES (?, ?)'
+        );
+        this.stmtDeleteFilePath = this.sqliteDb.prepare(
+            'DELETE FROM file_paths WHERE id = ?'
+        );
+        this.stmtUpdateFileVersion = this.sqliteDb.prepare(
+            'UPDATE file_paths SET sha256 = ? WHERE id = ?'
+        );
+        this.stmtInsertFileChunk = this.sqliteDb.prepare(
+            'INSERT INTO file_chunks (filePathId, startLine, endLine, sha256, vectorId) VALUES (?, ?, ?, ?, ?)'
+        );
+        this.stmtDeleteFileChunkById = this.sqliteDb.prepare(
+            'DELETE FROM file_chunks WHERE id = ? RETURNING vectorId'
+        );
+        this.stmtDeleteChunksByFilePathId = this.sqliteDb.prepare(
+            'DELETE FROM file_chunks WHERE filePathId = ? RETURNING vectorId'
+        );
+        this.stmtGetChunksByFilePathId = this.sqliteDb.prepare(
+            'SELECT id, filePathId, startLine, endLine, sha256, vectorId FROM file_chunks WHERE filePathId = ?'
+        );
+        this.stmtGetChunkById = this.sqliteDb.prepare(
+            'SELECT id, filePathId, startLine, endLine, sha256 FROM file_chunks WHERE id = ?'
+        );
+        this.stmtUpdateChunkLines = this.sqliteDb.prepare(
+            'UPDATE file_chunks SET startLine = ?, endLine = ? WHERE id = ?'
+        );
+        this.stmtCountFileChunks = this.sqliteDb.prepare(
+            'SELECT COUNT(*) as count FROM file_chunks'
+        );
+
+        // ── Populate in-memory caches from SQLite ───────────────────────
+
+        const fpRows = this.sqliteDb.prepare(
+            'SELECT id, filePath, sha256 FROM file_paths'
+        ).all() as { id: number; filePath: string; sha256: string }[];
+
+        for (const row of fpRows) {
+            this.filePathCache.set(row.filePath, row.id);
+            this.filePathIdToPath.set(row.id, row.filePath);
+            if (row.sha256) {
+                this.fileVersionCache.set(row.id, row.sha256);
+            }
+        }
+
+        // ── LanceDB setup (vectors only) ────────────────────────────────
+
+        const lancedb = await import('@lancedb/lancedb');
+        const lanceDbPath = path.join(this.dbPath, LANCEDB_DIR);
+        await fs.promises.mkdir(lanceDbPath, { recursive: true });
+        this.lanceDb = await lancedb.connect(lanceDbPath);
+
+        const tableNames = await this.lanceDb.tableNames();
         if (tableNames.includes(TBL_VECTORS)) {
-            this.vectorsTable = await this.db.openTable(TBL_VECTORS);
-            if (!meta) {
-                this.nextVectorId = await this.recoverNextId(this.vectorsTable, 'id');
-            }
+            this.vectorsTable = await this.lanceDb.openTable(TBL_VECTORS);
+            this.nextVectorId = await this.recoverNextVectorId();
         }
 
-        // ── FilePaths ───────────────────────────────────────────────────
-        if (tableNames.includes(TBL_FILE_PATHS)) {
-            this.filePathsTable = await this.db.openTable(TBL_FILE_PATHS);
-            if (!meta) {
-                this.nextFilePathId = await this.recoverNextId(this.filePathsTable, 'id');
-            }
-            // Populate the in-memory caches
-            const fpRows = await this.filePathsTable
-                .query()
-                .select(['id', 'filePath', 'sha256'])
-                .toArray() as { id: number; filePath: string; sha256: string }[];
-            for (const row of fpRows) {
-                this.filePathCache.set(row.filePath, row.id);
-                if (row.sha256) {
-                    this.fileVersionCache.set(row.id, row.sha256);
-                }
-            }
-        }
+        // Create scalar indexes on vectors table (no-op if they already exist)
+        await this.ensureVectorIndexes();
 
-        // ── FileChunks ──────────────────────────────────────────────────
-        if (tableNames.includes(TBL_FILE_CHUNKS)) {
-            this.fileChunksTable = await this.db.openTable(TBL_FILE_CHUNKS);
-            if (!meta) {
-                this.nextFileChunkId = await this.recoverNextId(this.fileChunksTable, 'id');
-            }
-        }
-
-        if (meta) {
-            this.nextVectorId = meta.nextVectorId;
-            this.nextFilePathId = meta.nextFilePathId;
-            this.nextFileChunkId = meta.nextFileChunkId;
-            log('VectorDatabase: opened (ids restored from metadata)');
-        } else {
-            log('VectorDatabase: opened (ids recovered from table scan)');
-        }
-
-        // Create scalar indexes on existing tables (no-op if they already exist)
-        await this.ensureScalarIndexes();
+        log(`VectorDatabase: opened (${this.filePathCache.size} file paths loaded)`);
     }
 
     /**
      * Close the database connection and release resources.
      */
     async close(): Promise<void> {
-        await this.saveMeta();
+        // Nullify prepared statements
+        this.stmtInsertFilePath = null;
+        this.stmtDeleteFilePath = null;
+        this.stmtUpdateFileVersion = null;
+        this.stmtInsertFileChunk = null;
+        this.stmtDeleteFileChunkById = null;
+        this.stmtDeleteChunksByFilePathId = null;
+        this.stmtGetChunksByFilePathId = null;
+        this.stmtGetChunkById = null;
+        this.stmtUpdateChunkLines = null;
+        this.stmtCountFileChunks = null;
 
-        const tables = [
-            this.vectorsTable,
-            this.filePathsTable,
-            this.fileChunksTable,
-        ];
-        for (const t of tables) {
-            t?.close();
-        }
+        // Close SQLite
+        this.sqliteDb?.close();
+        this.sqliteDb = null;
+
+        // Close LanceDB
+        this.vectorsTable?.close();
         this.vectorsTable = null;
-        this.filePathsTable = null;
-        this.fileChunksTable = null;
+        this.lanceDb?.close();
+        this.lanceDb = null;
 
-        this.db?.close();
-        this.db = null;
-
+        // Clear caches
         this.filePathCache.clear();
+        this.filePathIdToPath.clear();
         this.fileVersionCache.clear();
     }
 
@@ -223,10 +308,12 @@ export class VectorDatabase {
      * Add multiple FileChunks to the database in a single batch.
      *
      * For each chunk this method will:
-     *   1. Ensure the filePath exists in FilePaths → filePathId
-     *   2. Pre-allocate fileChunkId and vectorId
-     *   3. Insert the FileChunk
-     *   4. Insert the embedding vector into Vectors (with fileChunkId)
+     *   1. Pre-allocate vectorIds (LanceDB has no auto-increment)
+     *   2. Insert metadata (file paths + file chunks) into SQLite
+     *   3. Insert embedding vectors into LanceDB
+     *
+     * If the LanceDB insert fails, the committed SQLite rows are deleted
+     * to maintain cross-database consistency.
      *
      * @returns An array of the assigned FileChunk ids (in insertion order).
      */
@@ -237,41 +324,82 @@ export class VectorDatabase {
 
         this.ensureOpen();
 
-        // 1. Ensure file paths exist
-        const filePathIds = await this.ensureFilePaths(chunks.map(c => c.filePath));
-
-        // 2. Pre-allocate ids for both tables
-        const fileChunkIds: number[] = [];
+        // 1. Pre-allocate vector IDs (LanceDB has no auto-increment)
         const vectorIds: number[] = [];
         for (let i = 0; i < chunks.length; i++) {
-            fileChunkIds.push(this.nextFileChunkId++);
             vectorIds.push(this.nextVectorId++);
         }
 
-        // 3. Insert FileChunks
-        const fileChunkRows = chunks.map((chunk, i) => ({
-            id: fileChunkIds[i],
-            filePathId: filePathIds[i],
-            startLine: chunk.startLine,
-            endLine: chunk.endLine,
-            sha256: chunk.sha256,
-            vectorId: vectorIds[i],
-        }));
+        // 2. Insert all metadata into SQLite in a single transaction:
+        //    new file paths (if any) + all file chunks
+        const fileChunkIds: number[] = [];
+        const newFilePaths: string[] = []; // Track for cache rollback
 
-        if (!this.fileChunksTable) {
-            this.fileChunksTable = await this.db!.createTable(TBL_FILE_CHUNKS, fileChunkRows);
-            await this.createIndexSafe(this.fileChunksTable, 'id');
-            await this.createIndexSafe(this.fileChunksTable, 'filePathId');
-        } else {
-            await this.fileChunksTable.add(fileChunkRows);
+        this.sqliteDb!.exec('BEGIN');
+        try {
+            for (let i = 0; i < chunks.length; i++) {
+                // Ensure file path exists in file_paths table
+                let filePathId = this.filePathCache.get(chunks[i].filePath);
+                if (filePathId === undefined) {
+                    // Insert the file path into the database and update caches.
+                    // The sha256 should be an empty string since a valid sha256
+                    // would imply that all chunks for this file have been
+                    // processed which is not known at this point.
+                    const fpResult = this.stmtInsertFilePath!.run(chunks[i].filePath, '');
+                    filePathId = fpResult.lastInsertRowid as number;
+                    this.filePathCache.set(chunks[i].filePath, filePathId);
+                    this.filePathIdToPath.set(filePathId, chunks[i].filePath);
+                    newFilePaths.push(chunks[i].filePath);
+                }
+
+                // Insert file chunk row
+                const result = this.stmtInsertFileChunk!.run(
+                    filePathId, chunks[i].startLine, chunks[i].endLine,
+                    chunks[i].sha256, vectorIds[i],
+                );
+                fileChunkIds.push(result.lastInsertRowid as number);
+            }
+            this.sqliteDb!.exec('COMMIT');
+        } catch (err) {
+            this.sqliteDb!.exec('ROLLBACK');
+            // Evict new file path cache entries (they were rolled back)
+            for (const fp of newFilePaths) {
+                const fpId = this.filePathCache.get(fp);
+                this.filePathCache.delete(fp);
+                if (fpId !== undefined) {
+                    this.filePathIdToPath.delete(fpId);
+                }
+            }
+            this.nextVectorId -= chunks.length;
+            throw err;
         }
 
-        // 4. Insert Vectors (with fileChunkId)
-        await this.insertVectors(
-            chunks.map(c => c.vector),
-            vectorIds,
-            fileChunkIds,
-        );
+        // 3. Insert vectors into LanceDB
+        try {
+            await this.insertVectors(
+                chunks.map(c => c.vector),
+                vectorIds,
+                fileChunkIds,
+            );
+        } catch (err) {
+            // LanceDB insert failed — delete the SQLite rows we just
+            // committed to maintain cross-database consistency.
+            // Orphaned file_paths (if any were created) are left in
+            // place intentionally: they remain in both SQLite and
+            // the in-memory cache, so the two stay in sync.  On a
+            // retry the cache hit avoids a UNIQUE constraint violation.
+            // checkIntegrity() cleans them up at next startup.
+            this.sqliteDb!.exec('BEGIN');
+            try {
+                for (const id of fileChunkIds) {
+                    this.stmtDeleteFileChunkById!.get(id);
+                }
+                this.sqliteDb!.exec('COMMIT');
+            } catch {
+                this.sqliteDb!.exec('ROLLBACK');
+            }
+            throw err;
+        }
 
         log(`VectorDatabase: added ${chunks.length} file chunk(s)`);
         return fileChunkIds;
@@ -287,9 +415,11 @@ export class VectorDatabase {
      * database or in the in-memory caches.
      */
     async deleteByFilePaths(filePaths: string[]): Promise<void> {
-        if (!this.fileChunksTable || !this.filePathsTable || filePaths.length === 0) {
+        if (filePaths.length === 0) {
             return;
         }
+
+        this.ensureOpen();
 
         // Resolve file paths to filePathIds, skipping unknown paths
         const filePathIds: number[] = [];
@@ -306,33 +436,50 @@ export class VectorDatabase {
             return;
         }
 
-        // Find all FileChunk ids for these files in one query
-        const fpIdList = filePathIds.join(', ');
-        const chunkRows = await this.fileChunksTable
-            .query()
-            .select(['id'])
-            .where(`filePathId IN (${fpIdList})`)
-            .toArray() as { id: number }[];
-
-        // Delete all chunks (and their vectors) in one batch
-        if (chunkRows.length > 0) {
-            await this.deleteFileChunks(chunkRows.map(r => r.id));
+        // Delete file chunks (collecting vectorIds via RETURNING)
+        // and file path entries in a single SQLite transaction
+        const vectorIdsToDelete: number[] = [];
+        this.sqliteDb!.exec('BEGIN');
+        try {
+            for (const fpId of filePathIds) {
+                // DELETE ... RETURNING collects vectorIds and deletes
+                // chunks in a single pass per file path
+                const rows = this.stmtDeleteChunksByFilePathId!.all(fpId) as { vectorId: number }[];
+                for (const r of rows) {
+                    vectorIdsToDelete.push(r.vectorId);
+                }
+                this.stmtDeleteFilePath!.run(fpId);
+            }
+            this.sqliteDb!.exec('COMMIT');
+        } catch (err) {
+            this.sqliteDb!.exec('ROLLBACK');
+            throw err;
         }
-
-        // Delete the FilePath entries in one query
-        await this.filePathsTable.delete(`id IN (${fpIdList})`);
 
         // Evict from in-memory caches
         for (let i = 0; i < resolvedPaths.length; i++) {
             this.filePathCache.delete(resolvedPaths[i]);
+            this.filePathIdToPath.delete(filePathIds[i]);
             this.fileVersionCache.delete(filePathIds[i]);
+        }
+
+        // Delete vectors from LanceDB (orphaned vectors are harmless
+        // if this fails — cleaned up by checkIntegrity())
+        if (this.vectorsTable && vectorIdsToDelete.length > 0) {
+            try {
+                const vecIdList = vectorIdsToDelete.join(', ');
+                await this.vectorsTable.delete(`id IN (${vecIdList})`);
+            } catch (err) {
+                warn(`VectorDatabase: failed to delete ${vectorIdsToDelete.length} vector(s): ${err}`);
+            }
         }
     }
 
     /**
      * Delete multiple FileChunks by their ids in a single pass.
      *
-     * Also removes associated vectors.
+     * Uses DELETE ... RETURNING to collect vectorIds and delete chunks
+     * atomically, then removes associated vectors from LanceDB.
      */
     async deleteFileChunks(fileChunkIds: number[]): Promise<void> {
         if (fileChunkIds.length === 0) {
@@ -340,29 +487,30 @@ export class VectorDatabase {
         }
         this.ensureOpen();
 
-        const idList = fileChunkIds.join(', ');
-
-        // Collect vectorIds to delete
-        const vectorIdsToDelete = new Set<number>();
-
-        if (this.fileChunksTable) {
-            const chunkRows = await this.fileChunksTable
-                .query()
-                .select(['vectorId'])
-                .where(`id IN (${idList})`)
-                .toArray() as { vectorId: number }[];
-            for (const r of chunkRows) {
-                vectorIdsToDelete.add(r.vectorId);
+        // Delete file chunks from SQLite, collecting vectorIds via RETURNING
+        const vectorIdsToDelete: number[] = [];
+        this.sqliteDb!.exec('BEGIN');
+        try {
+            for (const id of fileChunkIds) {
+                const row = this.stmtDeleteFileChunkById!.get(id) as { vectorId: number } | undefined;
+                if (row) {
+                    vectorIdsToDelete.push(row.vectorId);
+                }
             }
-
-            // Delete file chunks
-            await this.fileChunksTable.delete(`id IN (${idList})`);
+            this.sqliteDb!.exec('COMMIT');
+        } catch (err) {
+            this.sqliteDb!.exec('ROLLBACK');
+            throw err;
         }
 
-        // Delete vectors
-        if (this.vectorsTable && vectorIdsToDelete.size > 0) {
-            const vecIdList = Array.from(vectorIdsToDelete).join(', ');
-            await this.vectorsTable.delete(`id IN (${vecIdList})`);
+        // Delete vectors from LanceDB
+        if (this.vectorsTable && vectorIdsToDelete.length > 0) {
+            try {
+                const vecIdList = vectorIdsToDelete.join(', ');
+                await this.vectorsTable.delete(`id IN (${vecIdList})`);
+            } catch (err) {
+                warn(`VectorDatabase: failed to delete ${vectorIdsToDelete.length} vector(s): ${err}`);
+            }
         }
     }
 
@@ -372,77 +520,74 @@ export class VectorDatabase {
      * Update the start and end line numbers for multiple FileChunks
      * in a single batch operation.
      *
-     * Uses mergeInsert (upsert) keyed on `id` so that all updates are
-     * applied in one pass — creating a single new table version instead
-     * of one per row.
-     *
      * Only the line metadata is changed — the vector remains untouched.
      *
      * @param updates — FileChunkRecords with updated line numbers.
      */
     async updateFileChunkLines(updates: FileChunkRecord[]): Promise<void> {
-        if (updates.length === 0 || !this.fileChunksTable) {
+        if (updates.length === 0) {
             return;
         }
         this.ensureOpen();
 
-        // Build raw rows matching the file_chunks table schema
-        const rows = updates.map(r => ({
-            id: r.id,
-            filePathId: r.filePathId,
-            startLine: r.startLine,
-            endLine: r.endLine,
-            sha256: r.sha256,
-            vectorId: r.vectorId,
-        }));
-
-        await this.fileChunksTable
-            .mergeInsert('id')
-            .whenMatchedUpdateAll()
-            .execute(rows);
+        this.sqliteDb!.exec('BEGIN');
+        try {
+            for (const u of updates) {
+                this.stmtUpdateChunkLines!.run(u.startLine, u.endLine, u.id);
+            }
+            this.sqliteDb!.exec('COMMIT');
+        } catch (err) {
+            this.sqliteDb!.exec('ROLLBACK');
+            throw err;
+        }
     }
 
     /**
      * Set the source-file SHA-256 for one or more file paths.
      *
-     * The sha256 column in the FilePaths table records the SHA-256 of
+     * The sha256 column in the file_paths table records the SHA-256 of
      * the source file that was used to produce the chunks stored in the
-     * database.  A non-empty sha256 means "all chunks are valid for this
+     * database. A non-empty sha256 means "all chunks are valid for this
      * file version"; an empty string means "some or all chunks are invalid."
      *
-     * Uses mergeInsert (upsert) keyed on `id` so that all updates are
-     * applied in a single pass.
+     * Only updates existing file paths — unknown paths are silently
+     * skipped. File paths are always created by {@link addFileChunks}
+     * before this method is called.
      */
     async setFileVersions(updates: { filePath: string; sha256: string }[]): Promise<void> {
-        if (updates.length === 0 || !this.filePathsTable) {
+        if (updates.length === 0) {
             return;
         }
         this.ensureOpen();
 
-        // Build full rows for mergeInsert (filePath is unchanged but required
-        // by whenMatchedUpdateAll since it writes all columns)
-        const rows: { id: number; filePath: string; sha256: string }[] = [];
+        // Resolve filePaths to filePathIds, skipping unknown paths
+        const rows: { filePathId: number; sha256: string }[] = [];
         for (const u of updates) {
             const filePathId = this.filePathCache.get(u.filePath);
             if (filePathId === undefined) {
                 continue;
             }
-            rows.push({ id: filePathId, filePath: u.filePath, sha256: u.sha256 });
+            rows.push({ filePathId, sha256: u.sha256 });
         }
 
         if (rows.length === 0) {
             return;
         }
 
-        await this.filePathsTable
-            .mergeInsert('id')
-            .whenMatchedUpdateAll()
-            .whenNotMatchedInsertAll()
-            .execute(rows);
+        this.sqliteDb!.exec('BEGIN');
+        try {
+            for (const row of rows) {
+                this.stmtUpdateFileVersion!.run(row.sha256, row.filePathId);
+            }
+            this.sqliteDb!.exec('COMMIT');
+        } catch (err) {
+            this.sqliteDb!.exec('ROLLBACK');
+            throw err;
+        }
 
         // Update the in-memory cache
         for (const row of rows) {
-            this.fileVersionCache.set(row.id, row.sha256);
+            this.fileVersionCache.set(row.filePathId, row.sha256);
         }
     }
 
@@ -451,8 +596,8 @@ export class VectorDatabase {
     /**
      * Find the nearest FileChunks to a query vector.
      *
-     * Performs a vector similarity search on the Vectors table, then
-     * resolves the fileChunkId foreign key to return FileChunk metadata.
+     * Performs a vector similarity search on the LanceDB Vectors table,
+     * then resolves fileChunkId → metadata via SQLite.
      *
      * @param queryVector — the embedding vector to search against.
      * @param topK — maximum number of FileChunk results to return (default 10).
@@ -462,10 +607,11 @@ export class VectorDatabase {
         queryVector: Float32Array,
         topK: number = 10,
     ): Promise<FileChunkSearchResult[]> {
-        if (!this.vectorsTable || !this.fileChunksTable) {
+        if (!this.vectorsTable || !this.sqliteDb) {
             return [];
         }
 
+        // Vector search in LanceDB
         const vectorHits = await this.vectorsTable
             .vectorSearch(queryVector)
             .distanceType('cosine')
@@ -477,39 +623,40 @@ export class VectorDatabase {
             return [];
         }
 
-        // Build a map: fileChunkId → distance
+        // Build distance map: fileChunkId → distance
         const distanceByChunkId = new Map<number, number>();
         for (const hit of vectorHits) {
             distanceByChunkId.set(hit.fileChunkId, hit._distance);
         }
 
-        // Fetch FileChunk rows
-        const chunkIdList = Array.from(distanceByChunkId.keys()).join(', ');
-        const chunkRows = await this.fileChunksTable
-            .query()
-            .select(['id', 'filePathId', 'startLine', 'endLine', 'sha256'])
-            .where(`id IN (${chunkIdList})`)
-            .toArray() as {
-                id: number;
-                filePathId: number;
-                startLine: number;
-                endLine: number;
-                sha256: string;
-            }[];
+        // Resolve file chunk metadata from SQLite
+        // TODO: wrap in a transaction if this becomes a performance bottleneck
+        const results: FileChunkSearchResult[] = [];
+        for (const [chunkId, distance] of distanceByChunkId) {
+            const row = this.stmtGetChunkById!.get(chunkId) as {
+                id: number; filePathId: number;
+                startLine: number; endLine: number; sha256: string;
+            } | undefined;
 
-        // Resolve filePathIds → filePaths
-        const filePathIdSet = new Set(chunkRows.map(r => r.filePathId));
-        const filePathMap = await this.resolveFilePathIds(Array.from(filePathIdSet));
+            if (!row) {
+                continue;
+            }
 
-        // Assemble results
-        const results: FileChunkSearchResult[] = chunkRows.map(row => ({
-            id: row.id,
-            filePath: filePathMap.get(row.filePathId) ?? '',
-            startLine: row.startLine,
-            endLine: row.endLine,
-            sha256: row.sha256,
-            _distance: distanceByChunkId.get(row.id)!,
-        }));
+            // Resolve filePathId → filePath from reverse cache
+            const filePath = this.filePathIdToPath.get(row.filePathId);
+            if (!filePath) {
+                continue;
+            }
+
+            results.push({
+                id: row.id,
+                filePath,
+                startLine: row.startLine,
+                endLine: row.endLine,
+                sha256: row.sha256,
+                _distance: distance,
+            });
+        }
 
         // Sort by distance ascending
         results.sort((a, b) => a._distance - b._distance);
@@ -555,11 +702,11 @@ export class VectorDatabase {
     }
 
     /**
-     * Get all FileChunks for multiple file paths in a single query.
+     * Get all FileChunks for multiple file paths.
      *
-     * This is significantly faster than calling {@link getFileChunksByFilePath}
-     * in a loop because it issues a single database query with an
-     * `IN (...)` clause instead of one query per file.
+     * Uses a prepared statement loop inside a read transaction.
+     * Each file path does a direct BTree index lookup on filePathId,
+     * so cost is proportional to the total number of chunks returned.
      *
      * @param filePaths — the file paths to look up.
      * @returns A Map from filePath → array of FileChunkRecords.
@@ -567,56 +714,42 @@ export class VectorDatabase {
     async getFileChunksForMultipleFiles(filePaths: string[]): Promise<Map<string, FileChunkRecord[]>> {
         const result = new Map<string, FileChunkRecord[]>();
 
-        if (!this.fileChunksTable || filePaths.length === 0) {
+        if (!this.sqliteDb || filePaths.length === 0) {
             return result;
         }
 
-        // Resolve filePaths to filePathIds, skipping unknown paths
-        const idToPath = new Map<number, string>();
-        for (const fp of filePaths) {
-            const id = this.filePathCache.get(fp);
-            if (id !== undefined) {
-                idToPath.set(id, fp);
-            }
-        }
+        // Wrap reads in a transaction to avoid per-call implicit
+        // transaction overhead in WAL mode
+        this.sqliteDb.exec('BEGIN');
+        try {
+            for (const fp of filePaths) {
+                const filePathId = this.filePathCache.get(fp);
+                if (filePathId === undefined) {
+                    continue;
+                }
 
-        if (idToPath.size === 0) {
-            return result;
-        }
+                const rows = this.stmtGetChunksByFilePathId!.all(filePathId) as {
+                    id: number; filePathId: number;
+                    startLine: number; endLine: number;
+                    sha256: string; vectorId: number;
+                }[];
 
-        const idList = Array.from(idToPath.keys()).join(', ');
-        const rows = await this.fileChunksTable
-            .query()
-            .select(['id', 'filePathId', 'startLine', 'endLine', 'sha256', 'vectorId'])
-            .where(`filePathId IN (${idList})`)
-            .toArray() as {
-                id: number;
-                filePathId: number;
-                startLine: number;
-                endLine: number;
-                sha256: string;
-                vectorId: number;
-            }[];
-
-        for (const row of rows) {
-            const fp = idToPath.get(row.filePathId);
-            if (!fp) {
-                continue;
+                if (rows.length > 0) {
+                    result.set(fp, rows.map(row => ({
+                        id: row.id,
+                        filePath: fp,
+                        filePathId: row.filePathId,
+                        startLine: row.startLine,
+                        endLine: row.endLine,
+                        sha256: row.sha256,
+                        vectorId: row.vectorId,
+                    })));
+                }
             }
-            let arr = result.get(fp);
-            if (!arr) {
-                arr = [];
-                result.set(fp, arr);
-            }
-            arr.push({
-                id: row.id,
-                filePath: fp,
-                filePathId: row.filePathId,
-                startLine: row.startLine,
-                endLine: row.endLine,
-                sha256: row.sha256,
-                vectorId: row.vectorId,
-            });
+            this.sqliteDb.exec('COMMIT');
+        } catch (err) {
+            this.sqliteDb.exec('ROLLBACK');
+            throw err;
         }
 
         return result;
@@ -626,10 +759,11 @@ export class VectorDatabase {
      * Get the total number of FileChunks in the database.
      */
     async countFileChunks(): Promise<number> {
-        if (!this.fileChunksTable) {
+        if (!this.sqliteDb) {
             return 0;
         }
-        return this.fileChunksTable.countRows();
+        const row = this.stmtCountFileChunks!.get() as { count: number } | undefined;
+        return row?.count ?? 0;
     }
 
     /**
@@ -645,36 +779,37 @@ export class VectorDatabase {
     // ── Maintenance ─────────────────────────────────────────────────────────
 
     /**
-     * Optimize the database by compacting data files, cleaning up
-     * old versions, and updating indices for all tables.
+     * Optimize the database storage.
      *
-     * Covers three operations:
-     *   - **Compaction**: merges small files into larger ones and
-     *     physically removes logically-deleted rows to reclaim disk space.
-     *   - **Prune**: removes old table versions.
-     *   - **Index**: updates existing scalar BTree indices with any
-     *     new data added since the last optimization.
+     *   - **SQLite**: WAL checkpoint — merges the WAL file back into
+     *     the main database and truncates it to reclaim disk space.
+     *   - **LanceDB**: Compacts data files, prunes old table versions,
+     *     and updates scalar indices for the vectors table.
      *
      * Call this during idle periods or when a user explicitly requests it.
      */
     async compact(): Promise<void> {
         this.ensureOpen();
 
-        const tables: [string, Table | null][] = [
-            [TBL_VECTORS, this.vectorsTable],
-            [TBL_FILE_PATHS, this.filePathsTable],
-            [TBL_FILE_CHUNKS, this.fileChunksTable],
-        ];
+        // SQLite: WAL checkpoint
+        try {
+            this.sqliteDb!.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+            log('VectorDatabase: SQLite WAL checkpoint complete');
+        } catch (err) {
+            error(`VectorDatabase: SQLite WAL checkpoint failed: ${err}`);
+        }
 
-        for (const [name, table] of tables) {
-            if (!table) {
-                continue;
-            }
+        // LanceDB: optimize vectors table
+        if (this.vectorsTable) {
             try {
-                const stats = await table.optimize();
-                log(`VectorDatabase: compacted '${name}' — removed ${stats.compaction.filesRemoved} files, ${stats.prune.bytesRemoved} bytes`);
+                const stats = await this.vectorsTable.optimize();
+                log(
+                    `VectorDatabase: compacted vectors — removed ` +
+                    `${stats.compaction.filesRemoved} files, ` +
+                    `${stats.prune.bytesRemoved} bytes`
+                );
             } catch (err) {
-                error(`VectorDatabase: compaction of '${name}' failed: ${err}`);
+                error(`VectorDatabase: vectors compaction failed: ${err}`);
             }
         }
     }
@@ -682,7 +817,7 @@ export class VectorDatabase {
     // ── Internals ───────────────────────────────────────────────────────────
 
     /**
-     * Insert one or more vectors into the Vectors table.
+     * Insert one or more vectors into the LanceDB Vectors table.
      *
      * @param vectors — the embedding vectors.
      * @param vectorIds — pre-allocated vector ids.
@@ -700,7 +835,7 @@ export class VectorDatabase {
         }));
 
         if (!this.vectorsTable) {
-            this.vectorsTable = await this.db!.createTable(TBL_VECTORS, rows);
+            this.vectorsTable = await this.lanceDb!.createTable(TBL_VECTORS, rows);
             await this.createIndexSafe(this.vectorsTable, 'id');
             await this.createIndexSafe(this.vectorsTable, 'fileChunkId');
         } else {
@@ -709,131 +844,68 @@ export class VectorDatabase {
     }
 
     /**
-     * Ensure that each file path has an entry in the FilePaths table.
-     *
-     * Uses an in-memory cache to avoid redundant inserts.
-     *
-     * @returns The filePathIds corresponding to each input path.
-     */
-    private async ensureFilePaths(filePaths: string[]): Promise<number[]> {
-        const newRows: { id: number; filePath: string; sha256: string }[] = [];
-
-        const ids = filePaths.map(fp => {
-            let id = this.filePathCache.get(fp);
-            if (id === undefined) {
-                id = this.nextFilePathId++;
-                this.filePathCache.set(fp, id);
-                newRows.push({ id, filePath: fp, sha256: '' });
-            }
-            return id;
-        });
-
-        if (newRows.length > 0) {
-            if (!this.filePathsTable) {
-                this.filePathsTable = await this.db!.createTable(TBL_FILE_PATHS, newRows);
-                await this.createIndexSafe(this.filePathsTable, 'id');
-            } else {
-                await this.filePathsTable.add(newRows);
-            }
-        }
-
-        return ids;
-    }
-
-    /**
-     * Resolve an array of filePathIds to their filePath strings.
-     *
-     * @returns A Map from filePathId → filePath.
-     */
-    private async resolveFilePathIds(filePathIds: number[]): Promise<Map<number, string>> {
-        const result = new Map<number, string>();
-
-        // Try the in-memory cache first
-        const missing: number[] = [];
-        for (const id of filePathIds) {
-            let found = false;
-            for (const [path, cachedId] of this.filePathCache) {
-                if (cachedId === id) {
-                    result.set(id, path);
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                missing.push(id);
-            }
-        }
-
-        // Fall back to querying the table for any not in cache
-        if (missing.length > 0 && this.filePathsTable) {
-            const idList = missing.join(', ');
-            const rows = await this.filePathsTable
-                .query()
-                .select(['id', 'filePath'])
-                .where(`id IN (${idList})`)
-                .toArray() as { id: number; filePath: string }[];
-            for (const row of rows) {
-                result.set(row.id, row.filePath);
-                this.filePathCache.set(row.filePath, row.id);
-            }
-        }
-
-        return result;
-    }
-
-    /**
-     * Assert that the database connection is open.
+     * Assert that the database connections are open.
      */
     private ensureOpen(): void {
-        if (!this.db) {
+        if (!this.sqliteDb || !this.lanceDb) {
             throw new Error('VectorDatabase: database is not open — call open() first');
         }
     }
 
     /**
-     * Ensure scalar BTree indexes exist on all key filter columns.
+     * Recover the next vector id from the LanceDB vectors table.
      *
-     * Uses `replace: false` so that existing indexes are left untouched
-     * (this is a no-op for columns that are already indexed).  Only the
-     * tables that are currently open are indexed — tables created lazily
-     * during insert will be indexed at creation time.
-     *
-     * Indexes are persisted on disk by LanceDB and survive across
-     * open/close cycles, so this only does real work on first run or
-     * after a database is created from scratch.
+     * LanceDB has no auto-increment, so we scan the id column to find
+     * the maximum. This only runs on startup when the table already exists.
      */
-    private async ensureScalarIndexes(): Promise<void> {
+    private async recoverNextVectorId(): Promise<number> {
+        if (!this.vectorsTable) {
+            return 1;
+        }
+        const count = await this.vectorsTable.countRows();
+        if (count === 0) {
+            return 1;
+        }
+        // LanceDB has no ORDER BY or MAX(), so scan all ids
+        const rows = await this.vectorsTable
+            .query()
+            .select(['id'])
+            .toArray();
+        let maxId = 0;
+        for (const row of rows) {
+            const val = (row as Record<string, number>)['id'];
+            if (val > maxId) {
+                maxId = val;
+            }
+        }
+        return maxId + 1;
+    }
+
+    /**
+     * Ensure scalar BTree indexes exist on the LanceDB vectors table.
+     *
+     * Uses `replace: false` so that existing indexes are left untouched.
+     * Indexes are persisted on disk by LanceDB and survive across
+     * open/close cycles.
+     */
+    private async ensureVectorIndexes(): Promise<void> {
+        if (!this.vectorsTable) {
+            return;
+        }
         const t0 = Date.now();
         let count = 0;
-
-        // file_chunks: filtered by id (deletes) and filePathId (lookups)
-        if (this.fileChunksTable) {
-            count += await this.createIndexSafe(this.fileChunksTable, 'id');
-            count += await this.createIndexSafe(this.fileChunksTable, 'filePathId');
-        }
-
-        // vectors: filtered by id (deletes) and fileChunkId (search resolution)
-        if (this.vectorsTable) {
-            count += await this.createIndexSafe(this.vectorsTable, 'id');
-            count += await this.createIndexSafe(this.vectorsTable, 'fileChunkId');
-        }
-
-        // file_paths: filtered by id (deletes, lookups)
-        if (this.filePathsTable) {
-            count += await this.createIndexSafe(this.filePathsTable, 'id');
-        }
-
+        count += await this.createIndexSafe(this.vectorsTable, 'id');
+        count += await this.createIndexSafe(this.vectorsTable, 'fileChunkId');
         if (count > 0) {
-            log(`VectorDatabase: created ${count} scalar index(es) in ${Date.now() - t0}ms`);
+            log(`VectorDatabase: created ${count} vector index(es) in ${Date.now() - t0}ms`);
         }
     }
 
     /**
-     * Create a scalar BTree index on a column, ignoring errors if the
-     * index already exists or the table is empty.
+     * Create a scalar BTree index on a LanceDB column, ignoring errors
+     * if the index already exists or the table is empty.
      *
-     * @returns 1 if the index was created, 0 if it already existed or
-     *          could not be created.
+     * @returns 1 if the index was created, 0 otherwise.
      */
     private async createIndexSafe(table: Table, column: string): Promise<number> {
         try {
@@ -846,98 +918,15 @@ export class VectorDatabase {
     }
 
     /**
-     * Load persisted metadata from the JSON file.
-     *
-     * The file is deleted immediately after a successful read so that a
-     * crash while the database is open guarantees the file will not be
-     * present on the next startup — forcing a full table-scan recovery.
-     * The file is only recreated during {@link close}.
-     *
-     * @returns The parsed metadata, or `null` if the file does not exist
-     *          or is corrupt.
-     */
-    private async loadMeta(): Promise<DatabaseMeta | null> {
-        const metaPath = path.join(this.dbPath, META_FILE);
-        try {
-            const raw = await fs.promises.readFile(metaPath, 'utf-8');
-
-            // Delete immediately — if we crash before close(), the file
-            // won't exist on next startup and we'll recover from tables.
-            // This should avoid stale metadata after a crash
-            // (e.g. nextVectorId too low, causing ID collisions).
-            await fs.promises.unlink(metaPath);
-
-            const meta = JSON.parse(raw) as DatabaseMeta;
-            if (
-                typeof meta.nextVectorId === 'number' &&
-                typeof meta.nextFilePathId === 'number' &&
-                typeof meta.nextFileChunkId === 'number'
-            ) {
-                return meta;
-            }
-            warn('VectorDatabase: meta.json has invalid shape — will recover from tables');
-            return null;
-        } catch {
-            // File doesn't exist or can't be read — that's fine
-            return null;
-        }
-    }
-
-    /**
-     * Persist current auto-increment counters to the metadata JSON file.
-     */
-    private async saveMeta(): Promise<void> {
-        const metaPath = path.join(this.dbPath, META_FILE);
-        const meta: DatabaseMeta = {
-            nextVectorId: this.nextVectorId,
-            nextFilePathId: this.nextFilePathId,
-            nextFileChunkId: this.nextFileChunkId,
-        };
-        try {
-            await fs.promises.writeFile(metaPath, JSON.stringify(meta), 'utf-8');
-        } catch (err) {
-            error(`VectorDatabase: failed to write meta.json: ${err}`);
-        }
-    }
-
-    /**
-     * Recover the next auto-increment id from an existing table.
-     *
-     * This is a fallback used only when meta.json is missing or corrupt
-     * (e.g. after a crash).  Fetches only the lightweight id column
-     * (vectors are excluded by the select projection).  LanceDB does
-     * not expose ORDER BY or aggregate functions, so we must scan all
-     * ids to find the max.
-     */
-    private async recoverNextId(table: Table, column: string): Promise<number> {
-        const count = await table.countRows();
-        if (count === 0) {
-            return 1;
-        }
-        const rows = await table
-            .query()
-            .select([column])
-            .toArray();
-        let maxId = 0;
-        for (const row of rows) {
-            const val = (row as Record<string, number>)[column];
-            if (val > maxId) {
-                maxId = val;
-            }
-        }
-        return maxId + 1;
-    }
-
-    /**
      * Scan all tables for referential integrity violations and optionally
      * delete orphaned rows.
      *
      * Detects:
-     *   1. Orphaned vectors    — Vectors whose fileChunkId no longer
-     *                            exists in FileChunks.
-     *   2. Orphaned file paths — FilePaths that no FileChunk references.
-     *   3. Dangling chunks     — FileChunks whose vectorId no longer
-     *                            exists in Vectors.
+     *   1. Orphaned vectors    — Vectors (LanceDB) whose fileChunkId no
+     *                            longer exists in file_chunks (SQLite).
+     *   2. Orphaned file paths — file_paths rows that no file_chunk references.
+     *   3. Dangling chunks     — file_chunks whose vectorId no longer
+     *                            exists in Vectors (LanceDB).
      *
      * The check only reads lightweight id/FK columns — no vector data is
      * loaded — so the cost is proportional to the row count, not the
@@ -946,7 +935,7 @@ export class VectorDatabase {
      * @param repair — when `true`, delete every orphaned row that is found.
      * @returns Summary counts of the violations detected (before repair).
      */
-    private async checkIntegrity(repair: boolean = false): Promise<{
+    async checkIntegrity(repair: boolean = false): Promise<{
         orphanedVectors: number;
         orphanedFilePaths: number;
         danglingFileChunks: number;
@@ -959,10 +948,10 @@ export class VectorDatabase {
             danglingFileChunks: 0,
         };
 
-        // ── Collect id sets from each table ─────────────────────────────
+        // ── Collect id sets from LanceDB vectors table ──────────────────
 
         const vectorIds = new Set<number>();
-        const vectorFileChunkIds = new Set<number>();
+        const vectorRows: { id: number; fileChunkId: number }[] = [];
         if (this.vectorsTable) {
             const rows = await this.vectorsTable
                 .query()
@@ -970,59 +959,39 @@ export class VectorDatabase {
                 .toArray() as { id: number; fileChunkId: number }[];
             for (const r of rows) {
                 vectorIds.add(r.id);
-                vectorFileChunkIds.add(r.fileChunkId);
+                vectorRows.push(r);
             }
         }
+
+        // ── Collect id sets from SQLite file_chunks table ───────────────
 
         const fileChunkIds = new Set<number>();
-        const fileChunkVectorIds = new Set<number>();
         const fileChunkFilePathIds = new Set<number>();
-        if (this.fileChunksTable) {
-            const rows = await this.fileChunksTable
-                .query()
-                .select(['id', 'vectorId', 'filePathId'])
-                .toArray() as { id: number; vectorId: number; filePathId: number }[];
-            for (const r of rows) {
-                fileChunkIds.add(r.id);
-                fileChunkVectorIds.add(r.vectorId);
-                fileChunkFilePathIds.add(r.filePathId);
-            }
+        const chunkRows = this.sqliteDb!.prepare(
+            'SELECT id, vectorId, filePathId FROM file_chunks'
+        ).all() as { id: number; vectorId: number; filePathId: number }[];
+
+        for (const r of chunkRows) {
+            fileChunkIds.add(r.id);
+            fileChunkFilePathIds.add(r.filePathId);
         }
 
-        const filePathIds = new Set<number>();
-        if (this.filePathsTable) {
-            const rows = await this.filePathsTable
-                .query()
-                .select(['id'])
-                .toArray() as { id: number }[];
-            for (const r of rows) {
-                filePathIds.add(r.id);
-            }
-        }
+        // ── File path ids from the in-memory cache ──────────────────────
 
-        // ── 1. Orphaned vectors — fileChunkId not in FileChunks ──────────
+        const filePathIds = new Set(this.filePathCache.values());
+
+        // ── 1. Orphaned vectors — fileChunkId not in file_chunks ────────
+
         const orphanedVectorIds: number[] = [];
-        for (const fcId of vectorFileChunkIds) {
-            if (!fileChunkIds.has(fcId)) {
-                // Find all vector ids that reference this missing fileChunkId
-                // (already collected above, but we need the vector id)
-            }
-        }
-        // Re-scan to collect actual vector ids whose fileChunkId is missing
-        if (this.vectorsTable) {
-            const rows = await this.vectorsTable
-                .query()
-                .select(['id', 'fileChunkId'])
-                .toArray() as { id: number; fileChunkId: number }[];
-            for (const r of rows) {
-                if (!fileChunkIds.has(r.fileChunkId)) {
-                    orphanedVectorIds.push(r.id);
-                }
+        for (const r of vectorRows) {
+            if (!fileChunkIds.has(r.fileChunkId)) {
+                orphanedVectorIds.push(r.id);
             }
         }
         result.orphanedVectors = orphanedVectorIds.length;
 
-        // ── 2. Orphaned file paths — no FileChunk references them ────────
+        // ── 2. Orphaned file paths — no file_chunk references them ──────
+
         const orphanedFilePathIds: number[] = [];
         for (const id of filePathIds) {
             if (!fileChunkFilePathIds.has(id)) {
@@ -1031,16 +1000,18 @@ export class VectorDatabase {
         }
         result.orphanedFilePaths = orphanedFilePathIds.length;
 
-        // ── 3. Dangling file chunks — vectorId not in Vectors ────────────
-        const danglingChunkVectorIds: number[] = [];
-        for (const vid of fileChunkVectorIds) {
-            if (!vectorIds.has(vid)) {
-                danglingChunkVectorIds.push(vid);
+        // ── 3. Dangling file chunks — vectorId not in Vectors ───────────
+
+        const danglingChunkIds: number[] = [];
+        for (const r of chunkRows) {
+            if (!vectorIds.has(r.vectorId)) {
+                danglingChunkIds.push(r.id);
             }
         }
-        result.danglingFileChunks = danglingChunkVectorIds.length;
+        result.danglingFileChunks = danglingChunkIds.length;
 
         // ── Log summary ─────────────────────────────────────────────────
+
         const total = result.orphanedVectors
             + result.orphanedFilePaths
             + result.danglingFileChunks;
@@ -1063,37 +1034,35 @@ export class VectorDatabase {
 
         // ── Repair ──────────────────────────────────────────────────────
 
-        // Delete orphaned vectors
+        // Delete orphaned vectors from LanceDB
         if (this.vectorsTable && orphanedVectorIds.length > 0) {
             const idList = orphanedVectorIds.join(', ');
             await this.vectorsTable.delete(`id IN (${idList})`);
         }
 
-        // Delete orphaned file paths
-        if (this.filePathsTable && orphanedFilePathIds.length > 0) {
-            const idList = orphanedFilePathIds.join(', ');
-            await this.filePathsTable.delete(`id IN (${idList})`);
-            // Also evict from the in-memory caches
+        // Delete orphaned file paths and dangling file chunks from SQLite
+        if (orphanedFilePathIds.length > 0 || danglingChunkIds.length > 0) {
+            this.sqliteDb!.exec('BEGIN');
+            try {
+                for (const id of orphanedFilePathIds) {
+                    this.stmtDeleteFilePath!.run(id);
+                }
+                for (const id of danglingChunkIds) {
+                    this.stmtDeleteFileChunkById!.get(id);
+                }
+                this.sqliteDb!.exec('COMMIT');
+            } catch (err) {
+                this.sqliteDb!.exec('ROLLBACK');
+                throw err;
+            }
+
+            // Evict orphaned file paths from in-memory caches
             for (const [fp, fpId] of this.filePathCache) {
                 if (orphanedFilePathIds.includes(fpId)) {
                     this.filePathCache.delete(fp);
+                    this.filePathIdToPath.delete(fpId);
                     this.fileVersionCache.delete(fpId);
                 }
-            }
-        }
-
-        // Delete dangling file chunks (those whose vectorId is missing)
-        if (danglingChunkVectorIds.length > 0 && this.fileChunksTable) {
-            const rows = await this.fileChunksTable
-                .query()
-                .select(['id', 'vectorId'])
-                .toArray() as { id: number; vectorId: number }[];
-            const danglingVectorIdSet = new Set(danglingChunkVectorIds);
-            const chunkIdsToDelete = rows
-                .filter(r => danglingVectorIdSet.has(r.vectorId))
-                .map(r => r.id);
-            if (chunkIdsToDelete.length > 0) {
-                await this.deleteFileChunks(chunkIdsToDelete);
             }
         }
 
