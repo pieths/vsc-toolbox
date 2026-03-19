@@ -4,8 +4,8 @@ This extension incorporates components from the projects listed below.
 
 ===============================================================================
 
-@lancedb/lancedb v0.26.2
-@lancedb/lancedb-win32-x64-msvc v0.26.2
+@lancedb/lancedb v0.27.0
+@lancedb/lancedb-win32-x64-msvc v0.27.0
 
 Copyright The LanceDB Authors
 License: Apache-2.0
