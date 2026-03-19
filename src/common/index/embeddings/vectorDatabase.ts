@@ -179,6 +179,11 @@ export class VectorDatabase {
         // indexes resident in memory for fast lookups after warmup.
         this.sqliteDb.exec('PRAGMA cache_size = 12500');
 
+        // Raise auto-checkpoint threshold to ~15 MB (3840 pages × 4KB)
+        // so bulk inserts don't trigger frequent expensive checkpoints.
+        // Manual checkpoints are done in compact() during idle periods.
+        this.sqliteDb.exec('PRAGMA wal_autocheckpoint = 3840');
+
         // Create tables (AUTOINCREMENT provides monotonically increasing
         // IDs that are never reused, even after deletes)
         this.sqliteDb.exec(`
