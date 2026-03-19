@@ -11,9 +11,12 @@
 
 import { parentPort } from 'worker_threads';
 import type {
-    IndexInput,
     IndexOutput,
-    ComputeChunksInput,
+    ComputeChunksOutput,
+    WorkerBatchRequest,
+    SearchBatchResponse,
+    IndexBatchResponse,
+    ComputeChunksBatchResponse,
     WorkerLogMessage,
 } from '../types';
 import { searchFiles } from './tasks/searchFileTask';
@@ -35,26 +38,33 @@ process.on('unhandledRejection', (reason) => {
     workerLog('error', `Worker unhandled rejection: ${reason}`);
 });
 
-// Listen for batch messages from WorkerHost
+// Listen for batch messages from ThreadPool
 if (parentPort) {
-    parentPort.on('message', async (msg: any) => {
+    parentPort.on('message', async (msg: WorkerBatchRequest) => {
         if (msg.type === 'searchBatch') {
             const outputs = searchFiles(msg.query, msg.filePaths);
-            parentPort!.postMessage({ type: 'searchBatch', outputs });
+            const response: SearchBatchResponse = {
+                type: 'searchBatch', messageId: msg.messageId, outputs,
+            };
+            parentPort!.postMessage(response);
         } else if (msg.type === 'indexBatch') {
-            const inputs = msg.inputs as IndexInput[];
             const outputs: IndexOutput[] = [];
-            for (const input of inputs) {
+            for (const input of msg.inputs) {
                 outputs.push(await indexFile(input));
             }
-            parentPort!.postMessage({ type: 'indexBatch', outputs });
+            const response: IndexBatchResponse = {
+                type: 'indexBatch', messageId: msg.messageId, outputs,
+            };
+            parentPort!.postMessage(response);
         } else if (msg.type === 'computeChunksBatch') {
-            const inputs = msg.inputs as ComputeChunksInput[];
-            const outputs = [];
-            for (const input of inputs) {
+            const outputs: ComputeChunksOutput[] = [];
+            for (const input of msg.inputs) {
                 outputs.push(await computeChunks(input));
             }
-            parentPort!.postMessage({ type: 'computeChunksBatch', outputs });
+            const response: ComputeChunksBatchResponse = {
+                type: 'computeChunksBatch', messageId: msg.messageId, outputs,
+            };
+            parentPort!.postMessage(response);
         }
     });
 }

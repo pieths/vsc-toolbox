@@ -113,7 +113,7 @@ async function startComponents(config: ContentIndexConfig): Promise<number> {
 
         // Create components
         cacheManager = new CacheManager();
-        threadPool = new ThreadPool(workerThreads, hostPaths.nodePath);
+        threadPool = new ThreadPool(workerThreads);
         pathFilter = new PathFilter(
             includePaths, excludePatterns, fileExtensions,
             knowledgeBaseDirectory, workspaceFolders,

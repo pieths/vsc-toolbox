@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Piet Hein Schouten
 // SPDX-License-Identifier: MIT
 
-import { fork, ChildProcess } from 'child_process';
+import { Worker } from 'worker_threads';
 import * as path from 'path';
 import {
     SearchOutput,
@@ -12,155 +12,98 @@ import {
     ComputeChunksOutput,
     ComputeChunksStatus,
     WorkerLogMessage,
-    WorkerBatchRequest,
     WorkerBatchResponse,
-    WorkerInitResponse,
+    SearchBatchRequest,
+    IndexBatchRequest,
+    ComputeChunksBatchRequest,
 } from '../types';
 import { debug, log, warn, error } from '../../logger';
 
-/** Maximum time (ms) to wait for the child process to send init-ack */
-const INIT_TIMEOUT_MS = 10000;
-
-type ChildMessage = WorkerBatchResponse | WorkerLogMessage | WorkerInitResponse;
+type WorkerMessage = WorkerBatchResponse | WorkerLogMessage;
 
 /**
- * ThreadPool is a thin IPC proxy that communicates with a WorkerHost
- * child process. The WorkerHost owns the actual worker threads and
- * handles task distribution internally.
- *
- * Each public "batch" method (searchAll, indexAll, computeChunksAll)
- * sends a single IPC message to the child process and receives a
- * single response, minimizing IPC overhead.
+ * ThreadPool owns a set of worker threads and distributes batch
+ * work across them. Each public method (searchAll, indexAll,
+ * computeChunksAll) splits inputs into per-worker sub-batches,
+ * dispatches them via postMessage, and merges the results.
  */
 export class ThreadPool {
-    private childProcess: ChildProcess | null = null;
+    private workers: Worker[] = [];
     private nextMessageId: number = 0;
-    private pendingRequests: Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }> = new Map();
     private maxConcurrency: number;
     private disposed: boolean = false;
-    private initPromise: Promise<void>;
-    private nodePath: string;
 
     /**
      * Create a new thread pool.
-     * Forks a child process (WorkerHost) that owns the actual worker threads.
      *
-     * @param numThreads - Number of worker threads to create in the child process
-     * @param nodePath - Absolute path to standalone Node.js binary (avoids Electron's memory limits)
+     * @param numThreads - Number of worker threads to create
      */
-    constructor(numThreads: number, nodePath: string) {
+    constructor(numThreads: number) {
         this.maxConcurrency = numThreads;
-        this.nodePath = nodePath;
-        this.initPromise = this.spawnChild(numThreads);
+
+        for (let i = 0; i < numThreads; i++) {
+            this.workers.push(this.createWorker());
+        }
+
+        log(`[ThreadPool] Started with ${numThreads} worker threads`);
     }
 
-    /**
-     * Fork the WorkerHost child process and wait for it to acknowledge init.
-     */
-    private spawnChild(numThreads: number): Promise<void> {
-        return new Promise<void>((resolve, reject) => {
-            const hostPath = path.join(__dirname, 'workerHost.js');
+    // ── Worker lifecycle ──────────────────────────────────────────────
 
-            // fork() defaults to process.execPath which, inside VS Code's
-            // extension host, points to Electron (Code.exe). Electron caps
-            // memory at relatively conservative values. Using a standalone
-            // Node.js binary removes that limit, allowing the child process
-            // to allocate more memory if needed.
-            this.childProcess = fork(hostPath, [], {
-                execPath: this.nodePath,
-                stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
-                windowsHide: true,
-            } as any);
+    private createWorker(): Worker {
+        const workerPath = path.join(__dirname, 'workerThread.js');
+        const worker = new Worker(workerPath);
 
-            const initTimeout = setTimeout(() => {
-                error(`[ThreadPool] Child process did not acknowledge init within ${INIT_TIMEOUT_MS}ms. Killing...`);
-                try {
-                    this.childProcess?.kill();
-                } catch {
-                    // Already dead
-                }
-                reject(new Error(`Worker host init timed out after ${INIT_TIMEOUT_MS}ms`));
-            }, INIT_TIMEOUT_MS);
-
-            const onInitAck = (msg: ChildMessage) => {
-                if (msg.type === 'init-ack') {
-                    clearTimeout(initTimeout);
-                    this.childProcess!.removeListener('message', onInitAck);
-                    log(`[ThreadPool] Worker host started with ${msg.numThreads} threads`);
-                    resolve();
-                }
-            };
-
-            this.childProcess.on('message', onInitAck);
-
-            this.childProcess.on('message', (msg: ChildMessage) => {
-                // Handle init-ack (already handled above for first time)
-                if (msg.type === 'init-ack') {
-                    return;
-                }
-
-                // Handle log messages forwarded from workers
-                if (msg.type === 'log') {
-                    const text = `[Worker] ${msg.message}`;
-                    switch (msg.level) {
-                        case 'debug': debug(text); break;
-                        case 'info': log(text); break;
-                        case 'warn': warn(text); break;
-                        case 'error': error(text); break;
-                    }
-                    return;
-                }
-
-                // Batch response — correlate by messageId
-                const pending = this.pendingRequests.get(msg.messageId);
-                if (pending) {
-                    this.pendingRequests.delete(msg.messageId);
-                    pending.resolve(msg.outputs);
-                }
-            });
-
-            this.childProcess.on('error', (err: Error) => {
-                clearTimeout(initTimeout);
-                error(`[ThreadPool] Child process error: ${err.message}`);
-                reject(err);
-            });
-
-            this.childProcess.on('exit', (code: number | null, signal: string | null) => {
-                if (!this.disposed) {
-                    warn(`[ThreadPool] Child process exited unexpectedly (code=${code}, signal=${signal}). Restarting...`);
-
-                    // Reject all in-flight requests
-                    for (const [, pending] of this.pendingRequests) {
-                        pending.reject(new Error(`Worker host process exited (code=${code})`));
-                    }
-                    this.pendingRequests.clear();
-
-                    // Restart the child process
-                    this.childProcess = null;
-                    this.initPromise = this.spawnChild(this.maxConcurrency);
-                }
-            });
-
-            // Send init message with thread count
-            this.childProcess.send({ type: 'init', numThreads });
+        worker.on('error', (err: Error) => {
+            error(`[ThreadPool] Worker error: ${err.message}`);
         });
-    }
 
-    /**
-     * Send a batch request to the child process
-     * and return a promise for the response.
-     */
-    private sendBatch(request: WorkerBatchRequest): Promise<any> {
-        return new Promise((resolve, reject) => {
-            if (!this.childProcess?.connected) {
-                reject(new Error('Child process not connected'));
-                return;
+        // The 'exit' event always fires (including after 'error'),
+        // so all removal and replacement logic lives here.
+        worker.on('exit', (code: number) => {
+            const idx = this.workers.indexOf(worker);
+            if (idx !== -1) {
+                this.workers.splice(idx, 1);
             }
 
-            this.pendingRequests.set(request.messageId, { resolve, reject });
-            this.childProcess.send(request);
+            if (code !== 0 && !this.disposed) {
+                warn(`[ThreadPool] Worker exited with code ${code}, replacing...`);
+                this.workers.push(this.createWorker());
+            }
         });
+
+        return worker;
     }
+
+    // ── Utilities ─────────────────────────────────────────────────────
+
+    /**
+     * Split an array into N roughly equal chunks.
+     */
+    private splitIntoChunks<T>(array: T[], n: number): T[][] {
+        if (n <= 0) { return [array]; }
+        const chunks: T[][] = [];
+        const chunkSize = Math.ceil(array.length / n);
+        for (let i = 0; i < array.length; i += chunkSize) {
+            chunks.push(array.slice(i, i + chunkSize));
+        }
+        return chunks;
+    }
+
+    /**
+     * Forward a worker log message to the extension logger.
+     */
+    private handleLogMessage(msg: WorkerLogMessage): void {
+        const text = `[Worker] ${msg.message}`;
+        switch (msg.level) {
+            case 'debug': debug(text); break;
+            case 'info': log(text); break;
+            case 'warn': warn(text); break;
+            case 'error': error(text); break;
+        }
+    }
+
+    // ── Public API ────────────────────────────────────────────────────
 
     /**
      * Search multiple files in parallel.
@@ -170,23 +113,43 @@ export class ThreadPool {
      * @returns Promise that resolves with search results (only files with matches)
      */
     async searchAll(query: string, filePaths: string[]): Promise<SearchOutput[]> {
-        if (this.disposed) {
+        if (this.disposed || filePaths.length === 0) {
             return [];
         }
-
-        await this.initPromise;
 
         const messageId = this.nextMessageId++;
-        try {
-            return await this.sendBatch({
-                type: 'searchBatch',
-                messageId,
-                query,
-                filePaths,
-            });
-        } catch (err) {
-            return [];
-        }
+        const chunks = this.splitIntoChunks(filePaths, this.workers.length);
+        const allOutputs: SearchOutput[][] = new Array(chunks.length);
+        let completedWorkers = 0;
+
+        return new Promise<SearchOutput[]>((resolve) => {
+            for (let i = 0; i < chunks.length; i++) {
+                const worker = this.workers[i];
+
+                const onMessage = (msg: WorkerMessage) => {
+                    if (msg.type === 'log') {
+                        this.handleLogMessage(msg);
+                        return;
+                    }
+
+                    if (msg.type === 'searchBatch' && msg.messageId === messageId) {
+                        worker.removeListener('message', onMessage);
+                        allOutputs[i] = msg.outputs;
+                        completedWorkers++;
+
+                        if (completedWorkers === chunks.length) {
+                            resolve(allOutputs.flat());
+                        }
+                    }
+                };
+
+                worker.on('message', onMessage);
+                const request: SearchBatchRequest = {
+                    type: 'searchBatch', messageId, query, filePaths: chunks[i],
+                };
+                worker.postMessage(request);
+            }
+        });
     }
 
     /**
@@ -206,14 +169,43 @@ export class ThreadPool {
             }));
         }
 
-        await this.initPromise;
+        if (inputs.length === 0) {
+            return [];
+        }
 
         const messageId = this.nextMessageId++;
+        const chunks = this.splitIntoChunks(inputs, this.workers.length);
+        const allOutputs: IndexOutput[][] = new Array(chunks.length);
+        let completedWorkers = 0;
+
         try {
-            const outputs: IndexOutput[] = await this.sendBatch({
-                type: 'indexBatch',
-                messageId,
-                inputs,
+            const outputs = await new Promise<IndexOutput[]>((resolve) => {
+                for (let i = 0; i < chunks.length; i++) {
+                    const worker = this.workers[i];
+
+                    const onMessage = (msg: WorkerMessage) => {
+                        if (msg.type === 'log') {
+                            this.handleLogMessage(msg);
+                            return;
+                        }
+
+                        if (msg.type === 'indexBatch' && msg.messageId === messageId) {
+                            worker.removeListener('message', onMessage);
+                            allOutputs[i] = msg.outputs;
+                            completedWorkers++;
+
+                            if (completedWorkers === chunks.length) {
+                                resolve(allOutputs.flat());
+                            }
+                        }
+                    };
+
+                    worker.on('message', onMessage);
+                    const request: IndexBatchRequest = {
+                        type: 'indexBatch', messageId, inputs: chunks[i],
+                    };
+                    worker.postMessage(request);
+                }
             });
 
             // Log results
@@ -256,14 +248,43 @@ export class ThreadPool {
             }));
         }
 
-        await this.initPromise;
+        if (inputs.length === 0) {
+            return [];
+        }
 
         const messageId = this.nextMessageId++;
+        const chunks = this.splitIntoChunks(inputs, this.workers.length);
+        const allOutputs: ComputeChunksOutput[][] = new Array(chunks.length);
+        let completedWorkers = 0;
+
         try {
-            return await this.sendBatch({
-                type: 'computeChunksBatch',
-                messageId,
-                inputs,
+            return await new Promise<ComputeChunksOutput[]>((resolve) => {
+                for (let i = 0; i < chunks.length; i++) {
+                    const worker = this.workers[i];
+
+                    const onMessage = (msg: WorkerMessage) => {
+                        if (msg.type === 'log') {
+                            this.handleLogMessage(msg);
+                            return;
+                        }
+
+                        if (msg.type === 'computeChunksBatch' && msg.messageId === messageId) {
+                            worker.removeListener('message', onMessage);
+                            allOutputs[i] = msg.outputs;
+                            completedWorkers++;
+
+                            if (completedWorkers === chunks.length) {
+                                resolve(allOutputs.flat());
+                            }
+                        }
+                    };
+
+                    worker.on('message', onMessage);
+                    const request: ComputeChunksBatchRequest = {
+                        type: 'computeChunksBatch', messageId, inputs: chunks[i],
+                    };
+                    worker.postMessage(request);
+                }
             });
         } catch (err) {
             return inputs.map(input => ({
@@ -277,7 +298,7 @@ export class ThreadPool {
     }
 
     /**
-     * Get the maximum concurrency (number of worker threads in the child process).
+     * Get the maximum concurrency (number of worker threads).
      */
     getWorkerCount(): number {
         return this.maxConcurrency;
@@ -291,9 +312,7 @@ export class ThreadPool {
     }
 
     /**
-     * Shutdown all workers and clean up resources. Sends a
-     * graceful shutdown message to the WorkerHost and waits
-     * for the child process to fully exit before returning.
+     * Shutdown all worker threads and clean up resources.
      */
     async dispose(): Promise<void> {
         if (this.disposed) {
@@ -302,62 +321,9 @@ export class ThreadPool {
 
         this.disposed = true;
 
-        // Reject all in-flight requests
-        for (const [, pending] of this.pendingRequests) {
-            pending.reject(new Error('Thread pool disposed'));
-        }
-        this.pendingRequests.clear();
+        await Promise.all(this.workers.map(w => w.terminate()));
+        this.workers = [];
 
-        if (!this.childProcess) {
-            return;
-        }
-
-        const proc = this.childProcess;
-        this.childProcess = null;
-
-        // If the process already exited, nothing to wait for
-        if (proc.exitCode !== null || proc.signalCode !== null) {
-            log('[ThreadPool] Child process already exited');
-            return;
-        }
-
-        // Send graceful shutdown message so the WorkerHost can
-        // terminate its worker threads before exiting
-        if (proc.connected) {
-            try {
-                proc.send({ type: 'shutdown' });
-            } catch {
-                // Ignore send errors during shutdown
-            }
-
-            // Disconnect the IPC channel so it doesn't keep
-            // the child process referenced in the event loop
-            try {
-                proc.disconnect();
-            } catch {
-                // Already disconnected
-            }
-        }
-
-        // Wait for the child process to exit.
-        // Force-kill after 10 seconds as a safety net.
-        await new Promise<void>((resolve) => {
-            const timeout = setTimeout(() => {
-                warn('[ThreadPool] Child process did not exit within 10 seconds, force-killing...');
-                try {
-                    proc.kill();
-                } catch {
-                    // Already dead
-                }
-                resolve();
-            }, 10000);
-
-            proc.on('exit', () => {
-                clearTimeout(timeout);
-                resolve();
-            });
-        });
-
-        log('[ThreadPool] Child process stopped');
+        log('[ThreadPool] All worker threads stopped');
     }
 }

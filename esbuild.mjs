@@ -62,15 +62,6 @@ const workerConfig = {
     plugins: [copyWasmPlugin],
 };
 
-// Worker host — child process that owns worker threads.
-// Does NOT need the import.meta.url shim (only the worker thread needs it
-// for web-tree-sitter's Emscripten bootstrap).
-const workerHostConfig = {
-    ...sharedOptions,
-    entryPoints: ['src/common/index/workers/workerHost.ts'],
-    outfile: 'out/workerHost.js',
-};
-
 // Vector cache host — child process that owns the vector cache LanceDB database.
 // Needs @lancedb/lancedb-win32-x64-msvc as external since it dynamically
 // imports @lancedb/lancedb which depends on the native addon.
@@ -93,20 +84,18 @@ const contentIndexHostConfig = {
 
 async function main() {
     if (watch) {
-        const [ctx1, ctx2, ctx3, ctx4, ctx5] = await Promise.all([
+        const [ctx1, ctx2, ctx3, ctx4] = await Promise.all([
             esbuild.context(extensionConfig),
             esbuild.context(workerConfig),
-            esbuild.context(workerHostConfig),
             esbuild.context(vectorCacheHostConfig),
             esbuild.context(contentIndexHostConfig),
         ]);
-        await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch(), ctx5.watch()]);
+        await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch()]);
         console.log('[watch] build started');
     } else {
         await Promise.all([
             esbuild.build(extensionConfig),
             esbuild.build(workerConfig),
-            esbuild.build(workerHostConfig),
             esbuild.build(vectorCacheHostConfig),
             esbuild.build(contentIndexHostConfig),
         ]);

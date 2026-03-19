@@ -188,26 +188,9 @@ export interface WorkerLogMessage {
     message: string;
 }
 
-/** Request sent from ThreadPool to WorkerHost to initialize worker threads */
-export interface WorkerInitRequest {
-    type: 'init';
-    numThreads: number;
-}
+// ── Batch messages (ThreadPool ↔ Worker threads) ────────────────────
 
-/** Response sent from WorkerHost to ThreadPool after init */
-export interface WorkerInitResponse {
-    type: 'init-ack';
-    numThreads: number;
-}
-
-/** Request sent from ThreadPool to WorkerHost to shut down */
-export interface WorkerShutdownRequest {
-    type: 'shutdown';
-}
-
-// ── Batch IPC messages (ThreadPool ↔ WorkerHost) ─────────────────────
-
-/** Batch search request sent from ThreadPool to WorkerHost over IPC */
+/** Batch search request sent from ThreadPool to a worker thread */
 export interface SearchBatchRequest {
     type: 'searchBatch';
     messageId: number;
@@ -217,48 +200,48 @@ export interface SearchBatchRequest {
     filePaths: string[];
 }
 
-/** Batch search response sent from WorkerHost to ThreadPool over IPC */
+/** Batch search response sent from a worker thread to ThreadPool */
 export interface SearchBatchResponse {
     type: 'searchBatch';
     messageId: number;
     outputs: SearchOutput[];
 }
 
-/** Batch index request sent from ThreadPool to WorkerHost over IPC */
+/** Batch index request sent from ThreadPool to a worker thread */
 export interface IndexBatchRequest {
     type: 'indexBatch';
     messageId: number;
     inputs: IndexInput[];
 }
 
-/** Batch index response sent from WorkerHost to ThreadPool over IPC */
+/** Batch index response sent from a worker thread to ThreadPool */
 export interface IndexBatchResponse {
     type: 'indexBatch';
     messageId: number;
     outputs: IndexOutput[];
 }
 
-/** Batch compute chunks request sent from ThreadPool to WorkerHost over IPC */
+/** Batch compute chunks request sent from ThreadPool to a worker thread */
 export interface ComputeChunksBatchRequest {
     type: 'computeChunksBatch';
     messageId: number;
     inputs: ComputeChunksInput[];
 }
 
-/** Batch compute chunks response sent from WorkerHost to ThreadPool over IPC */
+/** Batch compute chunks response sent from a worker thread to ThreadPool */
 export interface ComputeChunksBatchResponse {
     type: 'computeChunksBatch';
     messageId: number;
     outputs: ComputeChunksOutput[];
 }
 
-/** Any batch request from ThreadPool to WorkerHost */
+/** Any batch request from ThreadPool to a worker thread */
 export type WorkerBatchRequest =
     | SearchBatchRequest
     | IndexBatchRequest
     | ComputeChunksBatchRequest;
 
-/** Any batch response from WorkerHost to ThreadPool */
+/** Any batch response from a worker thread to ThreadPool */
 export type WorkerBatchResponse =
     | SearchBatchResponse
     | IndexBatchResponse
