@@ -42,7 +42,7 @@ const extensionConfig = {
     ...sharedOptions,
     entryPoints: ['src/extension.ts'],
     outfile: 'out/extension.js',
-    external: ['vscode', '@lancedb/lancedb-win32-x64-msvc'],
+    external: ['vscode'],
 };
 
 // Worker thread — must be a separate file (loaded by new Worker())
@@ -81,15 +81,26 @@ const vectorCacheHostConfig = {
     external: ['@lancedb/lancedb-win32-x64-msvc'],
 };
 
+// Content index host — child process that owns the entire content index
+// subsystem (CacheManager, ThreadPool, FileWatcher, LlamaServer, etc.).
+// Native addons must be external since esbuild cannot bundle them.
+const contentIndexHostConfig = {
+    ...sharedOptions,
+    entryPoints: ['src/common/index/contentIndexHost.ts'],
+    outfile: 'out/contentIndexHost.js',
+    external: ['@parcel/watcher-win32-x64-msvc', '@lancedb/lancedb-win32-x64-msvc'],
+};
+
 async function main() {
     if (watch) {
-        const [ctx1, ctx2, ctx3, ctx4] = await Promise.all([
+        const [ctx1, ctx2, ctx3, ctx4, ctx5] = await Promise.all([
             esbuild.context(extensionConfig),
             esbuild.context(workerConfig),
             esbuild.context(workerHostConfig),
             esbuild.context(vectorCacheHostConfig),
+            esbuild.context(contentIndexHostConfig),
         ]);
-        await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch()]);
+        await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch(), ctx5.watch()]);
         console.log('[watch] build started');
     } else {
         await Promise.all([
@@ -97,6 +108,7 @@ async function main() {
             esbuild.build(workerConfig),
             esbuild.build(workerHostConfig),
             esbuild.build(vectorCacheHostConfig),
+            esbuild.build(contentIndexHostConfig),
         ]);
         console.log('build complete');
     }

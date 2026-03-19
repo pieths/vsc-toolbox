@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 import * as path from 'path';
-import * as vscode from 'vscode';
 import picomatch from 'picomatch';
 import { log } from '../logger';
 
@@ -37,19 +36,20 @@ export class PathFilter {
      *   (e.g., `d:/cs/src/chrome/{fuchsia,mac,linux}/**`)
      * @param fileExtensions - File extensions to include (e.g., '.cc', '.h')
      * @param knowledgeBaseDirectory - Optional knowledge base directory to always include
+     * @param workspaceFolders - Workspace folder paths used as fallback when includePaths is empty
      */
     constructor(
         includePaths: string[],
         excludePatterns: string[],
         fileExtensions: string[],
         knowledgeBaseDirectory?: string,
+        workspaceFolders?: string[],
     ) {
         // Resolve include paths: fall back to workspace folders when empty
         let resolvedPaths = includePaths;
         if (resolvedPaths.length === 0) {
-            const workspaceFolders = vscode.workspace.workspaceFolders;
-            if (workspaceFolders) {
-                resolvedPaths = workspaceFolders.map(f => f.uri.fsPath);
+            if (workspaceFolders && workspaceFolders.length > 0) {
+                resolvedPaths = [...workspaceFolders];
             }
             log('PathFilter: No includePaths configured, using workspace folders');
         }

@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Piet Hein Schouten
 // SPDX-License-Identifier: MIT
 
-import { FileRef } from './fileRef';
 import { AttrKey, CONTAINER_TYPES, SymbolType } from './parsers/types';
 import type { IndexSymbol } from './parsers/types';
 import { DocumentType } from './types';
@@ -10,8 +9,8 @@ import { DocumentType } from './types';
  * Wraps a hydrated `IndexSymbol[]` for a single file and provides
  * convenience query methods (container lookup, FQN resolution).
  *
- * Instances are produced by {@link CacheManager.getAllSymbols} and
- * surfaced to callers via {@link ContentIndex.getSymbols}.
+ * Instances are produced by {@link ContentIndex.getSymbols} from
+ * raw `IndexSymbol[]` arrays returned by CacheManager.
  *
  * Note: this is a point-in-time snapshot. If the underlying source
  * file has been modified since the symbols were indexed, the symbol
@@ -30,15 +29,14 @@ export class FileSymbols {
      */
     public readonly overviewRange?: { startLine: number; endLine: number };
 
-    private readonly fileRef: FileRef;
+    private readonly filePath: string;
 
-    constructor(fileRef: FileRef, symbols: IndexSymbol[]) {
-        this.fileRef = fileRef;
+    constructor(filePath: string, symbols: IndexSymbol[]) {
+        this.filePath = filePath;
         this.symbols = symbols;
 
         // Detect knowledge base documents: a markdown file whose first
         // two symbols include an "Overview" heading (# or ##).
-        const filePath = fileRef.getFilePath();
         if (filePath.endsWith('.md') && symbols.length > 0) {
             const overviewSymbol = symbols.slice(0, 2).find(s =>
                 (s.type === SymbolType.MarkdownHeading1 ||
@@ -63,7 +61,7 @@ export class FileSymbols {
      * Get the absolute file path these symbols belong to.
      */
     getFilePath(): string {
-        return this.fileRef.getFilePath();
+        return this.filePath;
     }
 
     /**

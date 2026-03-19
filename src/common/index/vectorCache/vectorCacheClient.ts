@@ -68,7 +68,7 @@ export class VectorCacheClient {
             // to allocate more memory if needed.
             this.childProcess = fork(hostPath, [], {
                 execPath: this.nodePath,
-                stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
+                stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
                 windowsHide: true,
             } as any);
 
@@ -271,41 +271,40 @@ export class VectorCacheClient {
             return;
         }
 
-        // Send graceful shutdown message
+        // Wait for the child process to exit. Register the exit listener
+        // BEFORE sending shutdown to avoid a race where the exit event
+        // fires before our listener is registered.
+        log(`[VectorCacheClient] Waiting for child process to exit (pid=${proc.pid})`);
+        const exitPromise = new Promise<void>((resolve) => {
+            const timeout = setTimeout(() => {
+                warn('[VectorCacheClient] Child process did not exit within 10 seconds, force-killing...');
+                try { proc.disconnect(); } catch { /* already disconnected */ }
+                try { proc.kill(); } catch { /* already dead */ }
+                resolve();
+            }, 10000);
+
+            proc.on('exit', (code, signal) => {
+                log(`[VectorCacheClient] Child exited (code=${code}, signal=${signal})`);
+                clearTimeout(timeout);
+                // IPC channel is automatically closed when the child exits.
+                resolve();
+            });
+        });
+
+        // Send graceful shutdown message. Don't disconnect IPC yet —
+        // the child needs the channel open to receive the message and
+        // do its cleanup. It calls process.exit(0) when done.
         if (proc.connected) {
             try {
                 proc.send({ type: 'shutdown' });
             } catch {
                 // Ignore send errors during shutdown
             }
-
-            // Disconnect the IPC channel so it doesn't keep
-            // the child process referenced in the event loop
-            try {
-                proc.disconnect();
-            } catch {
-                // Already disconnected
-            }
+        } else {
+            try { proc.kill(); } catch { /* already dead */ }
         }
 
-        // Wait for the child process to exit.
-        // Force-kill after 10 seconds as a safety net.
-        await new Promise<void>((resolve) => {
-            const timeout = setTimeout(() => {
-                warn('[VectorCacheClient] Child process did not exit within 10 seconds, force-killing...');
-                try {
-                    proc.kill();
-                } catch {
-                    // Already dead
-                }
-                resolve();
-            }, 10000);
-
-            proc.on('exit', () => {
-                clearTimeout(timeout);
-                resolve();
-            });
-        });
+        await exitPromise;
 
         log('[VectorCacheClient] Child process stopped');
     }

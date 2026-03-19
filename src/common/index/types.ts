@@ -5,6 +5,8 @@
  * Shared interfaces and types for the content index functionality
  */
 
+import type { IndexSymbol } from './parsers/types';
+
 /**
  * Represents a single line match within a file.
  */
@@ -362,3 +364,137 @@ export interface ContentIndexConfig {
     /** Directory containing the knowledge base documents */
     knowledgeBaseDirectory: string;
 }
+
+// ── IPC messages (ContentIndex ↔ ContentIndexHost) ───────────────────
+
+// -- Client → Host --
+
+/** Initialize the content index with configuration and paths */
+export interface ContentIndexInitRequest {
+    type: 'init';
+    config: ContentIndexConfig;
+    workspaceRoot: string;
+    extensionPath: string;
+    globalStoragePath: string;
+    nodePath: string;
+}
+
+/** Search for content matching a glob pattern query */
+export interface ContentIndexSearchRequest {
+    type: 'search';
+    messageId: number;
+    query: string;
+    include?: string;
+    exclude?: string;
+}
+
+/** Get symbols for one or more files */
+export interface ContentIndexGetSymbolsRequest {
+    type: 'getSymbols';
+    messageId: number;
+    filePaths: string[];
+}
+
+/** Search embeddings by query string */
+export interface ContentIndexSearchEmbeddingsRequest {
+    type: 'searchEmbeddings';
+    messageId: number;
+    query: string;
+    topK: number;
+}
+
+/** Notify host of configuration change (triggers reset) */
+export interface ContentIndexConfigChangeRequest {
+    type: 'configChange';
+    config: ContentIndexConfig;
+}
+
+/** Graceful shutdown */
+export interface ContentIndexShutdownRequest {
+    type: 'shutdown';
+}
+
+/** Any request from ContentIndex to ContentIndexHost */
+export type ContentIndexRequest =
+    | ContentIndexInitRequest
+    | ContentIndexSearchRequest
+    | ContentIndexGetSymbolsRequest
+    | ContentIndexSearchEmbeddingsRequest
+    | ContentIndexConfigChangeRequest
+    | ContentIndexShutdownRequest;
+
+// -- Host → Client --
+
+/** Init acknowledgement — sent after initial indexing completes */
+export interface ContentIndexInitAckResponse {
+    type: 'init-ack';
+    fileCount: number;
+}
+
+/** Search response */
+export interface ContentIndexSearchResponse {
+    type: 'search';
+    messageId: number;
+    fileMatches: FileSearchResults[];
+    error?: string;
+}
+
+/**
+ * Get symbols response — symbols keyed by file path.
+ * Both this Map and IndexSymbol.attrs (AttrMap) are preserved
+ * natively by V8's advanced serialization.
+ */
+export interface ContentIndexGetSymbolsResponse {
+    type: 'getSymbols';
+    messageId: number;
+    symbols: Map<string, IndexSymbol[]>;
+}
+
+/** Search embeddings response */
+export interface ContentIndexSearchEmbeddingsResponse {
+    type: 'searchEmbeddings';
+    messageId: number;
+    results: NearestEmbeddingResult[];
+}
+
+/** Config change acknowledgement — sent after restart completes */
+export interface ContentIndexConfigChangeResponse {
+    type: 'configChange-ack';
+    fileCount: number;
+}
+
+/** Log message forwarded from child to extension host output channel */
+export interface ContentIndexLogMessage {
+    type: 'log';
+    level: 'debug' | 'info' | 'warn' | 'error';
+    message: string;
+}
+
+/**
+ * Notification message — displayed to the user via vscode.window.
+ * Used for errors (model download failure, server not found, etc.)
+ * and informational messages (indexing complete, etc.).
+ */
+export interface ContentIndexNotification {
+    type: 'notification';
+    level: 'info' | 'error';
+    message: string;
+}
+
+/** Status update for the status bar item */
+export interface ContentIndexStatusUpdate {
+    type: 'status';
+    /** null = hide status bar item; string = show with this text */
+    text: string | null;
+}
+
+/** Any response/message from ContentIndexHost to ContentIndex */
+export type ContentIndexResponse =
+    | ContentIndexInitAckResponse
+    | ContentIndexSearchResponse
+    | ContentIndexGetSymbolsResponse
+    | ContentIndexSearchEmbeddingsResponse
+    | ContentIndexConfigChangeResponse
+    | ContentIndexLogMessage
+    | ContentIndexNotification
+    | ContentIndexStatusUpdate;

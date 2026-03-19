@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Piet Hein Schouten
 // SPDX-License-Identifier: MIT
 
-import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import picomatch from 'picomatch';
@@ -14,7 +13,7 @@ import { EmbeddingProcessor } from './embeddings/embeddingProcessor';
 import { VectorCacheClient } from './vectorCache/vectorCacheClient';
 import { PathFilter } from './pathFilter';
 import { SymbolCache } from './symbolCache';
-import { FileSymbols } from './fileSymbols';
+import type { IndexSymbol } from './parsers/types';
 import { log, warn, error } from '../logger';
 
 /** Mutation queue entry — ordered for temporal "last action wins" collapse. */
@@ -32,7 +31,7 @@ type TaskEntry =
     }
     | {
         type: 'getAllSymbols'; filePaths: string[];
-        resolve: (v: Map<string, FileSymbols>) => void;
+        resolve: (v: Map<string, IndexSymbol[]>) => void;
         reject: (e: unknown) => void
     }
     | {
@@ -100,24 +99,26 @@ export class CacheManager {
      * @param threadPool - Thread pool manager for indexing operations
      * @param llamaServer - Llama server instance for computing embeddings
      * @param enableEmbeddings - If true, create vector database and embedding processor
+     * @param nodePath - Path to standalone Node.js binary for child processes
+     * @param workspaceRoot - Absolute path to the workspace root folder
      */
     async initialize(
         pathFilter: PathFilter,
         threadPool: ThreadPool,
         llamaServer: LlamaServer,
         enableEmbeddings: boolean = false,
-        nodePath: string = ''
+        nodePath: string = '',
+        workspaceRoot: string = ''
     ): Promise<void> {
         this.pathFilter = pathFilter;
         this.threadPool = threadPool;
         this.llamaServer = llamaServer;
         this.indexingComplete = false;
 
-        // Compute cache directory once from first workspace folder
-        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-        this.workspaceRoot = workspaceFolder?.uri.fsPath ?? '';
-        this.cacheDir = workspaceFolder
-            ? path.join(workspaceFolder.uri.fsPath, '.cache', 'vsctoolbox', 'index')
+        // Compute cache directory once from workspace root
+        this.workspaceRoot = workspaceRoot;
+        this.cacheDir = workspaceRoot
+            ? path.join(workspaceRoot, '.cache', 'vsctoolbox', 'index')
             : '';
 
         // Open (or create) the vector database and embedding processor
@@ -649,7 +650,7 @@ export class CacheManager {
         query: Extract<TaskEntry, { type: 'getAllSymbols' }>,
     ): Promise<void> {
         try {
-            const results = new Map<string, FileSymbols>();
+            const results = new Map<string, IndexSymbol[]>();
             for (const filePath of query.filePaths) {
                 const fileRef = this.cache.get(this.normalizePath(filePath));
                 if (!fileRef) {
@@ -657,7 +658,7 @@ export class CacheManager {
                 }
                 const symbols = await this.symbolCache.getSymbols(fileRef);
                 if (symbols !== null) {
-                    results.set(filePath, new FileSymbols(fileRef, symbols));
+                    results.set(filePath, symbols);
                 }
             }
             query.resolve(results);
@@ -776,8 +777,8 @@ export class CacheManager {
      * @param filePaths - Array of absolute file paths to load symbols for
      * @returns Map of file path to FileSymbols (only includes files that were successfully read)
      */
-    async getAllSymbols(filePaths: string[]): Promise<Map<string, FileSymbols>> {
-        return new Promise<Map<string, FileSymbols>>((resolve, reject) => {
+    async getAllSymbols(filePaths: string[]): Promise<Map<string, IndexSymbol[]>> {
+        return new Promise<Map<string, IndexSymbol[]>>((resolve, reject) => {
             this.taskQueue.push({ type: 'getAllSymbols', filePaths, resolve, reject });
             this.wakeDrainLoop(false);
         });

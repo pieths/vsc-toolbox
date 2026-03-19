@@ -1,126 +1,42 @@
 // Copyright (c) 2026 Piet Hein Schouten
 // SPDX-License-Identifier: MIT
 
-import * as vscode from 'vscode';
-
 /**
  * Shared logger for the VSC Toolbox extension.
- * Outputs to a dedicated Output Channel visible in VS Code's Output panel.
- */
-
-let outputChannel: vscode.OutputChannel | null = null;
-
-const enum LogLevel {
-    Debug = 0,
-    Info = 1,
-    Warn = 2,
-    Error = 3,
-}
-
-const LOG_LEVEL_MAP: Record<string, LogLevel> = {
-    debug: LogLevel.Debug,
-    info: LogLevel.Info,
-    warn: LogLevel.Warn,
-    error: LogLevel.Error,
-};
-
-let currentLevel: LogLevel = LogLevel.Info;
-
-/**
- * Read the configured log level from settings and update the current level.
- */
-function updateLogLevel(): void {
-    const config = vscode.workspace.getConfiguration('vscToolbox');
-    const level = config.get<string>('logLevel', 'info');
-    currentLevel = LOG_LEVEL_MAP[level] ?? LogLevel.Info;
-}
-
-/**
- * Initialize the logger. Must be called once during extension activation.
  *
- * @param context - Extension context for registering disposables
- */
-export function initLogger(context: vscode.ExtensionContext): void {
-    outputChannel = vscode.window.createOutputChannel('VSC Toolbox');
-    context.subscriptions.push(outputChannel);
-
-    updateLogLevel();
-
-    context.subscriptions.push(
-        vscode.workspace.onDidChangeConfiguration(e => {
-            if (e.affectsConfiguration('vscToolbox.logLevel')) {
-                updateLogLevel();
-            }
-        })
-    );
-}
-
-/**
- * Get the current timestamp in HH:MM:SS format.
- */
-function getTimestamp(): string {
-    const now = new Date();
-    return now.toLocaleTimeString('en-US', { hour12: false });
-}
-
-/**
- * Log a debug message.
+ * The exported functions (`debug`, `log`, `warn`, `error`) are mutable
+ * and start as no-ops. Call {@link configureLogger} once at startup to
+ * wire them to the appropriate output.
  *
- * @param message - Message to log
+ * Every file in the extension — including content index internals —
+ * imports from this single module.
  */
-export function debug(message: string): void {
-    if (outputChannel && currentLevel <= LogLevel.Debug) {
-        outputChannel.appendLine(`[${getTimestamp()}] [DEBUG] ${message}`);
-    }
-}
+
+/** Log a debug-level message. No-op until configured. */
+export let debug: (message: string) => void = () => { };
+
+/** Log an info-level message. No-op until configured. */
+export let log: (message: string) => void = () => { };
+
+/** Log a warning-level message. No-op until configured. */
+export let warn: (message: string) => void = () => { };
+
+/** Log an error-level message. No-op until configured. */
+export let error: (message: string) => void = () => { };
 
 /**
- * Log an informational message.
- *
- * @param message - Message to log
+ * Configure all logging functions at once.
+ * Call this once at startup to wire the logger to the appropriate
+ * output (vscode OutputChannel, IPC messages, console, etc.).
  */
-export function log(message: string): void {
-    if (outputChannel && currentLevel <= LogLevel.Info) {
-        outputChannel.appendLine(`[${getTimestamp()}] [INFO] ${message}`);
-    }
-}
-
-/**
- * Log a warning message.
- *
- * @param message - Message to log
- */
-export function warn(message: string): void {
-    if (outputChannel && currentLevel <= LogLevel.Warn) {
-        outputChannel.appendLine(`[${getTimestamp()}] [WARN] ${message}`);
-    }
-}
-
-/**
- * Log an error message.
- *
- * @param message - Message to log
- */
-export function error(message: string): void {
-    if (outputChannel && currentLevel <= LogLevel.Error) {
-        outputChannel.appendLine(`[${getTimestamp()}] [ERROR] ${message}`);
-    }
-}
-
-/**
- * Show the output channel in the Output panel.
- */
-export function show(): void {
-    if (outputChannel) {
-        outputChannel.show();
-    }
-}
-
-/**
- * Clear the output channel.
- */
-export function clear(): void {
-    if (outputChannel) {
-        outputChannel.clear();
-    }
+export function configureLogger(impl: {
+    debug: (message: string) => void;
+    log: (message: string) => void;
+    warn: (message: string) => void;
+    error: (message: string) => void;
+}): void {
+    debug = impl.debug;
+    log = impl.log;
+    warn = impl.warn;
+    error = impl.error;
 }

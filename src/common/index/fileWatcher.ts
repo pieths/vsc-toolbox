@@ -1,24 +1,25 @@
 // Copyright (c) 2026 Piet Hein Schouten
 // SPDX-License-Identifier: MIT
 
-import * as vscode from 'vscode';
-import * as path from 'path';
+import watcher from '@parcel/watcher';
 import { CacheManager } from './cacheManager';
 import { PathFilter } from './pathFilter';
 import { log, warn } from '../logger';
 
 /**
  * FileWatcher monitors file system changes and updates the cache accordingly.
- * Supports watching both workspace folders and external directories.
+ * Uses @parcel/watcher to watch each include path recursively.
+ * All file filtering is handled by PathFilter — @parcel/watcher watches
+ * everything and events are filtered in the callback.
  */
-export class FileWatcher implements vscode.Disposable {
+export class FileWatcher {
     private cacheManager: CacheManager;
     private pathFilter: PathFilter;
-    private disposables: vscode.Disposable[] = [];
-    private watchers: vscode.FileSystemWatcher[] = [];
+    private subscriptions: watcher.AsyncSubscription[] = [];
 
     /**
      * Create a new file watcher.
+     * Call {@link initialize} to start watching.
      *
      * @param cacheManager - Cache manager to update on file changes
      * @param pathFilter - PathFilter instance for include/exclude logic
@@ -29,192 +30,80 @@ export class FileWatcher implements vscode.Disposable {
 
         this.cacheManager = cacheManager;
         this.pathFilter = pathFilter;
-
-        this.createWatchers();
     }
 
     /**
-     * Create file system watchers for all include paths.
-     * Creates one workspace watcher plus separate watchers for external paths.
+     * Subscribe to file system events for all include paths.
+     * Must be awaited before the watcher is active.
      */
-    private createWatchers(): void {
-        // Dispose existing watchers and their event subscriptions
-        this.cleanupWatchers();
+    async initialize(): Promise<void> {
+        // Dispose existing subscriptions
+        await this.cleanupWatchers();
 
-        // Build glob pattern for file extensions
-        const extPattern = this.buildExtensionPattern();
-
-        // Always create a single workspace watcher
-        const workspaceWatcher = vscode.workspace.createFileSystemWatcher(`**/*${extPattern}`);
-        this.registerWatcherEvents(workspaceWatcher);
-        this.watchers.push(workspaceWatcher);
-        log('FileWatcher: Watching all workspace files');
-
-        // Create additional watchers only for external paths
         for (const includePath of this.pathFilter.getIncludePaths()) {
-            if (!this.isPathInWorkspace(includePath)) {
-                this.createWatcherForExternalPath(includePath, extPattern);
+            try {
+                const subscription = await watcher.subscribe(
+                    includePath,
+                    (err, events) => {
+                        if (err) {
+                            warn(`FileWatcher: Error from @parcel/watcher for ${includePath}: ${err.message}`);
+                            return;
+                        }
+                        this.handleEvents(events);
+                    },
+                );
+                this.subscriptions.push(subscription);
+                log(`FileWatcher: Watching: ${includePath}`);
+            } catch (err) {
+                warn(`FileWatcher: Failed to watch ${includePath}: ${err}`);
             }
         }
     }
 
     /**
-     * Build a glob pattern for file extensions.
-     * @returns Glob pattern like ".{cc,h,md}" or empty string if no extensions
+     * Handle a batch of file system events from @parcel/watcher.
+     * Filters each event through PathFilter before forwarding to CacheManager.
      */
-    private buildExtensionPattern(): string {
-        const fileExtensions = this.pathFilter.getFileExtensions();
-        if (fileExtensions.length === 0) {
-            return '';
+    private handleEvents(events: watcher.Event[]): void {
+        for (const event of events) {
+            if (!this.pathFilter.shouldIncludeFile(event.path)) {
+                continue;
+            }
+
+            switch (event.type) {
+                case 'create':
+                    log(`FileWatcher: Created: ${event.path}`);
+                    this.cacheManager.add(event.path);
+                    break;
+                case 'update':
+                    this.cacheManager.markDirty(event.path);
+                    break;
+                case 'delete':
+                    log(`FileWatcher: Deleted: ${event.path}`);
+                    this.cacheManager.markDeleted(event.path);
+                    break;
+            }
         }
-
-        // Remove leading dots and join with commas
-        const exts = fileExtensions.map(ext => ext.replace(/^\./, '')).join(',');
-        return `.{${exts}}`;
     }
 
     /**
-     * Create a watcher for an external path (outside workspace).
-     * Uses RelativePattern with Uri base.
-     *
-     * @param includePath - Directory path to watch
-     * @param extPattern - Glob pattern for file extensions
+     * Unsubscribe from all active watchers.
      */
-    private createWatcherForExternalPath(includePath: string, extPattern: string): void {
-        const baseUri = vscode.Uri.file(includePath);
-        const pattern = new vscode.RelativePattern(baseUri, `**/*${extPattern}`);
-        const watcher = vscode.workspace.createFileSystemWatcher(pattern);
-        this.registerWatcherEvents(watcher);
-        this.watchers.push(watcher);
-        log(`FileWatcher: Watching external path: ${includePath}`);
-    }
-
-    /**
-     * Check if a path is inside any workspace folder.
-     *
-     * @param fsPath - Filesystem path to check
-     * @returns true if path is inside a workspace folder
-     */
-    private isPathInWorkspace(fsPath: string): boolean {
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (!workspaceFolders) {
-            return false;
+    private async cleanupWatchers(): Promise<void> {
+        for (const subscription of this.subscriptions) {
+            try {
+                await subscription.unsubscribe();
+            } catch {
+                /* ignore — subscription may already be dead */
+            }
         }
-
-        const normalizedPath = path.normalize(fsPath).toLowerCase();
-
-        return workspaceFolders.some(folder => {
-            const folderPath = path.normalize(folder.uri.fsPath).toLowerCase();
-            return normalizedPath.startsWith(folderPath);
-        });
-    }
-
-    /**
-     * Register event handlers for a watcher.
-     *
-     * @param watcher - The file system watcher
-     */
-    private registerWatcherEvents(watcher: vscode.FileSystemWatcher): void {
-        this.disposables.push(
-            watcher.onDidChange(uri => this.handleChange(uri)),
-            watcher.onDidCreate(uri => this.handleCreate(uri)),
-            watcher.onDidDelete(uri => this.handleDelete(uri))
-        );
-    }
-
-    /**
-     * Check if a file path should be included based on PathFilter config.
-     *
-     * @param filePath - Absolute file path to check
-     * @returns true if file should be included
-     */
-    private shouldInclude(filePath: string): boolean {
-        return this.pathFilter.shouldIncludeFile(filePath);
-    }
-
-    /**
-     * Handle file change event.
-     * Marks the file dirty.
-     *
-     * @param uri - URI of the changed file
-     */
-    private handleChange(uri: vscode.Uri): void {
-        const filePath = uri.fsPath;
-
-        // Skip if not in include paths
-        if (!this.shouldInclude(filePath)) {
-            return;
-        }
-
-        this.cacheManager.markDirty(filePath);
-    }
-
-    /**
-     * Handle file create event.
-     * Adds the file to the cache.
-     *
-     * @param uri - URI of the created file
-     */
-    private handleCreate(uri: vscode.Uri): void {
-        const filePath = uri.fsPath;
-
-        // Skip if not in include paths
-        if (!this.shouldInclude(filePath)) {
-            return;
-        }
-
-        log(`FileWatcher: Created: ${filePath}`);
-
-        this.cacheManager.add(filePath);
-    }
-
-    /**
-     * Handle file delete event.
-     * Marks the file as deleted.
-     *
-     * @param uri - URI of the deleted file
-     */
-    private handleDelete(uri: vscode.Uri): void {
-        const filePath = uri.fsPath;
-
-        log(`FileWatcher: Deleted: ${filePath}`);
-
-        this.cacheManager.markDeleted(filePath);
-    }
-
-    /**
-     * Get the current include paths configuration.
-     */
-    getIncludePaths(): string[] {
-        return this.pathFilter.getIncludePaths();
-    }
-
-    /**
-     * Get the current file extensions configuration.
-     */
-    getFileExtensions(): string[] {
-        return this.pathFilter.getFileExtensions();
-    }
-
-    /**
-     * Clean up all watchers and event subscriptions.
-     */
-    private cleanupWatchers(): void {
-        for (const watcher of this.watchers) {
-            try { watcher.dispose(); } catch { /* ignore */ }
-        }
-        this.watchers = [];
-
-        for (const disposable of this.disposables) {
-            try { disposable.dispose(); } catch { /* ignore */ }
-        }
-        this.disposables = [];
+        this.subscriptions = [];
     }
 
     /**
      * Dispose of the file watcher and clean up resources.
      */
-    dispose(): void {
-        this.cleanupWatchers();
+    async dispose(): Promise<void> {
+        await this.cleanupWatchers();
     }
 }

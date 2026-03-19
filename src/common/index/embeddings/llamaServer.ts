@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Piet Hein Schouten
 // SPDX-License-Identifier: MIT
 
-import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as https from 'https';
@@ -357,25 +356,30 @@ export class LlamaServer {
     private httpAgent: http.Agent | null = null;
 
     /**
-     * Initialize the server with extension context.
-     * Must be called before start().
+     * Optional callback for surfacing user-facing notifications.
+     * In the extension host, the caller wires this to vscode.window
+     * showInformationMessage / showErrorMessage. In the child process,
+     * the caller wires this to send IPC notification messages.
      */
-    initialize(context: vscode.ExtensionContext): void {
-        // Server binary is bundled with the extension
-        this.serverExePath = path.join(
-            context.extensionPath, 'bin', 'win_x64', 'llama.cpp', 'llama-server.exe'
-        );
+    private onNotification?: (level: 'info' | 'error', message: string) => void;
 
-        // Check if CUDA is available (ggml-cuda.dll present alongside server)
-        const cudaDllPath = path.join(
-            context.extensionPath, 'bin', 'win_x64', 'llama.cpp', 'ggml-cuda.dll'
-        );
-        this.cudaAvailable = fs.existsSync(cudaDllPath);
-
-        // Model is stored in globalStorageUri (persists across extension updates)
-        this.modelPath = path.join(
-            context.globalStorageUri.fsPath, 'models', this.model.filename
-        );
+    /**
+     * Initialize the server with explicit paths.
+     * Must be called before start().
+     *
+     * @param llamaCppDir - Absolute path to the directory containing llama-server.exe and ggml-cuda.dll
+     * @param modelDir - Absolute path to the directory where models are stored (or will be downloaded to)
+     * @param onNotification - Optional callback for user-facing notifications (info/error messages)
+     */
+    initialize(
+        llamaCppDir: string,
+        modelDir: string,
+        onNotification?: (level: 'info' | 'error', message: string) => void,
+    ): void {
+        this.serverExePath = path.join(llamaCppDir, 'llama-server.exe');
+        this.cudaAvailable = fs.existsSync(path.join(llamaCppDir, 'ggml-cuda.dll'));
+        this.modelPath = path.join(modelDir, this.model.filename);
+        this.onNotification = onNotification;
 
         log(`LlamaServer initialized (not started)`);
         log(`  Server Path: ${this.serverExePath}`);
@@ -407,9 +411,10 @@ export class LlamaServer {
 
     /**
      * Ensure the embedding model is downloaded.
-     * Prompts the user for confirmation before downloading.
+     * Downloads automatically if not present (the user has already opted
+     * in by enabling embeddings in settings).
      *
-     * @returns true if the model is available, false if download was cancelled
+     * @returns true if the model is available, false if download failed
      */
     async ensureModel(): Promise<boolean> {
         if (fs.existsSync(this.modelPath)) {
@@ -417,52 +422,25 @@ export class LlamaServer {
             return true;
         }
 
-        // Ask user before downloading
-        const choice = await vscode.window.showInformationMessage(
-            `Embedding model not found. Download ${this.model.name}?`,
-            'Download',
-            'Cancel'
-        );
-
-        if (choice !== 'Download') {
-            return false;
-        }
+        log(`Embedding model not found, downloading ${this.model.name}...`);
 
         // Ensure models directory exists
         const modelsDir = path.dirname(this.modelPath);
         await fs.promises.mkdir(modelsDir, { recursive: true });
 
-        // Download with progress
-        const success = await vscode.window.withProgress({
-            location: vscode.ProgressLocation.Notification,
-            title: `Downloading ${this.model.name}...`,
-            cancellable: true,
-        }, async (progress, token) => {
-            return this.downloadModel(progress, token);
-        });
-
+        // Download automatically
+        const success = await this.downloadModel();
         return success;
     }
 
     /**
-     * Download the embedding model with progress reporting.
+     * Download the embedding model with log-based progress reporting.
      * Follows HTTP redirects (common with HuggingFace CDN).
      */
-    private downloadModel(
-        progress: vscode.Progress<{ message?: string; increment?: number }>,
-        token: vscode.CancellationToken
-    ): Promise<boolean> {
+    private downloadModel(): Promise<boolean> {
         return new Promise<boolean>((resolve) => {
             const tempPath = this.modelPath + '.tmp';
             const fileStream = fs.createWriteStream(tempPath);
-            let cancelled = false;
-
-            token.onCancellationRequested(() => {
-                cancelled = true;
-                fileStream.close();
-                fs.promises.unlink(tempPath).catch(() => { });
-                resolve(false);
-            });
 
             const download = (url: string) => {
                 const client = url.startsWith('https') ? https : http;
@@ -480,6 +458,7 @@ export class LlamaServer {
                         logError(`Download failed with status ${response.statusCode}`);
                         fileStream.close();
                         fs.promises.unlink(tempPath).catch(() => { });
+                        this.onNotification?.('error', `Model download failed (HTTP ${response.statusCode})`);
                         resolve(false);
                         return;
                     }
@@ -491,34 +470,28 @@ export class LlamaServer {
                     response.pipe(fileStream);
 
                     response.on('data', (chunk: Buffer) => {
-                        if (cancelled) return;
                         downloadedBytes += chunk.length;
 
                         if (totalBytes > 0) {
                             const percent = Math.floor((downloadedBytes / totalBytes) * 100);
-                            if (percent > lastReportedPercent) {
+                            if (percent >= lastReportedPercent + 10) {
                                 const downloadedMB = (downloadedBytes / (1024 * 1024)).toFixed(1);
                                 const totalMB = (totalBytes / (1024 * 1024)).toFixed(1);
-                                progress.report({
-                                    message: `${downloadedMB} / ${totalMB} MB (${percent}%)`,
-                                    increment: percent - lastReportedPercent,
-                                });
+                                log(`Model download: ${downloadedMB} / ${totalMB} MB (${percent}%)`);
                                 lastReportedPercent = percent;
                             }
                         }
                     });
 
                     fileStream.on('finish', async () => {
-                        if (cancelled) return;
-
                         // Verify checksum if configured
                         if (this.model.sha256) {
-                            progress.report({ message: 'Verifying checksum...' });
+                            log('Verifying model checksum...');
                             const valid = await this.verifyChecksum(tempPath, this.model.sha256);
                             if (!valid) {
                                 logError('Model checksum verification failed');
                                 await fs.promises.unlink(tempPath).catch(() => { });
-                                vscode.window.showErrorMessage('Model download failed: checksum mismatch');
+                                this.onNotification?.('error', 'Model download failed: checksum mismatch');
                                 resolve(false);
                                 return;
                             }
@@ -535,6 +508,7 @@ export class LlamaServer {
                     logError(`Download error: ${err.message}`);
                     fileStream.close();
                     fs.promises.unlink(tempPath).catch(() => { });
+                    this.onNotification?.('error', `Model download failed: ${err.message}`);
                     resolve(false);
                 });
             };
@@ -586,9 +560,7 @@ export class LlamaServer {
             // Verify server binary exists
             if (!fs.existsSync(this.serverExePath)) {
                 logError(`llama-server not found at: ${this.serverExePath}`);
-                vscode.window.showErrorMessage(
-                    'llama-server binary not found.'
-                );
+                this.onNotification?.('error', 'llama-server binary not found.');
                 return false;
             }
 
@@ -630,7 +602,7 @@ export class LlamaServer {
             log(`Starting llama-server on port ${this.port} (${useGpu ? 'GPU' : 'CPU'} mode)...`);
             log(`  Args: ${args.join(' ')}`);
             this.serverProcess = spawn(this.serverExePath, args, {
-                stdio: ['pipe', 'pipe', 'pipe'],
+                stdio: ['ignore', 'ignore', 'pipe'],
                 windowsHide: true,
             });
 
