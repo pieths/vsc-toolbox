@@ -110,4 +110,18 @@ export class BloomFilter {
     clear(): void {
         this.bits.fill(0);
     }
+
+    /**
+     * Return the number of hash functions (k) used by this filter.
+     */
+    getNumHashFunctions(): number {
+        return this.k;
+    }
+
+    /**
+     * Return the total number of bytes used by the backing array.
+     */
+    getNumBytes(): number {
+        return this.bits.byteLength;
+    }
 }

@@ -189,7 +189,13 @@ process.on('message', async (msg: ParentMessage) => {
                 bloomFilter.add(sha256);
             }
 
-            sendLog('info', `[VectorCacheHost] Initialized: ${sha256s.length} cached entries, bloom filter populated`);
+            sendLog('info', [
+                `[VectorCacheHost] Initialized:`,
+                `  Cached entries  : ${sha256s.length}`,
+                `  Bloom capacity  : ${BLOOM_FILTER_CAPACITY.toLocaleString()}`,
+                `  Bloom memory    : ${(bloomFilter.getNumBytes() / 1024 / 1024).toFixed(1)} MB`,
+                `  Hash functions  : ${bloomFilter.getNumHashFunctions()}`,
+            ].join('\n'));
             process.send?.({ type: 'init-ack', entryCount: sha256s.length });
         } catch (err) {
             sendLog('error', `[VectorCacheHost] Init failed: ${err}`);
