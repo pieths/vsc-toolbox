@@ -48,6 +48,10 @@ function getConfig(): ContentIndexConfig {
     const fileExtensions = config.get<string[]>('fileExtensions', ['.cc', '.h']);
     const enableEmbeddings = config.get<boolean>('enableEmbeddings', false);
     const knowledgeBaseDirectory = config.get<string>('knowledgeBaseDirectory', '').trim();
+    const enableVectorCache = config.get<boolean>('enableVectorCache', false);
+    const enableVectorCacheServer = config.get<boolean>('enableVectorCacheServer', false);
+    const vectorCacheServerHost = config.get<string>('vectorCacheServerHost', '0.0.0.0');
+    const vectorCacheServerPort = config.get<number>('vectorCacheServerPort', 8952);
 
     return {
         enable,
@@ -56,7 +60,11 @@ function getConfig(): ContentIndexConfig {
         excludePatterns,
         fileExtensions,
         enableEmbeddings,
-        knowledgeBaseDirectory
+        knowledgeBaseDirectory,
+        enableVectorCache,
+        enableVectorCacheServer,
+        vectorCacheServerHost,
+        vectorCacheServerPort,
     };
 }
 

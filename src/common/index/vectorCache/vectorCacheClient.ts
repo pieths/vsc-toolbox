@@ -38,19 +38,25 @@ export class VectorCacheClient {
     private readonly nodePath: string;
     private readonly dbPath: string;
     private readonly vectorDimension: number;
+    private readonly httpPort?: number;
+    private readonly httpHost?: string;
 
     /**
      * Create a new VectorCacheClient.
      * Forks a child process (VectorCacheHost) that owns the cache database.
      *
      * @param nodePath — absolute path to standalone Node.js binary (avoids Electron's memory limits)
-     * @param dbPath — absolute path to the cache LanceDB database directory
+     * @param dbPath — absolute path to the cache database directory
      * @param vectorDimension — dimension of the embedding vectors
+     * @param httpPort — optional TCP port for the HTTP cache server (omit to disable)
+     * @param httpHost — optional bind address for the HTTP cache server (default: '0.0.0.0')
      */
-    constructor(nodePath: string, dbPath: string, vectorDimension: number) {
+    constructor(nodePath: string, dbPath: string, vectorDimension: number, httpPort?: number, httpHost?: string) {
         this.nodePath = nodePath;
         this.dbPath = dbPath;
         this.vectorDimension = vectorDimension;
+        this.httpPort = httpPort;
+        this.httpHost = httpHost;
         this.initPromise = this.spawnChild();
     }
 
@@ -146,6 +152,8 @@ export class VectorCacheClient {
                 type: 'init',
                 dbPath: this.dbPath,
                 vectorDimension: this.vectorDimension,
+                httpPort: this.httpPort,
+                httpHost: this.httpHost,
             });
         });
     }

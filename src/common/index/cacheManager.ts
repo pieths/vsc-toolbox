@@ -102,6 +102,9 @@ export class CacheManager {
      * @param enableEmbeddings - If true, create vector database and embedding processor
      * @param nodePath - Path to standalone Node.js binary for child processes
      * @param workspaceRoot - Absolute path to the workspace root folder
+     * @param enableVectorCache - If true, create the vector cache client
+     * @param vectorCacheHttpPort - If defined, start the HTTP cache server on this port
+     * @param vectorCacheHttpHost - Bind address for the HTTP cache server
      */
     async initialize(
         pathFilter: PathFilter,
@@ -109,7 +112,10 @@ export class CacheManager {
         llamaServer: LlamaServer,
         enableEmbeddings: boolean = false,
         nodePath: string = '',
-        workspaceRoot: string = ''
+        workspaceRoot: string = '',
+        enableVectorCache: boolean = false,
+        vectorCacheHttpPort?: number,
+        vectorCacheHttpHost?: string,
     ): Promise<void> {
         this.pathFilter = pathFilter;
         this.threadPool = threadPool;
@@ -129,13 +135,15 @@ export class CacheManager {
             await this.vectorDatabase.open();
             log(`Content index: VectorDatabase opened at ${dbPath}`);
 
-            // Create vector cache client (child process with separate LanceDB)
-            if (nodePath) {
+            // Create vector cache client (child process with separate cache database)
+            if (enableVectorCache && nodePath) {
                 const cachePath = path.join(this.cacheDir, 'vectorcache');
                 this.vectorCacheClient = new VectorCacheClient(
                     nodePath,
                     cachePath,
                     this.llamaServer.getDimensions(),
+                    vectorCacheHttpPort,
+                    vectorCacheHttpHost,
                 );
                 log(`Content index: VectorCacheClient created at ${cachePath}`);
             }

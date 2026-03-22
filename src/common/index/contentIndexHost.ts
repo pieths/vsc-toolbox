@@ -103,6 +103,10 @@ async function startComponents(config: ContentIndexConfig): Promise<number> {
             fileExtensions,
             enableEmbeddings,
             knowledgeBaseDirectory,
+            enableVectorCache,
+            enableVectorCacheServer,
+            vectorCacheServerHost,
+            vectorCacheServerPort,
         } = config;
 
         const workerThreads = configWorkerThreads === 0
@@ -142,6 +146,9 @@ async function startComponents(config: ContentIndexConfig): Promise<number> {
             enableEmbeddings,
             hostPaths.nodePath,
             hostPaths.workspaceRoot,
+            enableVectorCache,
+            enableVectorCacheServer ? vectorCacheServerPort : undefined,
+            enableVectorCacheServer ? vectorCacheServerHost : undefined,
         );
 
         const fileCount = cacheManager.getFileCount();

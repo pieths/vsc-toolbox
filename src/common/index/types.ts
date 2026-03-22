@@ -254,6 +254,10 @@ export interface VectorCacheInitRequest {
     type: 'init';
     dbPath: string;
     vectorDimension: number;
+    /** TCP port for the HTTP cache server. If omitted, no HTTP server is started. */
+    httpPort?: number;
+    /** Bind address for the HTTP cache server. Default: '0.0.0.0'. */
+    httpHost?: string;
 }
 
 /** Response sent from VectorCacheHost to VectorCacheClient after init */
@@ -346,6 +350,14 @@ export interface ContentIndexConfig {
     enableEmbeddings: boolean;
     /** Directory containing the knowledge base documents */
     knowledgeBaseDirectory: string;
+    /** Whether to enable the vector cache for caching embedding vectors */
+    enableVectorCache: boolean;
+    /** Whether to enable the HTTP server for remote vector cache queries */
+    enableVectorCacheServer: boolean;
+    /** Bind address for the vector cache HTTP server */
+    vectorCacheServerHost: string;
+    /** TCP port for the vector cache HTTP server */
+    vectorCacheServerPort: number;
 }
 
 // ── IPC messages (ContentIndex ↔ ContentIndexHost) ───────────────────

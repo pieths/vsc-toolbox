@@ -167,6 +167,28 @@
           "type": "string",
           "default": "",
           "description": "Directory path where knowledge base documents are stored. If empty, you will be prompted to select a directory on first use."
+        },
+        "vscToolbox.contentIndex.enableVectorCache": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable the vector cache for caching embedding vectors. Requires a content index restart to take effect. Note, this cache is separate from the 'deleted vectors' cache in the main vector database (which is always active). This setting only needs to be enabled for the http server (and can be helpful for certain extension development scenarios). This should be disabled for regular use cases."
+        },
+        "vscToolbox.contentIndex.enableVectorCacheServer": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable the HTTP server for remote vector cache queries. Allows other machines on the network to query this machine's embedding cache. Requires a content index restart to take effect."
+        },
+        "vscToolbox.contentIndex.vectorCacheServerHost": {
+          "type": "string",
+          "default": "0.0.0.0",
+          "description": "Bind address for the vector cache HTTP server (e.g., '0.0.0.0' for all interfaces, '127.0.0.1' for localhost only)."
+        },
+        "vscToolbox.contentIndex.vectorCacheServerPort": {
+          "type": "number",
+          "default": 8952,
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "TCP port for the vector cache HTTP server."
         }
       }
     },

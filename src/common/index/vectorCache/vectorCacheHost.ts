@@ -4,27 +4,32 @@
 /**
  * Vector Cache Host — child process entry point.
  *
- * This process is forked by VectorCacheClient and owns a LanceDB
+ * This process is forked by VectorCacheClient and owns a SQLite
  * database with a single cache table (sha256 → vector) plus an
  * in-memory bloom filter for fast miss rejection.
  *
- * All incoming batch messages are queued and executed serially to
- * guarantee ordering — a `getEmbeddings` request always sees the
+ * All incoming messages (IPC and HTTP) are queued and executed serially
+ * to guarantee ordering — a `getEmbeddings` request always sees the
  * results of any preceding `addEmbeddings`.
  *
  * Communication:
  *   VectorCacheClient ──IPC──► VectorCacheHost
  *   VectorCacheClient ◄──IPC── VectorCacheHost
+ *   Remote clients ───HTTP──► VectorCacheHost (read-only, optional)
  */
 
 import { BloomFilter } from './bloomFilter';
 import { VectorCacheDatabase } from './vectorCacheDatabase';
+import { VectorCacheHttpServer } from './vectorCacheHttpServer';
 import type {
     VectorCacheInitRequest,
     VectorCacheShutdownRequest,
     VectorCacheBatchRequest,
+    VectorCacheBatchResponse,
     VectorCacheGetEmbeddingsRequest,
+    VectorCacheGetEmbeddingsResponse,
     VectorCacheAddEmbeddingsRequest,
+    VectorCacheAddEmbeddingsResponse,
 } from '../types';
 
 type ParentMessage = VectorCacheInitRequest | VectorCacheShutdownRequest | VectorCacheBatchRequest;
@@ -37,78 +42,26 @@ const BLOOM_FILTER_FPR = 0.001; // 0.1% false positive rate
 
 let db: VectorCacheDatabase | null = null;
 let bloomFilter: BloomFilter | null = null;
+let httpServer: VectorCacheHttpServer | null = null;
 
 /** Track additions since last compact to trigger periodic compaction. */
 let additionsSinceCompact = 0;
 const COMPACT_INTERVAL = 10_000;
 
-// ── Serial message queue ──────────────────────────────────────────────
-
-const messageQueue: VectorCacheBatchRequest[] = [];
-let processing = false;
+// ── Core lookup logic ─────────────────────────────────────────────────
 
 /**
- * Enqueue a batch message and start the serial processor.
+ * Look up cached vectors for the given SHA-256 hashes.
+ *
+ * Uses the bloom filter for fast miss rejection, then queries the
+ * database only for possible hits. Returns a parallel array of
+ * base64-encoded f32 strings (hits) or null (misses).
+ *
+ * This function is used by both IPC and HTTP request handlers.
  */
-function enqueue(msg: VectorCacheBatchRequest): void {
-    messageQueue.push(msg);
-    processQueue();
-}
-
-/**
- * Process queued messages one at a time.
- * Re-entrant safe — if already processing, the current run will
- * pick up newly enqueued messages via the while loop.
- */
-async function processQueue(): Promise<void> {
-    if (processing) {
-        return;
-    }
-    processing = true;
-
-    try {
-        while (messageQueue.length > 0) {
-            const msg = messageQueue.shift()!;
-            try {
-                if (msg.type === 'getEmbeddings') {
-                    await handleGetEmbeddings(msg);
-                } else if (msg.type === 'addEmbeddings') {
-                    await handleAddEmbeddings(msg);
-                }
-            } catch (err) {
-                sendLog('error', `[VectorCacheHost] Failed to process ${msg.type}: ${err}`);
-                // Send an error response so the client's pending promise resolves
-                if (msg.type === 'getEmbeddings') {
-                    process.send?.({
-                        type: 'getEmbeddings',
-                        messageId: msg.messageId,
-                        vectors: msg.sha256s.map(() => null),
-                    });
-                } else if (msg.type === 'addEmbeddings') {
-                    process.send?.({
-                        type: 'addEmbeddings',
-                        messageId: msg.messageId,
-                    });
-                }
-            }
-        }
-    } finally {
-        processing = false;
-    }
-}
-
-// ── Message handlers ──────────────────────────────────────────────────
-
-async function handleGetEmbeddings(msg: VectorCacheGetEmbeddingsRequest): Promise<void> {
-    const { messageId, sha256s } = msg;
-
+async function lookupEmbeddings(sha256s: string[]): Promise<(string | null)[]> {
     if (!db || !bloomFilter) {
-        process.send?.({
-            type: 'getEmbeddings',
-            messageId,
-            vectors: sha256s.map(() => null),
-        });
-        return;
+        return sha256s.map(() => null);
     }
 
     // Use bloom filter to partition into definite misses and possible hits
@@ -135,16 +88,19 @@ async function handleGetEmbeddings(msg: VectorCacheGetEmbeddingsRequest): Promis
         }
     }
 
-    process.send?.({
-        type: 'getEmbeddings',
-        messageId,
-        vectors,
-    });
+    return vectors;
 }
 
-async function handleAddEmbeddings(msg: VectorCacheAddEmbeddingsRequest): Promise<void> {
-    const { messageId, sha256s, vectors } = msg;
-
+/**
+ * Add embedding vectors to the cache and update the bloom filter.
+ *
+ * Wraps the database insert in a single transaction, updates the
+ * bloom filter for fast miss rejection, and triggers periodic
+ * compaction to keep the database fast.
+ *
+ * This function is used by the serial queue's addEmbeddings handler.
+ */
+async function addEmbeddings(sha256s: string[], vectors: string[]): Promise<void> {
     if (db && bloomFilter) {
         await db.add(sha256s, vectors);
 
@@ -163,11 +119,107 @@ async function handleAddEmbeddings(msg: VectorCacheAddEmbeddingsRequest): Promis
             }
         }
     }
+}
 
-    process.send?.({
-        type: 'addEmbeddings',
-        messageId,
+// ── Serial message queue ──────────────────────────────────────────────
+
+/**
+ * A queued message paired with a callback for delivering the response.
+ * IPC messages respond via process.send(); HTTP messages respond via
+ * a promise resolver wired to the HTTP response.
+ */
+interface QueueEntry {
+    msg: VectorCacheBatchRequest;
+    respond: (response: any) => void;
+}
+
+const messageQueue: QueueEntry[] = [];
+let processing = false;
+
+/**
+ * Enqueue a message with its response callback and start the serial processor.
+ */
+function enqueue(entry: QueueEntry): void {
+    messageQueue.push(entry);
+    processQueue();
+}
+
+/**
+ * Enqueue a getEmbeddings request from the HTTP server.
+ *
+ * Returns a promise that resolves with the lookup results once the
+ * serial queue processes the request. This is the callback wired
+ * into VectorCacheHttpServer.
+ */
+function enqueueHttpGetEmbeddings(sha256s: string[]): Promise<(string | null)[]> {
+    return new Promise<(string | null)[]>((resolve) => {
+        const msg: VectorCacheGetEmbeddingsRequest = {
+            type: 'getEmbeddings',
+            messageId: -1, // Not used for HTTP — response goes via the promise
+            sha256s,
+        };
+        enqueue({
+            msg,
+            respond: (response: VectorCacheGetEmbeddingsResponse) => {
+                resolve(response.vectors);
+            },
+        });
     });
+}
+
+/**
+ * Process queued messages one at a time.
+ * Re-entrant safe — if already processing, the current run will
+ * pick up newly enqueued messages via the while loop.
+ */
+async function processQueue(): Promise<void> {
+    if (processing) {
+        return;
+    }
+    processing = true;
+
+    try {
+        while (messageQueue.length > 0) {
+            const { msg, respond } = messageQueue.shift()!;
+            try {
+                if (msg.type === 'getEmbeddings') {
+                    const vectors = await lookupEmbeddings(msg.sha256s);
+                    const response: VectorCacheGetEmbeddingsResponse = {
+                        type: 'getEmbeddings',
+                        messageId: msg.messageId,
+                        vectors,
+                    };
+                    respond(response);
+                } else if (msg.type === 'addEmbeddings') {
+                    await addEmbeddings(msg.sha256s, msg.vectors);
+                    const response: VectorCacheAddEmbeddingsResponse = {
+                        type: 'addEmbeddings',
+                        messageId: msg.messageId,
+                    };
+                    respond(response);
+                }
+            } catch (err) {
+                sendLog('error', `[VectorCacheHost] Failed to process ${msg.type}: ${err}`);
+                // Send an error response so the caller's pending promise resolves
+                if (msg.type === 'getEmbeddings') {
+                    const response: VectorCacheGetEmbeddingsResponse = {
+                        type: 'getEmbeddings',
+                        messageId: msg.messageId,
+                        vectors: msg.sha256s.map(() => null),
+                    };
+                    respond(response);
+                } else if (msg.type === 'addEmbeddings') {
+                    const response: VectorCacheAddEmbeddingsResponse = {
+                        type: 'addEmbeddings',
+                        messageId: msg.messageId,
+                    };
+                    respond(response);
+                }
+            }
+        }
+    } finally {
+        processing = false;
+    }
 }
 
 // ── Logging ───────────────────────────────────────────────────────────
@@ -176,50 +228,99 @@ function sendLog(level: 'debug' | 'info' | 'warn' | 'error', message: string): v
     process.send?.({ type: 'log', level, message });
 }
 
+// ── IPC response helper ──────────────────────────────────────────────
+
+/** Send a response back to the parent process via IPC. */
+function respondViaIpc(response: VectorCacheBatchResponse): void {
+    process.send?.(response);
+}
+
+// ── IPC handlers ─────────────────────────────────────────────────────
+
+/**
+ * Handle the 'init' message from VectorCacheClient.
+ *
+ * Opens the database, populates the bloom filter, optionally starts
+ * the HTTP server, and sends back an init-ack with the entry count.
+ */
+async function handleInit(msg: VectorCacheInitRequest): Promise<void> {
+    try {
+        db = new VectorCacheDatabase(msg.dbPath, msg.vectorDimension);
+        const sha256s = await db.open();
+
+        bloomFilter = new BloomFilter(BLOOM_FILTER_CAPACITY, BLOOM_FILTER_FPR);
+        for (const sha256 of sha256s) {
+            bloomFilter.add(sha256);
+        }
+
+        sendLog('info', [
+            `[VectorCacheHost] Initialized:`,
+            `  Cached entries  : ${sha256s.length}`,
+            `  Bloom capacity  : ${BLOOM_FILTER_CAPACITY.toLocaleString()}`,
+            `  Bloom memory    : ${(bloomFilter.getNumBytes() / 1024 / 1024).toFixed(1)} MB`,
+            `  Hash functions  : ${bloomFilter.getNumHashFunctions()}`,
+        ].join('\n'));
+
+        // Start HTTP server if configured
+        if (msg.httpPort !== undefined) {
+            const host = msg.httpHost ?? '0.0.0.0';
+            httpServer = new VectorCacheHttpServer(host, msg.httpPort, enqueueHttpGetEmbeddings, sendLog);
+            try {
+                await httpServer.start();
+            } catch (err) {
+                sendLog('error', `[VectorCacheHost] Failed to start HTTP server: ${err}`);
+                httpServer = null;
+            }
+        }
+
+        process.send?.({ type: 'init-ack', entryCount: sha256s.length });
+    } catch (err) {
+        sendLog('error', `[VectorCacheHost] Init failed: ${err}`);
+        process.send?.({ type: 'init-ack', entryCount: 0 });
+    }
+}
+
+/**
+ * Handle the 'shutdown' message from VectorCacheClient.
+ *
+ * Stops the HTTP server, drains the serial queue, closes the
+ * database, and exits the process.
+ */
+async function handleShutdown(): Promise<void> {
+    try {
+        // Stop HTTP server first (stop accepting new requests)
+        if (httpServer) {
+            await httpServer.stop();
+            httpServer = null;
+        }
+
+        // Drain any in-flight messages before shutting down
+        while (messageQueue.length > 0 || processing) {
+            await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        await db?.close();
+    } catch (err) {
+        console.error('[VectorCacheHost] Error during shutdown:', err);
+    }
+    process.exit(0);
+}
+
 // ── IPC from VectorCacheClient ────────────────────────────────────────
 
 process.on('message', async (msg: ParentMessage) => {
     if (msg.type === 'init') {
-        try {
-            db = new VectorCacheDatabase(msg.dbPath, msg.vectorDimension);
-            const sha256s = await db.open();
-
-            bloomFilter = new BloomFilter(BLOOM_FILTER_CAPACITY, BLOOM_FILTER_FPR);
-            for (const sha256 of sha256s) {
-                bloomFilter.add(sha256);
-            }
-
-            sendLog('info', [
-                `[VectorCacheHost] Initialized:`,
-                `  Cached entries  : ${sha256s.length}`,
-                `  Bloom capacity  : ${BLOOM_FILTER_CAPACITY.toLocaleString()}`,
-                `  Bloom memory    : ${(bloomFilter.getNumBytes() / 1024 / 1024).toFixed(1)} MB`,
-                `  Hash functions  : ${bloomFilter.getNumHashFunctions()}`,
-            ].join('\n'));
-            process.send?.({ type: 'init-ack', entryCount: sha256s.length });
-        } catch (err) {
-            sendLog('error', `[VectorCacheHost] Init failed: ${err}`);
-            process.send?.({ type: 'init-ack', entryCount: 0 });
-        }
+        await handleInit(msg);
         return;
     }
 
     if (msg.type === 'shutdown') {
-        try {
-            // Drain any in-flight messages before shutting down
-            while (messageQueue.length > 0 || processing) {
-                await new Promise(resolve => setTimeout(resolve, 10));
-            }
-            await db?.close();
-        } catch (err) {
-            console.error('[VectorCacheHost] Error during shutdown:', err);
-        }
-        process.exit(0);
+        await handleShutdown();
+        return;
     }
 
-    // Batch requests — enqueue for serial processing
+    // Batch requests — enqueue for serial processing with IPC response
     if (msg.type === 'getEmbeddings' || msg.type === 'addEmbeddings') {
-        enqueue(msg);
+        enqueue({ msg, respond: respondViaIpc });
     }
 });
 
