@@ -194,9 +194,10 @@ export class VectorDatabase {
         // committed transactions are fsync'd to disk before COMMIT returns.
         this.sqliteDb.exec('PRAGMA journal_mode = WAL');
 
-        // 50MB page cache (12500 pages × 4KB) — enough to keep BTree
-        // indexes resident in memory for fast lookups after warmup.
-        this.sqliteDb.exec('PRAGMA cache_size = 12500');
+        // 100MB page cache (25000 pages × 4KB) — sized to keep BTree
+        // indexes and the deleted_chunks table resident in memory for
+        // fast random lookups during vector restore and branch switching.
+        this.sqliteDb.exec('PRAGMA cache_size = 25000');
 
         // Raise auto-checkpoint threshold to ~15 MB (3840 pages × 4KB)
         // so bulk inserts don't trigger frequent expensive checkpoints.
