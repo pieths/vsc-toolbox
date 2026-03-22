@@ -70,6 +70,7 @@ export class CacheManager {
     private drainLoopRunning = false;
     private drainLoopPromise: Promise<void> | null = null;
     private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    private compactTimer: ReturnType<typeof setInterval> | null = null;
     private readonly debounceMs = 500;
 
     /**
@@ -258,6 +259,14 @@ export class CacheManager {
             }
 
             this.indexingComplete = true;
+
+            // Start periodic compact timer — runs every 15 minutes to
+            // purge old deleted vectors, checkpoint the WAL, and optimize
+            // LanceDB tables. Serialized through the drain loop.
+            this.compactTimer = setInterval(() => {
+                this.compactDatabase().catch(() => { });
+            }, 15 * 60 * 1000);
+
             log(`Content index: Added ${this.cache.size} files to cache`);
         } catch (err) {
             error(`Content index: Failed to initialize cache: ${err}`);
@@ -713,6 +722,12 @@ export class CacheManager {
         if (this.debounceTimer) {
             clearTimeout(this.debounceTimer);
             this.debounceTimer = null;
+        }
+
+        // Cancel the periodic compact timer
+        if (this.compactTimer) {
+            clearInterval(this.compactTimer);
+            this.compactTimer = null;
         }
 
         // Clear queues and reject pending tasks
