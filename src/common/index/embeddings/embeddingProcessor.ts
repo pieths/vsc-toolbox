@@ -30,7 +30,7 @@ export class EmbeddingProcessor {
 
     // Accumulated diff state (reset on flush)
     private chunksToEmbed: { filePath: string; chunk: Chunk }[] = [];
-    private chunkIdsToDelete: number[] = [];
+    private chunksToDelete: FileChunkRecord[] = [];
     private movedChunks: FileChunkRecord[] = [];
     private fileVersionUpdates = new Map<string, string>();
     private changedFilePaths = new Set<string>();
@@ -214,7 +214,7 @@ export class EmbeddingProcessor {
                 warn(`Content index: Chunk error for ${output.filePath}: ${output.error}`);
                 const staleChunks = storedChunksMap.get(output.filePath) ?? [];
                 for (const stored of staleChunks) {
-                    this.chunkIdsToDelete.push(stored.id);
+                    this.chunksToDelete.push(stored);
                 }
                 this.fileVersionUpdates.set(output.filePath, '');
                 continue;
@@ -230,7 +230,7 @@ export class EmbeddingProcessor {
             // Delete stored chunks that no longer exist in the new output
             for (const [hash, stored] of storedByHash) {
                 if (!newHashes.has(hash)) {
-                    this.chunkIdsToDelete.push(stored.id);
+                    this.chunksToDelete.push(stored);
                     fileChanged = true;
                 }
             }
@@ -275,8 +275,8 @@ export class EmbeddingProcessor {
      * (for stale chunks), and a single addFileChunks call (for new ones).
      */
     private async embedAndStore(): Promise<{ vectors: number; files: number }> {
-        if (this.vectorDatabase && this.chunkIdsToDelete.length > 0) {
-            await this.vectorDatabase.deleteFileChunks(this.chunkIdsToDelete);
+        if (this.vectorDatabase && this.chunksToDelete.length > 0) {
+            await this.vectorDatabase.deleteFileChunks(this.chunksToDelete);
         }
 
         if (this.vectorDatabase && this.movedChunks.length > 0) {
@@ -299,45 +299,90 @@ export class EmbeddingProcessor {
     /**
      * Resolve embedding vectors for all chunks queued in {@link chunksToEmbed}.
      *
-     * Fills a single vectors array progressively:
-     *   1. Fill from the local vector cache (cache hits).
-     *   2. Embed remaining misses via llamaServer.
-     *   3. Fire-and-forget: push newly-embedded vectors to the cache.
-     *   4. Build FileChunkInput[] from the resolved vectors.
+     * Fills the newChunks array progressively from multiple sources:
+     *   1. Check deleted_vectors for restorable embeddings (fastest).
+     *   2. Fill from the local vector cache (cache hits).
+     *   3. Embed remaining misses via llamaServer.
+     *   4. Fire-and-forget: push newly-embedded vectors to the cache.
      *
-     * Chunks that remain null after all sources are exhausted are logged
-     * as failures and have their file version blanked so they are retried
-     * on the next pass.
+     * Chunks that remain unresolved after all sources are exhausted are
+     * logged as failures and have their file version blanked so they are
+     * retried on the next pass.
      *
      * @returns Array of FileChunkInputs ready for insertion into the main DB.
      */
     private async resolveEmbeddings(): Promise<FileChunkInput[]> {
         const chunks = this.chunksToEmbed;
         const sha256s = chunks.map(m => m.chunk.sha256);
-        const vectors: (string | null)[] = new Array(chunks.length).fill(null);
 
-        // ── 1. Fill from local vector cache ──────────────────────────
-        if (this.vectorCacheClient) {
-            const cached = await this.vectorCacheClient.getEmbeddings(sha256s);
-            for (let i = 0; i < cached.length; i++) {
-                vectors[i] = cached[i];
+        // Initialize newChunks with vector fields null — filled in
+        // progressively as vectors are resolved from each source.
+        const newChunks: FileChunkInput[] = chunks.map(m => ({
+            filePath: m.filePath,
+            startLine: m.chunk.startLine,
+            endLine: m.chunk.endLine,
+            sha256: m.chunk.sha256,
+            vector: null,
+            deletedVectorId: null,
+        }));
+
+        // Track which indices still need resolution
+        const resolved = new Uint8Array(chunks.length); // 0 = unresolved
+
+        // ── 1. Check deleted_vectors for restorable embeddings ───────
+        if (this.vectorDatabase) {
+            const deletedVectorMap = this.vectorDatabase.getDeletedVectors(sha256s);
+            if (deletedVectorMap.size > 0) {
+                for (let i = 0; i < sha256s.length; i++) {
+                    const vectorId = deletedVectorMap.get(sha256s[i]);
+                    if (vectorId !== undefined) {
+                        newChunks[i].deletedVectorId = vectorId;
+                        resolved[i] = 1;
+                    }
+                }
+                log(`Content index: Deleted vectors: ${deletedVectorMap.size} restored, ${chunks.length - deletedVectorMap.size} remaining`);
             }
         }
 
-        // ── 2. Identify what's still missing ─────────────────────────
+        // ── 2. Fill from local vector cache ──────────────────────────
+        if (this.vectorCacheClient) {
+            // Only look up unresolved sha256s
+            const unresolvedIndices: number[] = [];
+            const unresolvedSha256s: string[] = [];
+            for (let i = 0; i < chunks.length; i++) {
+                if (!resolved[i]) {
+                    unresolvedIndices.push(i);
+                    unresolvedSha256s.push(sha256s[i]);
+                }
+            }
+
+            if (unresolvedSha256s.length > 0) {
+                const cached = await this.vectorCacheClient.getEmbeddings(unresolvedSha256s);
+                let cacheHitCount = 0;
+                for (let j = 0; j < cached.length; j++) {
+                    if (cached[j]) {
+                        const originalIndex = unresolvedIndices[j];
+                        const buf = Buffer.from(cached[j]!, 'base64');
+                        newChunks[originalIndex].vector = new Float32Array(new Uint8Array(buf).buffer);
+                        resolved[originalIndex] = 1;
+                        cacheHitCount++;
+                    }
+                }
+                if (cacheHitCount > 0) {
+                    log(`Content index: Vector cache: ${cacheHitCount} hits, ${unresolvedSha256s.length - cacheHitCount} misses`);
+                }
+            }
+        }
+
+        // ── 3. Identify what's still missing ─────────────────────────
         const missingIndices: number[] = [];
-        for (let i = 0; i < vectors.length; i++) {
-            if (vectors[i] === null) {
+        for (let i = 0; i < chunks.length; i++) {
+            if (!resolved[i]) {
                 missingIndices.push(i);
             }
         }
 
-        const cacheHitCount = chunks.length - missingIndices.length;
-        if (cacheHitCount > 0) {
-            log(`Content index: Vector cache: ${cacheHitCount} hits, ${missingIndices.length} misses`);
-        }
-
-        // ── 3. Embed misses via llamaServer ──────────────────────────
+        // ── 4. Embed misses via llamaServer ──────────────────────────
         const newlyEmbeddedSha256s: string[] = [];
         const newlyEmbeddedVectors: string[] = [];
 
@@ -350,7 +395,16 @@ export class EmbeddingProcessor {
                     const originalIndex = missingIndices[j];
                     const embeddedVector = embedded[j];
                     if (embeddedVector) {
-                        vectors[originalIndex] = embeddedVector;
+                        // Convert base64 → Float32Array only at the final boundary
+                        // where VectorDatabase needs it for LanceDB insertion.
+                        // Copy into a new ArrayBuffer via Uint8Array to guarantee
+                        // 4-byte alignment. Node's Buffer.from(string, 'base64')
+                        // may return a view into a shared internal pool whose
+                        // byteOffset is not aligned to 4 bytes, which would cause
+                        // Float32Array to throw a RangeError.
+                        const buf = Buffer.from(embeddedVector, 'base64');
+                        newChunks[originalIndex].vector = new Float32Array(new Uint8Array(buf).buffer);
+                        resolved[originalIndex] = 1;
                         newlyEmbeddedSha256s.push(sha256s[originalIndex]);
                         newlyEmbeddedVectors.push(embeddedVector);
                     }
@@ -363,50 +417,32 @@ export class EmbeddingProcessor {
             }
         }
 
-        // ── 4. Fire-and-forget: push newly-embedded vectors to cache ─
+        // ── 5. Fire-and-forget: push newly-embedded vectors to cache ─
         if (this.vectorCacheClient && newlyEmbeddedSha256s.length > 0) {
             this.vectorCacheClient.addEmbeddings(newlyEmbeddedSha256s, newlyEmbeddedVectors);
         }
 
-        // ── 5. Build results from resolved vectors ───────────────────
-        const newChunks: FileChunkInput[] = [];
+        // ── 6. Filter out unresolved chunks ──────────────────────────
+        const result: FileChunkInput[] = [];
         let failedCount = 0;
 
         for (let i = 0; i < chunks.length; i++) {
-            const vectorB64 = vectors[i];
-            if (!vectorB64) {
+            if (resolved[i]) {
+                result.push(newChunks[i]);
+            } else {
                 failedCount++;
                 warn(`Content index: Embedding failed for ${chunks[i].filePath}:${chunks[i].chunk.startLine}-${chunks[i].chunk.endLine}`);
                 // Blank the file version for this file so we don't mark
                 // that all chunks are valid when some embeddings failed.
                 this.fileVersionUpdates.set(chunks[i].filePath, '');
-                continue;
             }
-
-            // Convert base64 → Float32Array only at the final boundary
-            // where VectorDatabase needs it for LanceDB insertion.
-            // Copy into a new ArrayBuffer via Uint8Array to guarantee
-            // 4-byte alignment. Node's Buffer.from(string, 'base64')
-            // may return a view into a shared internal pool whose
-            // byteOffset is not aligned to 4 bytes, which would cause
-            // Float32Array to throw a RangeError.
-            const buf = Buffer.from(vectorB64, 'base64');
-            const vector = new Float32Array(new Uint8Array(buf).buffer);
-
-            newChunks.push({
-                filePath: chunks[i].filePath,
-                startLine: chunks[i].chunk.startLine,
-                endLine: chunks[i].chunk.endLine,
-                sha256: sha256s[i],
-                vector,
-            });
         }
 
         if (failedCount > 0) {
             warn(`Content index: ${failedCount}/${chunks.length} embeddings failed`);
         }
 
-        return newChunks;
+        return result;
     }
 
     /**
@@ -438,7 +474,7 @@ export class EmbeddingProcessor {
      */
     private resetDiff(): void {
         this.chunksToEmbed = [];
-        this.chunkIdsToDelete = [];
+        this.chunksToDelete = [];
         this.movedChunks = [];
         this.fileVersionUpdates.clear();
         this.changedFilePaths.clear();
