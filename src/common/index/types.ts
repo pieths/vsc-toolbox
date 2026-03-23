@@ -358,6 +358,8 @@ export interface ContentIndexConfig {
     vectorCacheServerHost: string;
     /** TCP port for the vector cache HTTP server */
     vectorCacheServerPort: number;
+    /** Base URL of a remote vector cache server for cached embedding lookups */
+    remoteEmbeddingServerAddress: string;
 }
 
 // ── IPC messages (ContentIndex ↔ ContentIndexHost) ───────────────────

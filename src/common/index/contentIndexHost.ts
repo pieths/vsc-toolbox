@@ -107,6 +107,7 @@ async function startComponents(config: ContentIndexConfig): Promise<number> {
             enableVectorCacheServer,
             vectorCacheServerHost,
             vectorCacheServerPort,
+            remoteEmbeddingServerAddress,
         } = config;
 
         const workerThreads = configWorkerThreads === 0
@@ -149,6 +150,7 @@ async function startComponents(config: ContentIndexConfig): Promise<number> {
             enableVectorCache,
             enableVectorCacheServer ? vectorCacheServerPort : undefined,
             enableVectorCacheServer ? vectorCacheServerHost : undefined,
+            remoteEmbeddingServerAddress,
         );
 
         const fileCount = cacheManager.getFileCount();

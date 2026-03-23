@@ -105,6 +105,7 @@ export class CacheManager {
      * @param enableVectorCache - If true, create the vector cache client
      * @param vectorCacheHttpPort - If defined, start the HTTP cache server on this port
      * @param vectorCacheHttpHost - Bind address for the HTTP cache server
+     * @param remoteEmbeddingServerAddress - Base URL of a remote vector cache server
      */
     async initialize(
         pathFilter: PathFilter,
@@ -116,6 +117,7 @@ export class CacheManager {
         enableVectorCache: boolean = false,
         vectorCacheHttpPort?: number,
         vectorCacheHttpHost?: string,
+        remoteEmbeddingServerAddress: string = '',
     ): Promise<void> {
         this.pathFilter = pathFilter;
         this.threadPool = threadPool;
@@ -153,6 +155,7 @@ export class CacheManager {
                 this.llamaServer,
                 this.threadPool,
                 this.vectorCacheClient,
+                remoteEmbeddingServerAddress,
             );
         }
 

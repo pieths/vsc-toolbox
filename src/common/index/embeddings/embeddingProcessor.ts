@@ -8,6 +8,7 @@ import { LlamaServer } from './llamaServer';
 import { FileChunkInput, FileChunkRecord, VectorDatabase } from './vectorDatabase';
 import { VectorCacheClient } from '../vectorCache/vectorCacheClient';
 import { log, warn } from '../../logger';
+import * as http from 'http';
 
 /**
  * Method-object that encapsulates the embedding pipeline for a set of files.
@@ -43,6 +44,7 @@ export class EmbeddingProcessor {
         private readonly llamaServer: LlamaServer,
         private readonly threadPool: ThreadPool,
         private readonly vectorCacheClient: VectorCacheClient | null = null,
+        private readonly remoteServerAddress: string = '',
     ) { }
 
     /**
@@ -344,7 +346,40 @@ export class EmbeddingProcessor {
             }
         }
 
-        // ── 2. Fill from local vector cache ──────────────────────────
+        // ── 2. Fill from remote vector cache server ──────────────────
+        if (this.remoteServerAddress) {
+            const unresolvedIndices: number[] = [];
+            const unresolvedSha256s: string[] = [];
+            for (let i = 0; i < chunks.length; i++) {
+                if (!resolved[i]) {
+                    unresolvedIndices.push(i);
+                    unresolvedSha256s.push(sha256s[i]);
+                }
+            }
+
+            if (unresolvedSha256s.length > 0) {
+                try {
+                    const remoteVectors = await this.fetchRemoteEmbeddings(unresolvedSha256s);
+                    let remoteHitCount = 0;
+                    for (let j = 0; j < remoteVectors.length; j++) {
+                        if (remoteVectors[j]) {
+                            const originalIndex = unresolvedIndices[j];
+                            const buf = Buffer.from(remoteVectors[j]!, 'base64');
+                            newChunks[originalIndex].vector = new Float32Array(new Uint8Array(buf).buffer);
+                            resolved[originalIndex] = 1;
+                            remoteHitCount++;
+                        }
+                    }
+                    if (remoteHitCount > 0) {
+                        log(`Content index: Remote cache: ${remoteHitCount} hits, ${unresolvedSha256s.length - remoteHitCount} misses`);
+                    }
+                } catch (err) {
+                    warn(`Content index: Remote cache query failed: ${err}`);
+                }
+            }
+        }
+
+        // ── 3. Fill from local vector cache ──────────────────────────
         if (this.vectorCacheClient) {
             // Only look up unresolved sha256s
             const unresolvedIndices: number[] = [];
@@ -374,7 +409,7 @@ export class EmbeddingProcessor {
             }
         }
 
-        // ── 3. Identify what's still missing ─────────────────────────
+        // ── 4. Identify what's still missing ─────────────────────────
         const missingIndices: number[] = [];
         for (let i = 0; i < chunks.length; i++) {
             if (!resolved[i]) {
@@ -382,7 +417,7 @@ export class EmbeddingProcessor {
             }
         }
 
-        // ── 4. Embed misses via llamaServer ──────────────────────────
+        // ── 5. Embed misses via llamaServer ──────────────────────────
         const newlyEmbeddedSha256s: string[] = [];
         const newlyEmbeddedVectors: string[] = [];
 
@@ -417,12 +452,12 @@ export class EmbeddingProcessor {
             }
         }
 
-        // ── 5. Fire-and-forget: push newly-embedded vectors to cache ─
+        // ── 6. Fire-and-forget: push newly-embedded vectors to cache ─
         if (this.vectorCacheClient && newlyEmbeddedSha256s.length > 0) {
             this.vectorCacheClient.addEmbeddings(newlyEmbeddedSha256s, newlyEmbeddedVectors);
         }
 
-        // ── 6. Filter out unresolved chunks ──────────────────────────
+        // ── 7. Filter out unresolved chunks ──────────────────────────
         const result: FileChunkInput[] = [];
         let failedCount = 0;
 
@@ -443,6 +478,52 @@ export class EmbeddingProcessor {
         }
 
         return result;
+    }
+
+    /**
+     * Query a remote vector cache server for cached embeddings.
+     *
+     * Sends a POST request to the remote server's `/api/v1/getEmbeddings`
+     * endpoint with the given SHA-256 hashes and returns a parallel array
+     * of base64-encoded vectors (hits) or null (misses).
+     *
+     * @param sha256s - SHA-256 hashes to look up
+     * @returns Parallel array of base64 strings (hits) or null (misses)
+     */
+    private fetchRemoteEmbeddings(sha256s: string[]): Promise<(string | null)[]> {
+        return new Promise<(string | null)[]>((resolve, reject) => {
+            const body = JSON.stringify({ sha256s });
+            const url = new URL('/api/v1/getEmbeddings', this.remoteServerAddress);
+
+            const req = http.request(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(body),
+                },
+                timeout: 10000,
+            }, (res) => {
+                const chunks: Buffer[] = [];
+                res.on('data', (chunk: Buffer) => chunks.push(chunk));
+                res.on('end', () => {
+                    try {
+                        if (res.statusCode !== 200) {
+                            reject(new Error(`Remote server returned ${res.statusCode}`));
+                            return;
+                        }
+                        const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+                        resolve(parsed.vectors ?? sha256s.map(() => null));
+                    } catch (err) {
+                        reject(new Error(`Failed to parse remote response: ${err}`));
+                    }
+                });
+            });
+
+            req.on('error', (err) => reject(new Error(`Remote cache request failed: ${err.message}`)));
+            req.on('timeout', () => { req.destroy(); reject(new Error('Remote cache request timed out')); });
+            req.write(body);
+            req.end();
+        });
     }
 
     /**
