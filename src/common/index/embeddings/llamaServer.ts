@@ -213,14 +213,14 @@ const MODELS: ModelConfig[] = [
         sha256: '',
         filename: 'jina-code-embeddings-0.5b-Q8_0.gguf',
         dimensions: 896,
-        parallelSlots: { cpu: 8, gpu: 16 },
+        parallelSlots: { cpu: 8, gpu: 8 },
         cpuArgs: [
             '-c', String(4 * 4096),   // 4096 tokens/slot
             '-b', '4096', '-ub', '4096',
             '--pooling', 'last',
         ],
         gpuArgs: [
-            '-c', String(16 * 4096),  // 4096 tokens/slot
+            '-c', String(8 * 4096),   // 4096 tokens/slot
             '-b', '4096', '-ub', '4096',
             '--pooling', 'last',
             '-ngl', '99',

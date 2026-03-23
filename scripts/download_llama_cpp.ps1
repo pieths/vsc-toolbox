@@ -15,10 +15,10 @@ $ErrorActionPreference = "Stop"
 # Configuration
 # ============================================================================
 
-$release = "b8054"
+$release = "b8492"
 
 $llamaUrl          = "https://github.com/ggml-org/llama.cpp/releases/download/$release/llama-$release-bin-win-cuda-12.4-x64.zip"
-$expectedHash      = "21b25d2553ccd7c7abef334313e06ef202f22260a534b329a784ef343c072617"
+$expectedHash      = "1f601bc985c162fb4074899d60f21fc68bcd8ba8ddfce7fdf302c13365d9c2fd"
 
 $llamaCudaUrl      = "https://github.com/ggml-org/llama.cpp/releases/download/$release/cudart-llama-bin-win-cuda-12.4-x64.zip"
 $expectedCudaHash  = "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6"
