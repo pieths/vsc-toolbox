@@ -12,4 +12,4 @@
 !bin/win_x64/runo-search/**
 !bin/tree-sitter/**
 !node_modules/@lancedb/lancedb-win32-x64-msvc/**
-!node_modules/@parcel/watcher-win32-x64-msvc/**
+!node_modules/@parcel/watcher-win32-x64/**

@@ -79,7 +79,7 @@ const contentIndexHostConfig = {
     ...sharedOptions,
     entryPoints: ['src/common/index/contentIndexHost.ts'],
     outfile: 'out/contentIndexHost.js',
-    external: ['@parcel/watcher-win32-x64-msvc', '@lancedb/lancedb-win32-x64-msvc'],
+    external: ['@parcel/watcher-win32-x64', '@lancedb/lancedb-win32-x64-msvc'],
 };
 
 async function main() {
