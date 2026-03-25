@@ -78,6 +78,11 @@ export class VectorCacheDatabase {
         // 50MB keeps the upper BTree levels cached for fast traversal.
         this.db.exec('PRAGMA cache_size = 12500');
 
+        // Raise auto-checkpoint threshold to ~15 MB (3840 pages × 4KB)
+        // so batch inserts of 100–200 files (~1–5MB each) don't trigger
+        // mid-batch checkpoints. The WAL is checkpointed on shutdown.
+        this.db.exec('PRAGMA wal_autocheckpoint = 3840');
+
         // Create the cache table if it doesn't exist
         this.db.exec(`
             CREATE TABLE IF NOT EXISTS vector_cache (
