@@ -1013,10 +1013,16 @@ export class VectorDatabase {
             error(`VectorDatabase: SQLite WAL checkpoint failed: ${err}`);
         }
 
-        // LanceDB: optimize vectors table
+        // LanceDB: optimize vectors table.
+        // cleanupOlderThan: now — keep only the current version, drop all
+        //   historical snapshots (no time-travel needed).
+        // deleteUnverified: true — safe because all DB access is serialized
+        //   through the drain loop, so no in-progress transactions exist.
+        const optimizeOptions = { cleanupOlderThan: new Date(), deleteUnverified: true };
+
         if (this.vectorsTable) {
             try {
-                const stats = await this.vectorsTable.optimize();
+                const stats = await this.vectorsTable.optimize(optimizeOptions);
                 log(
                     `VectorDatabase: compacted vectors — removed ` +
                     `${stats.compaction.filesRemoved} files, ` +
@@ -1030,7 +1036,7 @@ export class VectorDatabase {
         // LanceDB: optimize deleted_vectors table
         if (this.deletedVectorsTable) {
             try {
-                const stats = await this.deletedVectorsTable.optimize();
+                const stats = await this.deletedVectorsTable.optimize(optimizeOptions);
                 log(
                     `VectorDatabase: compacted deleted_vectors — removed ` +
                     `${stats.compaction.filesRemoved} files, ` +
