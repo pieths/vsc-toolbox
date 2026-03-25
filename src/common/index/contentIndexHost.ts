@@ -107,6 +107,7 @@ async function startComponents(config: ContentIndexConfig): Promise<number> {
             enableVectorCacheServer,
             vectorCacheServerHost,
             vectorCacheServerPort,
+            vectorCacheMemoryMB,
             remoteEmbeddingServerAddress,
         } = config;
 
@@ -150,6 +151,7 @@ async function startComponents(config: ContentIndexConfig): Promise<number> {
             enableVectorCache,
             enableVectorCacheServer ? vectorCacheServerPort : undefined,
             enableVectorCacheServer ? vectorCacheServerHost : undefined,
+            vectorCacheMemoryMB,
             remoteEmbeddingServerAddress,
         );
 

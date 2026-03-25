@@ -52,6 +52,7 @@ function getConfig(): ContentIndexConfig {
     const enableVectorCacheServer = config.get<boolean>('enableVectorCacheServer', false);
     const vectorCacheServerHost = config.get<string>('vectorCacheServerHost', '0.0.0.0');
     const vectorCacheServerPort = config.get<number>('vectorCacheServerPort', 8952);
+    const vectorCacheMemoryMB = config.get<number>('vectorCacheMemoryMB', 50);
     const remoteEmbeddingServerAddress = config.get<string>('remoteEmbeddingServerAddress', '').trim();
 
     return {
@@ -66,6 +67,7 @@ function getConfig(): ContentIndexConfig {
         enableVectorCacheServer,
         vectorCacheServerHost,
         vectorCacheServerPort,
+        vectorCacheMemoryMB,
         remoteEmbeddingServerAddress,
     };
 }

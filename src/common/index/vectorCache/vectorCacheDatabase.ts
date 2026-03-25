@@ -25,6 +25,7 @@ import { DatabaseSync } from 'node:sqlite';
 export class VectorCacheDatabase {
     private readonly dbPath: string;
     private readonly vectorDimension: number;
+    private readonly cacheSizeMB: number;
     private db: DatabaseSync | null = null;
 
     // Prepared statements — pre-compiled SQL templates that are created
@@ -44,10 +45,15 @@ export class VectorCacheDatabase {
      *
      * @param dbPath — directory where the SQLite database file will be stored.
      * @param vectorDimension — the fixed length of every embedding vector.
+     * @param cacheSizeMB — SQLite page cache size in MB (default: 50).
+     *        Higher values keep more database pages in memory for faster
+     *        lookups. On a dedicated server, set this to the size of the
+     *        database file to keep all vectors in memory.
      */
-    constructor(dbPath: string, vectorDimension: number) {
+    constructor(dbPath: string, vectorDimension: number, cacheSizeMB?: number) {
         this.dbPath = dbPath;
         this.vectorDimension = vectorDimension;
+        this.cacheSizeMB = cacheSizeMB ?? 50;
     }
 
     // ── Lifecycle ───────────────────────────────────────────────────────────
@@ -72,11 +78,15 @@ export class VectorCacheDatabase {
         // and discards any uncommitted partial writes.
         this.db.exec('PRAGMA journal_mode = WAL');
 
-        // Set page cache to ~50MB (12500 pages × 4KB) — enough to keep
-        // the BTree index resident for fast lookups while capping memory.
-        // At 500K entries the index is ~36MB; at 20M entries ~2.4GB, so
-        // 50MB keeps the upper BTree levels cached for fast traversal.
-        this.db.exec('PRAGMA cache_size = 12500');
+        // Set page cache size from the user-configurable cacheSizeMB.
+        // Each page is 4KB, so pages = cacheSizeMB * 1024 / 4 = cacheSizeMB * 256.
+        // Default 50MB = 12,800 pages. On a dedicated server with plenty of
+        // RAM, set this to the database file size to keep all vectors in memory.
+        // A value of 0 skips the pragma and uses the SQLite default (~2MB).
+        if (this.cacheSizeMB > 0) {
+            const cachePages = Math.round(this.cacheSizeMB * 256);
+            this.db.exec(`PRAGMA cache_size = ${cachePages}`);
+        }
 
         // Raise auto-checkpoint threshold to ~15 MB (3840 pages × 4KB)
         // so batch inserts of 100–200 files (~1–5MB each) don't trigger

@@ -190,6 +190,12 @@
           "maximum": 65535,
           "description": "TCP port for the vector cache HTTP server."
         },
+        "vscToolbox.contentIndex.vectorCacheMemoryMB": {
+          "type": "number",
+          "default": 50,
+          "minimum": 0,
+          "description": "Maximum memory (in MB) the vector cache process uses for caching database pages. Higher values keep more vectors in memory for faster lookups. On a dedicated server with plenty of RAM, set this to the size of the vector_cache.db file (in MB) to keep all vectors in memory. Default: 50. Set to 0 to use the SQLite default (~2MB). Requires a content index restart to take effect."
+        },
         "vscToolbox.contentIndex.remoteEmbeddingServerAddress": {
           "type": "string",
           "default": "",

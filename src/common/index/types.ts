@@ -258,6 +258,8 @@ export interface VectorCacheInitRequest {
     httpPort?: number;
     /** Bind address for the HTTP cache server. Default: '0.0.0.0'. */
     httpHost?: string;
+    /** SQLite page cache size in MB. If omitted, uses the default (50MB). */
+    cacheSizeMB?: number;
 }
 
 /** Response sent from VectorCacheHost to VectorCacheClient after init */
@@ -358,6 +360,8 @@ export interface ContentIndexConfig {
     vectorCacheServerHost: string;
     /** TCP port for the vector cache HTTP server */
     vectorCacheServerPort: number;
+    /** Maximum memory (MB) for the vector cache SQLite page cache (0 = SQLite default) */
+    vectorCacheMemoryMB: number;
     /** Base URL of a remote vector cache server for cached embedding lookups */
     remoteEmbeddingServerAddress: string;
 }

@@ -40,6 +40,7 @@ export class VectorCacheClient {
     private readonly vectorDimension: number;
     private readonly httpPort?: number;
     private readonly httpHost?: string;
+    private readonly cacheSizeMB: number;
 
     /**
      * Create a new VectorCacheClient.
@@ -50,13 +51,22 @@ export class VectorCacheClient {
      * @param vectorDimension — dimension of the embedding vectors
      * @param httpPort — optional TCP port for the HTTP cache server (omit to disable)
      * @param httpHost — optional bind address for the HTTP cache server (default: '0.0.0.0')
+     * @param cacheSizeMB — SQLite page cache size in MB (default: 50)
      */
-    constructor(nodePath: string, dbPath: string, vectorDimension: number, httpPort?: number, httpHost?: string) {
+    constructor(
+        nodePath: string,
+        dbPath: string,
+        vectorDimension: number,
+        httpPort?: number,
+        httpHost?: string,
+        cacheSizeMB: number = 50,
+    ) {
         this.nodePath = nodePath;
         this.dbPath = dbPath;
         this.vectorDimension = vectorDimension;
         this.httpPort = httpPort;
         this.httpHost = httpHost;
+        this.cacheSizeMB = cacheSizeMB;
         this.initPromise = this.spawnChild();
     }
 
@@ -154,6 +164,7 @@ export class VectorCacheClient {
                 vectorDimension: this.vectorDimension,
                 httpPort: this.httpPort,
                 httpHost: this.httpHost,
+                cacheSizeMB: this.cacheSizeMB,
             });
         });
     }

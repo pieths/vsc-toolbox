@@ -245,7 +245,7 @@ function respondViaIpc(response: VectorCacheBatchResponse): void {
  */
 async function handleInit(msg: VectorCacheInitRequest): Promise<void> {
     try {
-        db = new VectorCacheDatabase(msg.dbPath, msg.vectorDimension);
+        db = new VectorCacheDatabase(msg.dbPath, msg.vectorDimension, msg.cacheSizeMB);
         const sha256s = await db.open();
 
         bloomFilter = new BloomFilter(BLOOM_FILTER_CAPACITY, BLOOM_FILTER_FPR);

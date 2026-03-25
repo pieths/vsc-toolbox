@@ -105,6 +105,7 @@ export class CacheManager {
      * @param enableVectorCache - If true, create the vector cache client
      * @param vectorCacheHttpPort - If defined, start the HTTP cache server on this port
      * @param vectorCacheHttpHost - Bind address for the HTTP cache server
+     * @param vectorCacheMemoryMB - SQLite page cache size in MB for the vector cache (default: 50)
      * @param remoteEmbeddingServerAddress - Base URL of a remote vector cache server
      */
     async initialize(
@@ -117,6 +118,7 @@ export class CacheManager {
         enableVectorCache: boolean = false,
         vectorCacheHttpPort?: number,
         vectorCacheHttpHost?: string,
+        vectorCacheMemoryMB: number = 50,
         remoteEmbeddingServerAddress: string = '',
     ): Promise<void> {
         this.pathFilter = pathFilter;
@@ -146,6 +148,7 @@ export class CacheManager {
                     this.llamaServer.getDimensions(),
                     vectorCacheHttpPort,
                     vectorCacheHttpHost,
+                    vectorCacheMemoryMB,
                 );
                 log(`Content index: VectorCacheClient created at ${cachePath}`);
             }
