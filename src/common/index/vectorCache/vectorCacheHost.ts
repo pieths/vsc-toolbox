@@ -36,8 +36,8 @@ type ParentMessage = VectorCacheInitRequest | VectorCacheShutdownRequest | Vecto
 
 // ── State ─────────────────────────────────────────────────────────────
 
-/** Bloom filter capacity — 4× headroom over Chromium-scale (~500K chunks). */
-const BLOOM_FILTER_CAPACITY = 2_000_000;
+/** Bloom filter capacity — ~17 MB at 0.1% FPR, sized for large-scale shared caches. */
+const BLOOM_FILTER_CAPACITY = 10_000_000;
 const BLOOM_FILTER_FPR = 0.001; // 0.1% false positive rate
 
 let db: VectorCacheDatabase | null = null;
