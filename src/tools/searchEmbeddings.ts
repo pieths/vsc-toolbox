@@ -142,13 +142,16 @@ export class SearchEmbeddingsTool implements vscode.LanguageModelTool<SearchEmbe
             const enableReranker = vscode.workspace.getConfiguration('vscToolbox')
                 .get<boolean>('enableLlmReranker', false);
             const searchLimit = enableReranker ? 50 : 30;
-            const results: NearestEmbeddingResult[] = await contentIndex.searchEmbeddings(query, searchLimit);
+            const rawResults: NearestEmbeddingResult[] = await contentIndex.searchEmbeddings(query, searchLimit);
 
             if (token.isCancellationRequested) {
                 return new vscode.LanguageModelToolResult([
                     new vscode.LanguageModelTextPart('Search cancelled.')
                 ]);
             }
+
+            // Merge overlapping results within the same file into single combined chunks
+            const results = this.mergeOverlappingResults(rawResults);
 
             // Read file content for each result, caching files to avoid re-reads
             const fileCache = new ScopedFileCache();
@@ -208,6 +211,62 @@ export class SearchEmbeddingsTool implements vscode.LanguageModelTool<SearchEmbe
                 new vscode.LanguageModelTextPart(`Embedding search error: ${message}`)
             ]);
         }
+    }
+
+    /**
+     * Merge overlapping embedding results within the same file into single
+     * combined results. Two results overlap when they share at least one
+     * common line (strictly adjacent ranges are kept separate). The merged
+     * result spans the full union of lines and keeps the highest score from
+     * the group. Results are returned sorted by score descending, matching
+     * the original search-result ordering convention.
+     *
+     * @param results - Raw embedding search results (1-based inclusive line ranges)
+     * @returns Deduplicated results with overlapping ranges merged
+     */
+    private mergeOverlappingResults(results: NearestEmbeddingResult[]): NearestEmbeddingResult[] {
+        // Group results by file path
+        const byFile = new Map<string, NearestEmbeddingResult[]>();
+        for (const r of results) {
+            let group = byFile.get(r.filePath);
+            if (!group) {
+                group = [];
+                byFile.set(r.filePath, group);
+            }
+            group.push(r);
+        }
+
+        const merged: NearestEmbeddingResult[] = [];
+
+        for (const [filePath, fileResults] of byFile) {
+            // Sort by startLine so we can merge in a single pass
+            fileResults.sort((a, b) => a.startLine - b.startLine);
+
+            let curStart = fileResults[0].startLine;
+            let curEnd = fileResults[0].endLine;
+            let curScore = fileResults[0].score;
+
+            for (let i = 1; i < fileResults.length; i++) {
+                const r = fileResults[i];
+                if (r.startLine <= curEnd) {
+                    // Overlapping — extend the current range and keep the best score
+                    curEnd = Math.max(curEnd, r.endLine);
+                    curScore = Math.max(curScore, r.score);
+                } else {
+                    // No overlap — flush the current merged range
+                    merged.push({ filePath, startLine: curStart, endLine: curEnd, score: curScore });
+                    curStart = r.startLine;
+                    curEnd = r.endLine;
+                    curScore = r.score;
+                }
+            }
+            // Flush the last range
+            merged.push({ filePath, startLine: curStart, endLine: curEnd, score: curScore });
+        }
+
+        // Sort by score descending to preserve the "best match first" convention
+        merged.sort((a, b) => b.score - a.score);
+        return merged;
     }
 
     /**
