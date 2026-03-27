@@ -20,6 +20,7 @@ const languageMap: { [key: string]: string } = {
     'cs': 'csharp',
     'go': 'go',
     'rs': 'rust',
+    'md': 'markdown'
 };
 
 /**
