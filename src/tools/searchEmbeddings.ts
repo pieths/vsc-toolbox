@@ -4,12 +4,13 @@
 import * as vscode from 'vscode';
 import {
     ContentIndex,
+    DocumentType,
     NearestEmbeddingResult,
     AttrKey,
     symbolTypeToString,
     CALLABLE_TYPES,
 } from '../common/index';
-import type { IndexSymbol } from '../common/index';
+import type { FileSymbols, IndexSymbol } from '../common/index';
 import { sendRequestWithReadFileAccess } from '../common/copilotUtils';
 import { log } from '../common/logger';
 import { createMarkdownCodeBlock } from '../common/markdownUtils';
@@ -150,8 +151,15 @@ export class SearchEmbeddingsTool implements vscode.LanguageModelTool<SearchEmbe
                 ]);
             }
 
+            // Fetch file symbols for each result
+            const uniquePaths = [...new Set(rawResults.map(r => r.filePath))];
+            const symbolsMap = await contentIndex.getSymbols(uniquePaths);
+
+            // Collapse knowledge base documents to a single overview-range result per file
+            const collapsedResults = this.collapseKnowledgeBaseResults(rawResults, symbolsMap);
+
             // Merge overlapping results within the same file into single combined chunks
-            const results = this.mergeOverlappingResults(rawResults);
+            const results = this.mergeOverlappingResults(collapsedResults);
 
             // Read file content for each result, caching files to avoid re-reads
             const fileCache = new ScopedFileCache();
@@ -174,8 +182,6 @@ export class SearchEmbeddingsTool implements vscode.LanguageModelTool<SearchEmbe
             }
 
             // Fetch container symbols for each result
-            const uniquePaths = [...new Set(results.map(r => r.filePath))];
-            const symbolsMap = await contentIndex.getSymbols(uniquePaths);
             for (const item of resultsWithContext) {
                 const fileSymbols = symbolsMap.get(item.embedding.filePath);
                 if (fileSymbols) {
@@ -211,6 +217,49 @@ export class SearchEmbeddingsTool implements vscode.LanguageModelTool<SearchEmbe
                 new vscode.LanguageModelTextPart(`Embedding search error: ${message}`)
             ]);
         }
+    }
+
+    /**
+     * Collapse all embedding results for KnowledgeBase documents into a single
+     * result per document whose range covers the Overview section.
+     * Non-KnowledgeBase results pass through unchanged.
+     *
+     * Because the input results are already sorted by score descending, the
+     * first hit for each KB file is guaranteed to have the highest score.
+     * Subsequent hits for the same KB file are simply discarded.
+     *
+     * @param results - Embedding search results sorted by score descending
+     * @param symbolsMap - Pre-fetched file symbols keyed by file path
+     * @returns Results with KB documents collapsed to their overview ranges
+     */
+    private collapseKnowledgeBaseResults(
+        results: NearestEmbeddingResult[],
+        symbolsMap: Map<string, FileSymbols>
+    ): NearestEmbeddingResult[] {
+        const seenKbFiles = new Set<string>();
+        const output: NearestEmbeddingResult[] = [];
+
+        for (const r of results) {
+            const fileSymbols = symbolsMap.get(r.filePath);
+            if (fileSymbols?.docType === DocumentType.KnowledgeBase && fileSymbols.overviewRange) {
+                if (seenKbFiles.has(r.filePath)) {
+                    // Already emitted the overview for this KB doc — skip
+                    continue;
+                }
+                seenKbFiles.add(r.filePath);
+                output.push({
+                    filePath: r.filePath,
+                    // overviewRange is 0-based inclusive; convert to 1-based
+                    startLine: fileSymbols.overviewRange.startLine + 1,
+                    endLine: fileSymbols.overviewRange.endLine + 1,
+                    score: r.score,
+                });
+            } else {
+                output.push(r);
+            }
+        }
+
+        return output;
     }
 
     /**
