@@ -102,8 +102,7 @@ function formatResultsForFile(resultsWithContainers: ResultWithContainer[]): str
         markdown += formatContainerHeading(container);
 
         for (const item of containerResults) {
-            const escapedText = item.result.text.replace(/`/g, '\\`');
-            markdown += `${item.result.line + 1}: \`${escapedText}\`\n`;
+            markdown += `${item.result.line + 1}: ${item.result.text}\n`;
         }
 
         markdown += '\n';
