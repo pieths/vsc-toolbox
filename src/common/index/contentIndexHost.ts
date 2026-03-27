@@ -196,7 +196,7 @@ async function handleInit(msg: ContentIndexInitRequest): Promise<void> {
 }
 
 async function handleSearch(msg: ContentIndexSearchRequest): Promise<void> {
-    const { messageId, query, include, exclude } = msg;
+    const { messageId, query, include, exclude, isRegexp } = msg;
 
     try {
         if (!cacheManager || !threadPool || !cacheManager.isReady()) {
@@ -215,7 +215,7 @@ async function handleSearch(msg: ContentIndexSearchRequest): Promise<void> {
             return;
         }
 
-        const outputs = await threadPool.searchAll(query, allFiles);
+        const outputs = await threadPool.searchAll(query, allFiles, isRegexp);
 
         const fileResults: FileSearchResults[] = [];
         const mdFileResults: FileSearchResults[] = [];

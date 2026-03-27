@@ -326,6 +326,10 @@
             "maxResults": {
               "type": "number",
               "description": "Maximum number of files to include in results. Default is 15. Use 0 or -1 for no limit. The total match count is always reported in the summary line regardless of this limit."
+            },
+            "isRegexp": {
+              "type": "boolean",
+              "description": "When true, the query is treated as a single regular expression pattern. No space-separated AND semantics or glob wildcards are applied — the raw regex is matched per-line. Use for character classes, word boundaries, anchoring, or precise alternation that glob cannot express. Default is false (glob mode)."
             }
           },
           "required": [

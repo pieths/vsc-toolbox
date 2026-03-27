@@ -38,6 +38,8 @@ interface SearchIndexParams {
     filter?: string;
     /** Optional maximum number of files to include in results. Defaults to DEFAULT_MAX_FILE_RESULTS. Use 0 or -1 for no limit. */
     maxResults?: number;
+    /** When true, the query is treated as a single regex pattern instead of space-separated glob terms with AND semantics */
+    isRegexp?: boolean;
 }
 
 /**
@@ -239,7 +241,8 @@ export class SearchIndexTool implements vscode.LanguageModelTool<SearchIndexPara
 
             // Perform the search using ContentIndex
             const { include, exclude } = options.input;
-            const searchResult = await contentIndex.getDocumentMatches(query, include, exclude, token);
+            const isRegexp = options.input.isRegexp ?? false;
+            const searchResult = await contentIndex.getDocumentMatches(query, include, exclude, isRegexp, token);
 
             // Check for validation error
             if (searchResult.error) {

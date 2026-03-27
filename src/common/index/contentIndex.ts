@@ -571,6 +571,7 @@ export class ContentIndex {
      * @param query - User search query with glob patterns (* and ?) and space-separated AND terms
      * @param include - Optional comma-separated glob patterns to include only matching file paths
      * @param exclude - Optional comma-separated glob patterns to exclude matching file paths
+     * @param isRegexp - When true, treat query as a single regex pattern
      * @param token - Optional cancellation token
      * @returns SearchResults with per-file results array and optional error
      */
@@ -578,6 +579,7 @@ export class ContentIndex {
         query: string,
         include?: string,
         exclude?: string,
+        isRegexp: boolean = false,
         token?: vscode.CancellationToken
     ): Promise<SearchResults> {
         if (!query.trim()) {
@@ -602,6 +604,7 @@ export class ContentIndex {
                 query,
                 include,
                 exclude,
+                isRegexp,
             });
             return {
                 fileMatches: response.fileMatches,

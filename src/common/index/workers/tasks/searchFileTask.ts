@@ -37,13 +37,17 @@ try {
 /**
  * Search a batch of files in one native call using AND semantics.
  * Only files with matches are included in the returned array.
+ *
+ * @param query - Search query string
+ * @param filePaths - Absolute file paths to search
+ * @param isRegexp - When true, treat query as a single regex pattern
  */
-export function searchFiles(query: string, filePaths: string[]): SearchOutput[] {
+export function searchFiles(query: string, filePaths: string[], isRegexp: boolean): SearchOutput[] {
     if (filePaths.length === 0 || !query || !query.trim()) {
         return [];
     }
 
-    const regexPatterns = parseQueryAsAnd(query);
+    const regexPatterns = isRegexp ? [query.trim()] : parseQueryAsAnd(query);
     if (regexPatterns.length === 0) {
         return [];
     }

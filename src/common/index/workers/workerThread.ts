@@ -42,7 +42,7 @@ process.on('unhandledRejection', (reason) => {
 if (parentPort) {
     parentPort.on('message', async (msg: WorkerBatchRequest) => {
         if (msg.type === 'searchBatch') {
-            const outputs = searchFiles(msg.query, msg.filePaths);
+            const outputs = searchFiles(msg.query, msg.filePaths, msg.isRegexp);
             const response: SearchBatchResponse = {
                 type: 'searchBatch', messageId: msg.messageId, outputs,
             };

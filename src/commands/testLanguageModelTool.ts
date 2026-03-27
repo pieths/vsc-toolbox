@@ -192,8 +192,8 @@ export class TestLanguageModelToolCommand {
             : '';
 
         const query = await vscode.window.showInputBox({
-            prompt: 'Enter search query (space-separated terms are OR\'d, supports * and ? globs)',
-            placeHolder: 'e.g., options*input partSymbols, get?Name',
+            prompt: 'Enter search query (either space-separated AND terms with * and ? globs or prefix with / for regex)',
+            placeHolder: 'e.g., GetSupported*Configs D3D1?, /medialog|mediarecorder',
             value: selectedText,
         });
 
@@ -223,12 +223,17 @@ export class TestLanguageModelToolCommand {
 
         const maxResults = maxResultsStr ? parseInt(maxResultsStr, 10) : undefined;
 
+        // If the query starts with "/" treat it as a regex pattern
+        const isRegexp = query.startsWith('/');
+        const finalQuery = isRegexp ? query.slice(1) : query;
+
         return {
-            query,
+            query: finalQuery,
             include: include || undefined,
             exclude: exclude || undefined,
             filter: filter || undefined,
             maxResults: maxResults !== undefined && !isNaN(maxResults) ? maxResults : undefined,
+            isRegexp,
         };
     }
 

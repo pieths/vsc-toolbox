@@ -198,6 +198,8 @@ export interface SearchBatchRequest {
     query: string;
     /** Absolute file paths to search */
     filePaths: string[];
+    /** When true, treat query as a single regex pattern */
+    isRegexp: boolean;
 }
 
 /** Batch search response sent from a worker thread to ThreadPool */
@@ -387,6 +389,8 @@ export interface ContentIndexSearchRequest {
     query: string;
     include?: string;
     exclude?: string;
+    /** When true, treat query as a single regex pattern */
+    isRegexp: boolean;
 }
 
 /** Get symbols for one or more files */

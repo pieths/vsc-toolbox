@@ -110,9 +110,10 @@ export class ThreadPool {
      *
      * @param query - Glob query string
      * @param filePaths - Absolute file paths to search
+     * @param isRegexp - When true, treat query as a single regex pattern
      * @returns Promise that resolves with search results (only files with matches)
      */
-    async searchAll(query: string, filePaths: string[]): Promise<SearchOutput[]> {
+    async searchAll(query: string, filePaths: string[], isRegexp: boolean): Promise<SearchOutput[]> {
         if (this.disposed || filePaths.length === 0) {
             return [];
         }
@@ -145,7 +146,7 @@ export class ThreadPool {
 
                 worker.on('message', onMessage);
                 const request: SearchBatchRequest = {
-                    type: 'searchBatch', messageId, query, filePaths: chunks[i],
+                    type: 'searchBatch', messageId, query, filePaths: chunks[i], isRegexp,
                 };
                 worker.postMessage(request);
             }
