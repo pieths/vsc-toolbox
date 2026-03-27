@@ -10,7 +10,7 @@ import * as path from 'path';
 import type {
     SearchOutput,
 } from '../../types';
-import { parseQueryAsAnd } from '../../../queryParser';
+import { parseQueryAsAndOr } from '../../../queryParser';
 import { workerLog } from '../workerLogger';
 
 // Load the native addon using an absolute path to the .node file.
@@ -47,7 +47,7 @@ export function searchFiles(query: string, filePaths: string[], isRegexp: boolea
         return [];
     }
 
-    const regexPatterns = isRegexp ? [query.trim()] : parseQueryAsAnd(query);
+    const regexPatterns = isRegexp ? [query.trim()] : parseQueryAsAndOr(query);
     if (regexPatterns.length === 0) {
         return [];
     }
