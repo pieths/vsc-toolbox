@@ -330,6 +330,10 @@
             "isRegexp": {
               "type": "boolean",
               "description": "When true, the query is treated as a single regular expression pattern. No space-separated AND semantics or glob wildcards are applied — the raw regex is matched per-line. Use for character classes, word boundaries, anchoring, or precise alternation that glob cannot express. Default is false (glob mode)."
+            },
+            "contextLines": {
+              "type": "number",
+              "description": "Number of context lines to show before and after each match. Default is 0 (match lines only)."
             }
           },
           "required": [

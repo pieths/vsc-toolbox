@@ -223,6 +223,14 @@ export class TestLanguageModelToolCommand {
 
         const maxResults = maxResultsStr ? parseInt(maxResultsStr, 10) : undefined;
 
+        const contextLinesStr = await vscode.window.showInputBox({
+            prompt: 'Enter number of context lines before and after each match (default 5)',
+            placeHolder: 'e.g., 0, 5, 10',
+            value: '5',
+        });
+
+        const contextLines = contextLinesStr ? parseInt(contextLinesStr, 10) : 5;
+
         // If the query starts with "/" treat it as a regex pattern
         const isRegexp = query.startsWith('/');
         const finalQuery = isRegexp ? query.slice(1) : query;
@@ -234,6 +242,7 @@ export class TestLanguageModelToolCommand {
             filter: filter || undefined,
             maxResults: maxResults !== undefined && !isNaN(maxResults) ? maxResults : undefined,
             isRegexp,
+            contextLines: !isNaN(contextLines) ? contextLines : 5,
         };
     }
 

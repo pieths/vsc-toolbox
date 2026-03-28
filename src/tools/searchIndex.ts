@@ -6,13 +6,16 @@ import * as vscode from 'vscode';
 import {
     ContentIndex,
     FileSearchResults,
+    FileSymbols,
     DocumentType,
     SearchResult,
     IndexSymbol,
     AttrKey,
-    symbolTypeToString
+    symbolTypeToString,
+    CALLABLE_TYPES
 } from '../common/index';
 import { log } from '../common/logger';
+import { createMarkdownCodeBlock } from '../common/markdownUtils';
 import { sendRequestWithReadFileAccess } from '../common/copilotUtils';
 
 /**
@@ -40,6 +43,8 @@ interface SearchIndexParams {
     maxResults?: number;
     /** When true, the query is treated as a single regex pattern instead of space-separated glob terms with AND semantics */
     isRegexp?: boolean;
+    /** Number of context lines to show before and after each match. Context is bounded by enclosing code structure. Default is 0 (no context). */
+    contextLines?: number;
 }
 
 /**
@@ -73,17 +78,113 @@ function formatContainerHeading(container: IndexSymbol | null): string {
     return `### [in ${kind}] ${fqn} (lines ${container.startLine + 1}-${container.endLine + 1})\n\n`;
 }
 
+function formatResultsForContainer(
+    results: ResultWithContainer[]
+): string {
+    let markdown = '';
+    const container = results[0].container;
+
+    markdown += formatContainerHeading(container);
+
+    for (const item of results) {
+        markdown += `${item.result.line + 1}: ${item.result.text}\n`;
+    }
+
+    markdown += '\n';
+    return markdown;
+}
+
+function formatResultsForContainerWithContext(
+    results: ResultWithContainer[],
+    fileLines: string[],
+    filePath: string,
+    fileSymbols: FileSymbols,
+    numContextLines: number
+): string {
+    let markdown = '';
+    const container = results[0].container;
+
+    markdown += formatContainerHeading(container);
+
+    // Build line ranges for each result, clamped to safe context bounds.
+    const ranges: { start: number; end: number }[] = results.map(item => {
+        const line = item.result.line;
+        const { minLine, maxLine } = fileSymbols.getBoundsDelimitedBySymbols(line, fileLines.length);
+        const start = Math.max(line - numContextLines, minLine);
+        const end = Math.min(line + numContextLines, maxLine);
+        return { start, end };
+    });
+
+    // Merge overlapping or adjacent ranges into sections.
+    const sections: { start: number; end: number }[] = [];
+    let current = ranges[0];
+    for (let i = 1; i < ranges.length; i++) {
+        if (ranges[i].start <= current.end + 1) {
+            // Overlapping or adjacent — extend the current section
+            current = {
+                start: current.start,
+                end: Math.max(current.end, ranges[i].end)
+            };
+        } else {
+            sections.push(current);
+            current = ranges[i];
+        }
+    }
+    sections.push(current);
+
+    // For CALLABLE containers, if the first section starts after
+    // the container header end line, prepend the signature.
+    if (container && CALLABLE_TYPES.has(container.type)) {
+        const headerEndLine = container.attrs.get(AttrKey.ContainerHeaderEndLine);
+        if (headerEndLine !== undefined && sections[0].start > headerEndLine) {
+            const signature = container.attrs.get(AttrKey.Signature);
+            if (signature) {
+                markdown += `${signature}\n\n`;
+            }
+        }
+    }
+
+    // Render each section as a code block.
+    for (const { start, end } of sections) {
+        // Display 1-based line numbers in the prefix
+        markdown += `Lines ${start + 1}-${end + 1}:\n`;
+        const codeBlock = createMarkdownCodeBlock(
+            fileLines,
+            new vscode.Range(start, 0, end, 0),
+            filePath
+        );
+        markdown += codeBlock.join('\n') + '\n\n';
+    }
+
+    return markdown;
+}
+
 /**
  * Format search results for a standard (non-knowledge-base) file,
  * grouped by container.
  *
- * @param resultsWithContainers - Line matches with their container symbols
+ * @param fsr - File search results to format
+ * @param fileSymbols - Parsed symbols for the file (for container lookup)
+ * @param numContextLines - Number of context lines to show around each match
  * @returns Formatted Markdown string for this file's results
  */
-function formatResultsForFile(resultsWithContainers: ResultWithContainer[]): string {
+async function formatResultsForFile(
+    fsr: FileSearchResults,
+    fileSymbols: FileSymbols | undefined,
+    numContextLines: number
+): Promise<string> {
     let markdown = '';
 
-    // Group results by container within this file
+    // Resolve containers and build ResultWithContainer entries
+    const resultsWithContainers: ResultWithContainer[] = fsr.results.map(result => ({
+        result,
+        container: fileSymbols?.getContainer(result.line) ?? null
+    }));
+
+    // Sort by line number
+    resultsWithContainers.sort((a, b) => a.result.line - b.result.line);
+
+    // Group results by container
     const byContainer = new Map<string, ResultWithContainer[]>();
     const containerOrder: string[] = [];
 
@@ -96,18 +197,35 @@ function formatResultsForFile(resultsWithContainers: ResultWithContainer[]): str
         byContainer.get(key)!.push(item);
     }
 
+    let fileLines: string[] | null = null;
+
     // Output results grouped by container
     for (const key of containerOrder) {
         const containerResults = byContainer.get(key)!;
-        const container = containerResults[0].container;
 
-        markdown += formatContainerHeading(container);
+        if (numContextLines > 1 && fileSymbols) {
+            if (!fileLines) {
+                try {
+                    const content = await fs.promises.readFile(fsr.filePath, 'utf8');
+                    fileLines = content.split('\n');
+                } catch {
+                    // If the file could not be read then fallback
+                    // to formatting the results without context.
+                    markdown += formatResultsForContainer(containerResults);
+                    fileLines = null;
+                    continue;
+                }
+            }
 
-        for (const item of containerResults) {
-            markdown += `${item.result.line + 1}: ${item.result.text}\n`;
+            markdown += formatResultsForContainerWithContext(
+                containerResults,
+                fileLines,
+                fsr.filePath,
+                fileSymbols,
+                numContextLines);
+        } else {
+            markdown += formatResultsForContainer(containerResults);
         }
-
-        markdown += '\n';
     }
 
     return markdown;
@@ -145,17 +263,19 @@ function formatResultsForKnowledgeBaseDoc(fsr: FileSearchResults): string {
  * Knowledge base documents show the Overview section text.
  *
  * @param fileResults - Array of per-file search results
- * @param containersByFile - Map from file path to per-result containers
+ * @param symbolsByFile - Map from file path to FileSymbols
  * @param query - Original search query
  * @param maxFileResults - Maximum number of files to show (0 or -1 for no limit)
+ * @param numContextLines - Number of context lines to show around each match
  * @returns Formatted Markdown string
  */
-function formatResults(
+async function formatResults(
     fileResults: FileSearchResults[],
-    containersByFile: Map<string, (IndexSymbol | null)[]>,
+    symbolsByFile: Map<string, FileSymbols>,
     query: string,
-    maxFileResults: number
-): string {
+    maxFileResults: number,
+    numContextLines: number = 0
+): Promise<string> {
     if (fileResults.length === 0) {
         return `No matches found for: \`${query}\``;
     }
@@ -184,16 +304,10 @@ function formatResults(
         if (fsr.docType === DocumentType.KnowledgeBase) {
             markdown += formatResultsForKnowledgeBaseDoc(fsr);
         } else {
-            const containers = containersByFile.get(fsr.filePath) ?? [];
-            const resultsWithContainers: ResultWithContainer[] = fsr.results.map((result, i) => ({
-                result,
-                container: containers[i] ?? null
-            }));
-
-            // Sort by line number
-            resultsWithContainers.sort((a, b) => a.result.line - b.result.line);
-
-            markdown += formatResultsForFile(resultsWithContainers);
+            markdown += await formatResultsForFile(
+                fsr,
+                symbolsByFile.get(fsr.filePath),
+                numContextLines);
         }
     }
 
@@ -265,16 +379,6 @@ export class SearchIndexTool implements vscode.LanguageModelTool<SearchIndexPara
             const uniqueStandardPaths = [...new Set(standardFiles.map(f => f.filePath))];
             const symbolsMap = await contentIndex.getSymbols(uniqueStandardPaths);
 
-            // Build a map from file path → per-result containers
-            const containersByFile = new Map<string, (IndexSymbol | null)[]>();
-            for (const fsr of standardFiles) {
-                const fileSymbols = symbolsMap.get(fsr.filePath);
-                const fileContainers: (IndexSymbol | null)[] = fsr.results.map(r =>
-                    fileSymbols?.getContainer(r.line) ?? null
-                );
-                containersByFile.set(fsr.filePath, fileContainers);
-            }
-
             // Check for cancellation
             if (token.isCancellationRequested) {
                 return new vscode.LanguageModelToolResult([
@@ -289,9 +393,10 @@ export class SearchIndexTool implements vscode.LanguageModelTool<SearchIndexPara
 
             // Resolve maxResults: use provided value or fall back to default
             const maxResults = options.input.maxResults ?? DEFAULT_MAX_FILE_RESULTS;
+            const contextLines = options.input.contextLines ?? 0;
 
             // Format and return results
-            const markdown = formatResults(fileResults, containersByFile, query, maxResults);
+            const markdown = await formatResults(fileResults, symbolsMap, query, maxResults, contextLines);
 
             // Filter results using AI if a filter is provided
             const { filter } = options.input;
