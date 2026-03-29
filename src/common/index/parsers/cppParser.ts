@@ -313,7 +313,12 @@ function extractScope(node: SyntaxNode): string | undefined {
 function buildSignature(node: SyntaxNode): string {
     const funcDecl = findFunctionDeclarator(node);
     if (!funcDecl) return '';
-    return node.text.substring(0, funcDecl.endIndex - node.startIndex).replace(/\s+/g, ' ').trim();
+    return node.text
+        .substring(0, funcDecl.endIndex - node.startIndex)
+        .replace(/\s+/g, ' ')
+        .replace(/\(\s+/g, '(')
+        .replace(/\s+\)/g, ')')
+        .trim();
 }
 
 /**

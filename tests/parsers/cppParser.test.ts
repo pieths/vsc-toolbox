@@ -8,6 +8,9 @@
  *   parseCst()      — CST → raw symbol arrays
  *   readIndex()     — raw symbol arrays → IndexSymbol[]
  *   computeChunks() — source lines + symbols → Chunk[]
+ *
+ * This test can be run from the command line with:
+ * npx tsc -p tsconfig.test.json; node --test out-test/tests/parsers/cppParser.test.js
  */
 
 import { describe, it, before } from 'node:test';
@@ -1013,7 +1016,7 @@ describe('out-of-line method with template argument', () => {
             SymbolType.Function, 'TestMethod', 2, 0, 6, 1, 2, 16, 2, 26, [
             [AttrKey.Scope, 'ns::TestClass'],
             [AttrKey.FullyQualifiedName, 'ns::TestClass::TestMethod'],
-            [AttrKey.Signature, 'void TestClass::TestMethod( const std::string& key, base::OnceCallback<void(Service::StatusCallback)> task)'],
+            [AttrKey.Signature, 'void TestClass::TestMethod(const std::string& key, base::OnceCallback<void(Service::StatusCallback)> task)'],
             [AttrKey.ContainerHeaderEndLine, 4],
             [AttrKey.ContainerHeaderEndColumn, 60],
         ]);
@@ -1044,7 +1047,7 @@ describe('out-of-line method with return type on previous line', () => {
             SymbolType.Function, 'TestMethod', 2, 1, 8, 1, 3, 11, 3, 21, [
             [AttrKey.Scope, 'ns::TestClass'],
             [AttrKey.FullyQualifiedName, 'ns::TestClass::TestMethod'],
-            [AttrKey.Signature, 'std::string& TestClass::TestMethod( const std::string& key, base::OnceCallback<void(Service::StatusCallback)> task)'],
+            [AttrKey.Signature, 'std::string& TestClass::TestMethod(const std::string& key, base::OnceCallback<void(Service::StatusCallback)> task)'],
             [AttrKey.ContainerHeaderEndLine, 5],
             [AttrKey.ContainerHeaderEndColumn, 60],
         ]);
