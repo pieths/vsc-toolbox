@@ -211,7 +211,33 @@ async function handleSearch(msg: ContentIndexSearchRequest): Promise<void> {
 
         const allFiles = cacheManager.getAllPaths(include, exclude);
         if (allFiles.length === 0) {
-            process.send?.({ type: 'search', messageId, fileMatches: [] });
+            const dirs = pathFilter?.getIncludePaths() ?? [];
+            const exts = pathFilter?.getFileExtensions() ?? [];
+
+            const dirList = dirs.length > 0 ? dirs.map(d => `  - ${d}`).join('\n') : '  (none)';
+            const extList = exts.length > 0 ? exts.map(e => `  - ${e}`).join('\n') : '  (none)';
+
+            const lines: string[] = [
+                'No indexed files matched the requested path filters.\n',
+                'The content index includes files in these directories:\n', dirList,
+                '\nand only includes files with these extensions:\n', extList,
+            ];
+
+            if (include) {
+                lines.push(`\nThe include pattern "${include}" did not match any of the indexed files.`);
+            }
+            if (exclude) {
+                lines.push(`\nThe exclude pattern "${exclude}" may have filtered out all remaining files.`);
+            }
+
+            lines.push(
+                '\nTry broadening the include/exclude filters or'
+                + ' check that the target directory is part of'
+                + ' the content index configuration.',
+            );
+
+            const error = lines.join('\n');
+            process.send?.({ type: 'search', messageId, fileMatches: [], error });
             return;
         }
 
