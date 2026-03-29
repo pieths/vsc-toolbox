@@ -303,13 +303,13 @@
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "search-index",
         "userDescription": "Search for patterns across indexed content",
-        "modelDescription": "Fast full-text search across indexed content. Space-separated terms use AND semantics (all must match somewhere in the file). Supports glob wildcards (* and ?), OR groups with (termA|termB) syntax, and optional regex mode. Returns matching lines grouped by file with line numbers and container context.",
+        "modelDescription": "Fast full-text search across indexed content. Space-separated terms use AND semantics (all must match somewhere in the file). Supports glob wildcards (* and ?), OR groups with (termA|termB) syntax, and optional regex mode. Returns matching lines grouped by file with line numbers and container context. Tip: After an initial broad search identifies key symbol names, follow up with OR-grouped queries combining those symbols, with contextLines=5 (or 10), to efficiently gather detailed context in a single call to reduce the number of follow-up read file calls.",
         "inputSchema": {
           "type": "object",
           "properties": {
             "query": {
               "type": "string",
-              "description": "Search query. Space-separated terms use AND semantics (all must match somewhere in the file). Supports * (zero or more chars) and ? (single char) glob wildcards. Use (termA|termB) to match files containing either alternative. Examples: 'foo bar' (files with both foo AND bar matches), 'Get*Configs D3D1?' (two glob terms; both must match some where in the file), '(video_codec|audio_codec) MediaLogProperty' (either video_codec or audio_codec AND MediaLogProperty), '(HEVC*|AV1*) GetSupported*' (either of the two profile prefixes AND GetSupported*)."
+              "description": "Search query. Space-separated terms use AND semantics (all must match somewhere in the file). Supports * (zero or more chars) and ? (single char) glob wildcards. Use (termA|termB) to match files containing either alternative. This is particularly effective when you already know multiple related symbol names and want to locate all of them in a single query rather than making separate calls. Examples: 'foo bar' (files with both foo AND bar matches), 'Get*Configs D3D1?' (two glob terms; both must match some where in the file), '(video_codec|audio_codec) MediaLogProperty' (either video_codec or audio_codec AND MediaLogProperty), '(HEVC*|AV1*) GetSupported*' (either of the two profile prefixes AND GetSupported*)."
             },
             "include": {
               "type": "string",
@@ -333,7 +333,7 @@
             },
             "contextLines": {
               "type": "number",
-              "description": "Number of context lines to show before and after each match. Default is 0 (match lines only)."
+              "description": "Number of context lines to show before and after each match. Default is 0 (match lines only). Recommended: use 5-10 context lines when matches are expected to be few (<10 files), to avoid needing follow-up read_file calls. Use 0 when doing broad surveys with many expected matches to keep output compact."
             }
           },
           "required": [
