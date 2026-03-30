@@ -23,6 +23,7 @@ let nativeSearchFiles: (
     patterns: string[],
     unicode: boolean,
     includeLines: boolean,
+    caseInsensitive: boolean,
 ) => Array<{ filePath: string; lines: Array<{ line: number; text: string }> }>;
 
 try {
@@ -56,7 +57,13 @@ export function searchFiles(query: string, filePaths: string[], isRegexp: boolea
         // Call native addon
         // unicode=false for performance (source code is predominantly ASCII)
         // includeLines=true to return full line text with results
-        const nativeResults = nativeSearchFiles(filePaths, regexPatterns, false, true);
+        const nativeResults = nativeSearchFiles(
+            filePaths,
+            regexPatterns,
+            /*unicode=*/ false,
+            /*includeLines=*/ true,
+            /*caseInsensitive=*/ !isRegexp,
+        );
 
         // Only files with matches are returned by the native addon.
         // Convert from 1-based (native addon) to 0-based line numbers.
