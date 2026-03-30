@@ -389,10 +389,21 @@ export class SearchIndexTool implements vscode.LanguageModelTool<SearchIndexPara
             const totalMatches = fileResults.reduce((sum, f) => sum + f.results.length, 0);
             const elapsed = Date.now() - startTime;
             const fileCount = contentIndex.getFileCount();
-            log(`Content search: Query "${query}" completed in ${elapsed}ms (${totalMatches} matches in ${fileCount} files)`);
 
             // Resolve maxResults: use provided value or fall back to default
             const maxResults = options.input.maxResults ?? DEFAULT_MAX_FILE_RESULTS;
+
+            log(
+                `Content search completed in ${elapsed}ms\n` +
+                `   query: "${query}"\n` +
+                `   isRegexp: ${isRegexp}\n` +
+                `   include: ${include ?? '(none)'}\n` +
+                `   exclude: ${exclude ?? '(none)'}\n` +
+                `   filter: ${options.input.filter ?? '(none)'}\n` +
+                `   maxResults: ${maxResults}\n` +
+                `   contextLines: ${options.input.contextLines ?? 0}\n` +
+                `   results: ${totalMatches} matches in ${fileResults.length} files (${fileCount} files indexed)`
+            );
             const contextLines = options.input.contextLines ?? 0;
 
             // Format and return results
