@@ -111,6 +111,29 @@ const GET_CONTAINER_TOOL: vscode.LanguageModelChatTool = {
     }
 };
 
+/** Cached search index tool definition (lazy-initialized from package.json) */
+let cachedSearchIndexTool: vscode.LanguageModelChatTool | undefined;
+
+/**
+ * Get the search index tool definition, built from package.json on first call.
+ * The 'filter' property is excluded to prevent recursive loops.
+ */
+function getSearchIndexTool(): vscode.LanguageModelChatTool {
+    if (!cachedSearchIndexTool) {
+        const ext = vscode.extensions.getExtension('pieths.vsc-toolbox')!;
+        const tools = ext.packageJSON.contributes.languageModelTools;
+        const def = tools.find((t: any) => t.name === 'searchIndex');
+        const inputSchema = JSON.parse(JSON.stringify(def.inputSchema));
+        delete inputSchema.properties.filter;
+        cachedSearchIndexTool = {
+            name: def.name,
+            description: def.modelDescription,
+            inputSchema
+        };
+    }
+    return cachedSearchIndexTool;
+}
+
 /**
  * Execute the readFileLines tool using a scoped cache
  */
@@ -364,7 +387,7 @@ export async function sendRequestWithReadFileAccess(
     while (toolCallCount < maxToolCalls) {
         const response = await resolvedModel.sendRequest(
             messages,
-            { tools: [READ_FILE_TOOL, FILE_GLOB_TOOL, GET_CONTAINER_TOOL] },
+            { tools: [READ_FILE_TOOL, FILE_GLOB_TOOL, GET_CONTAINER_TOOL, getSearchIndexTool()] },
             token
         );
 
@@ -418,6 +441,16 @@ export async function sendRequestWithReadFileAccess(
                 const result = await executeGetContainerTool(input);
                 toolResults.push(new vscode.LanguageModelToolResultPart(toolCall.callId, [
                     new vscode.LanguageModelTextPart(result)
+                ]));
+            } else if (toolCall.name === 'searchIndex') {
+                const input = toolCall.input as Record<string, unknown>;
+                log(`Agent requested search index: query="${input.query}"`);
+                const result = await vscode.lm.invokeTool('searchIndex', { input, toolInvocationToken: undefined as any }, token);
+                const text = result.content
+                    .map(part => part instanceof vscode.LanguageModelTextPart ? part.value : '')
+                    .join('');
+                toolResults.push(new vscode.LanguageModelToolResultPart(toolCall.callId, [
+                    new vscode.LanguageModelTextPart(text)
                 ]));
             }
         }
