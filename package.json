@@ -347,7 +347,7 @@
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "search-embeddings",
         "userDescription": "Semantic search across indexed content using embeddings",
-        "modelDescription": "Perform semantic search across indexed content using embedding vectors. Takes a natural language or code query and returns the nearest 30 matching chunks ranked by cosine similarity. Each result includes the file path, line range, similarity score, and the actual source lines. Use this for finding semantically related code or content even when exact keywords don't match. Query quality significantly impacts results — craft detailed, specific queries rather than short or vague ones.",
+        "modelDescription": "Perform semantic search across indexed content using embedding vectors. Takes a natural language or code query and returns the nearest 30 matching chunks ranked by cosine similarity. Each result includes the file path, line range, similarity score, and the actual source lines. Use this for finding semantically related code or content even when exact keywords don't match. Query quality significantly impacts results — craft detailed, specific queries rather than short or vague ones. This is recommended for the initial broad search when you aren't exactly sure where to start looking.",
         "inputSchema": {
           "type": "object",
           "properties": {
