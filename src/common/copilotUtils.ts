@@ -212,6 +212,55 @@ async function executeFileGlobTool(
     }
 }
 
+async function executeTools(
+    toolCalls: vscode.LanguageModelToolCallPart[],
+    cache: ScopedFileCache,
+    token: vscode.CancellationToken
+): Promise<vscode.LanguageModelToolResultPart[]> {
+    const toolResults: vscode.LanguageModelToolResultPart[] = [];
+    for (const toolCall of toolCalls) {
+        if (toolCall.name === 'readFileLines') {
+            const input = toolCall.input as { filePath: string; startLine?: number; endLine?: number };
+            const lineRange = input.startLine
+                ? `lines ${input.startLine}-${input.endLine ?? 'end'}`
+                : 'all lines';
+            log(`Agent requested file read: ${input.filePath} (${lineRange})`);
+            const result = await executeReadFileTool(input, cache);
+            toolResults.push(new vscode.LanguageModelToolResultPart(toolCall.callId, [
+                new vscode.LanguageModelTextPart(result)
+            ]));
+        } else if (toolCall.name === 'searchFileByGlob') {
+            const input = toolCall.input as { filePath: string; query: string };
+            log(`Agent requested glob search: ${input.filePath} (pattern: ${input.query})`);
+            const result = await executeFileGlobTool(input, cache);
+            toolResults.push(new vscode.LanguageModelToolResultPart(toolCall.callId, [
+                new vscode.LanguageModelTextPart(result)
+            ]));
+        } else if (toolCall.name === 'searchIndex') {
+            const input = toolCall.input as Record<string, unknown>;
+            log(`Agent requested search index: query="${input.query}"`);
+            const result = await vscode.lm.invokeTool('searchIndex', { input, toolInvocationToken: undefined as any }, token);
+            const text = result.content
+                .map(part => part instanceof vscode.LanguageModelTextPart ? part.value : '')
+                .join('');
+            toolResults.push(new vscode.LanguageModelToolResultPart(toolCall.callId, [
+                new vscode.LanguageModelTextPart(text)
+            ]));
+        } else if (toolCall.name === 'searchEmbeddings') {
+            const input = toolCall.input as Record<string, unknown>;
+            log(`Agent requested search embeddings: query="${input.query}"`);
+            const result = await vscode.lm.invokeTool('searchEmbeddings', { input, toolInvocationToken: undefined as any }, token);
+            const text = result.content
+                .map(part => part instanceof vscode.LanguageModelTextPart ? part.value : '')
+                .join('');
+            toolResults.push(new vscode.LanguageModelToolResultPart(toolCall.callId, [
+                new vscode.LanguageModelTextPart(text)
+            ]));
+        }
+    }
+    return toolResults;
+}
+
 /**
  * Log all available language models to the output channel.
  * Useful for discovering model family strings.
@@ -367,48 +416,8 @@ export async function sendRequestWithReadFileAccess(
         ));
 
         // Execute each tool and add results
-        const toolResults: vscode.LanguageModelToolResultPart[] = [];
-        for (const toolCall of toolCalls) {
-            toolCallCount++;
-            if (toolCall.name === 'readFileLines') {
-                const input = toolCall.input as { filePath: string; startLine?: number; endLine?: number };
-                const lineRange = input.startLine
-                    ? `lines ${input.startLine}-${input.endLine ?? 'end'}`
-                    : 'all lines';
-                log(`Agent requested file read: ${input.filePath} (${lineRange})`);
-                const result = await executeReadFileTool(input, cache);
-                toolResults.push(new vscode.LanguageModelToolResultPart(toolCall.callId, [
-                    new vscode.LanguageModelTextPart(result)
-                ]));
-            } else if (toolCall.name === 'searchFileByGlob') {
-                const input = toolCall.input as { filePath: string; query: string };
-                log(`Agent requested glob search: ${input.filePath} (pattern: ${input.query})`);
-                const result = await executeFileGlobTool(input, cache);
-                toolResults.push(new vscode.LanguageModelToolResultPart(toolCall.callId, [
-                    new vscode.LanguageModelTextPart(result)
-                ]));
-            } else if (toolCall.name === 'searchIndex') {
-                const input = toolCall.input as Record<string, unknown>;
-                log(`Agent requested search index: query="${input.query}"`);
-                const result = await vscode.lm.invokeTool('searchIndex', { input, toolInvocationToken: undefined as any }, token);
-                const text = result.content
-                    .map(part => part instanceof vscode.LanguageModelTextPart ? part.value : '')
-                    .join('');
-                toolResults.push(new vscode.LanguageModelToolResultPart(toolCall.callId, [
-                    new vscode.LanguageModelTextPart(text)
-                ]));
-            } else if (toolCall.name === 'searchEmbeddings') {
-                const input = toolCall.input as Record<string, unknown>;
-                log(`Agent requested search embeddings: query="${input.query}"`);
-                const result = await vscode.lm.invokeTool('searchEmbeddings', { input, toolInvocationToken: undefined as any }, token);
-                const text = result.content
-                    .map(part => part instanceof vscode.LanguageModelTextPart ? part.value : '')
-                    .join('');
-                toolResults.push(new vscode.LanguageModelToolResultPart(toolCall.callId, [
-                    new vscode.LanguageModelTextPart(text)
-                ]));
-            }
-        }
+        toolCallCount += toolCalls.length;
+        const toolResults = await executeTools(toolCalls, cache, token);
 
         // Add tool results as a user message
         messages.push(vscode.LanguageModelChatMessage.User(toolResults));
