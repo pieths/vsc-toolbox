@@ -261,6 +261,17 @@ async function executeTools(
     return toolResults;
 }
 
+export type AgentTool = 'readFile' | 'fileGlob' | 'searchIndex' | 'searchEmbeddings';
+
+const TOOL_MAP: Record<AgentTool, () => vscode.LanguageModelChatTool> = {
+    readFile: () => READ_FILE_TOOL,
+    fileGlob: () => FILE_GLOB_TOOL,
+    searchIndex: () => getSearchIndexTool(),
+    searchEmbeddings: () => getSearchEmbeddingsTool(),
+};
+
+const ALL_AGENT_TOOLS = Object.keys(TOOL_MAP) as AgentTool[];
+
 /**
  * Log all available language models to the output channel.
  * Useful for discovering model family strings.
@@ -363,7 +374,8 @@ export async function sendSingleRequest(
  * @param text - The text to send to the model
  * @param cancellationToken - Optional cancellation token
  * @param maxToolCalls - Maximum number of tool calls to allow (default: 1000)
- * @param fileCache - Optional file cache to reuse; if not provided, a new one is created
+ * @param fileCache - File cache to reuse, or null to create a new one
+ * @param enabledTools - Which tools to make available, or null for all
  * @returns The model's final response as a string
  */
 export async function sendRequestWithReadFileAccess(
@@ -371,7 +383,8 @@ export async function sendRequestWithReadFileAccess(
     text: string,
     cancellationToken?: vscode.CancellationToken,
     maxToolCalls: number = 1000,
-    fileCache?: ScopedFileCache
+    fileCache: ScopedFileCache | null = null,
+    enabledTools: AgentTool[] | null = null
 ): Promise<string> {
     const resolvedModel = model ?? await getDefaultModel();
 
@@ -383,12 +396,13 @@ export async function sendRequestWithReadFileAccess(
 
     const token = cancellationToken ?? new vscode.CancellationTokenSource().token;
     const cache = fileCache ?? new ScopedFileCache();
+    const tools = (enabledTools ?? ALL_AGENT_TOOLS).map(t => TOOL_MAP[t]());
     let toolCallCount = 0;
 
     while (toolCallCount < maxToolCalls) {
         const response = await resolvedModel.sendRequest(
             messages,
-            { tools: [READ_FILE_TOOL, FILE_GLOB_TOOL, getSearchIndexTool(), getSearchEmbeddingsTool()] },
+            { tools },
             token
         );
 
