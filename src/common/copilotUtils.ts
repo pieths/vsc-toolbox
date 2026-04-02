@@ -114,6 +114,9 @@ const GET_CONTAINER_TOOL: vscode.LanguageModelChatTool = {
 /** Cached search index tool definition (lazy-initialized from package.json) */
 let cachedSearchIndexTool: vscode.LanguageModelChatTool | undefined;
 
+/** Cached search embeddings tool definition (lazy-initialized from package.json) */
+let cachedSearchEmbeddingsTool: vscode.LanguageModelChatTool | undefined;
+
 /**
  * Get the search index tool definition, built from package.json on first call.
  * The 'filter' property is excluded to prevent recursive loops.
@@ -132,6 +135,23 @@ function getSearchIndexTool(): vscode.LanguageModelChatTool {
         };
     }
     return cachedSearchIndexTool;
+}
+
+/**
+ * Get the search embeddings tool definition, built from package.json on first call.
+ */
+function getSearchEmbeddingsTool(): vscode.LanguageModelChatTool {
+    if (!cachedSearchEmbeddingsTool) {
+        const ext = vscode.extensions.getExtension('pieths.vsc-toolbox')!;
+        const tools = ext.packageJSON.contributes.languageModelTools;
+        const def = tools.find((t: any) => t.name === 'searchEmbeddings');
+        cachedSearchEmbeddingsTool = {
+            name: def.name,
+            description: def.modelDescription,
+            inputSchema: JSON.parse(JSON.stringify(def.inputSchema))
+        };
+    }
+    return cachedSearchEmbeddingsTool;
 }
 
 /**
@@ -387,7 +407,7 @@ export async function sendRequestWithReadFileAccess(
     while (toolCallCount < maxToolCalls) {
         const response = await resolvedModel.sendRequest(
             messages,
-            { tools: [READ_FILE_TOOL, FILE_GLOB_TOOL, GET_CONTAINER_TOOL, getSearchIndexTool()] },
+            { tools: [READ_FILE_TOOL, FILE_GLOB_TOOL, GET_CONTAINER_TOOL, getSearchIndexTool(), getSearchEmbeddingsTool()] },
             token
         );
 
@@ -446,6 +466,16 @@ export async function sendRequestWithReadFileAccess(
                 const input = toolCall.input as Record<string, unknown>;
                 log(`Agent requested search index: query="${input.query}"`);
                 const result = await vscode.lm.invokeTool('searchIndex', { input, toolInvocationToken: undefined as any }, token);
+                const text = result.content
+                    .map(part => part instanceof vscode.LanguageModelTextPart ? part.value : '')
+                    .join('');
+                toolResults.push(new vscode.LanguageModelToolResultPart(toolCall.callId, [
+                    new vscode.LanguageModelTextPart(text)
+                ]));
+            } else if (toolCall.name === 'searchEmbeddings') {
+                const input = toolCall.input as Record<string, unknown>;
+                log(`Agent requested search embeddings: query="${input.query}"`);
+                const result = await vscode.lm.invokeTool('searchEmbeddings', { input, toolInvocationToken: undefined as any }, token);
                 const text = result.content
                     .map(part => part instanceof vscode.LanguageModelTextPart ? part.value : '')
                     .join('');
