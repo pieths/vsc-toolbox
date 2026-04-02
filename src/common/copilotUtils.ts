@@ -5,8 +5,6 @@ import * as vscode from 'vscode';
 import { ScopedFileCache } from './scopedFileCache';
 import { log } from './logger';
 import { parseQueryAsOr } from './queryParser';
-import { ContentIndex } from './index';
-import { symbolTypeToString, AttrKey } from './index';
 
 /**
  * Utility functions for sending text to a Copilot language model.
@@ -86,28 +84,6 @@ const FILE_GLOB_TOOL: vscode.LanguageModelChatTool = {
             }
         },
         required: ['filePath', 'query']
-    }
-};
-
-/**
- * Tool definition for getting the container at a specific line
- */
-const GET_CONTAINER_TOOL: vscode.LanguageModelChatTool = {
-    name: 'getContainer',
-    description: 'Get the innermost container (function, class, namespace, etc.) that contains a specific line in a file. Returns details about the container including its type, fully qualified name, and line range (1-based).',
-    inputSchema: {
-        type: 'object',
-        properties: {
-            filePath: {
-                type: 'string',
-                description: 'Absolute path of the file in URI file: format'
-            },
-            line: {
-                type: 'number',
-                description: 'Line number (1-based) to find the container for'
-            }
-        },
-        required: ['filePath', 'line']
     }
 };
 
@@ -233,50 +209,6 @@ async function executeFileGlobTool(
     } catch (error: any) {
         log(`Error searching file "${input.filePath}" with pattern "${input.query}": ${error.message}`);
         return `Error searching file: ${error.message}`;
-    }
-}
-
-/**
- * Execute the getContainer tool
- */
-async function executeGetContainerTool(
-    input: {
-        filePath: string;
-        line: number;
-    }
-): Promise<string> {
-    try {
-        // Normalize the file path - handle both URI format and regular paths
-        let normalizedPath = input.filePath;
-        if (input.filePath.startsWith('file://')) {
-            // Parse as URI and get the file system path
-            normalizedPath = vscode.Uri.parse(input.filePath).fsPath;
-        }
-
-        const contentIndex = ContentIndex.getInstance();
-        // Tool API uses 1-based lines; getContainer expects 0-based
-        const symbolsMap = await contentIndex.getSymbols([normalizedPath]);
-        const fileSymbols = symbolsMap.get(normalizedPath);
-        const container = fileSymbols?.getContainer(input.line - 1) ?? null;
-
-        const header = `File: \`${input.filePath}\`. Line ${input.line}. Container:`;
-
-        if (!container) {
-            return `${header}\n(no container found at this line)`;
-        }
-
-        const fqn = container.attrs.get(AttrKey.FullyQualifiedName) ?? container.name;
-        const details = [
-            `Type: ${symbolTypeToString(container.type)}`,
-            `Fully Qualified Name: ${fqn}`,
-            `Start Line: ${container.startLine + 1}`,
-            `End Line: ${container.endLine + 1}`
-        ];
-
-        return `${header}\n${details.join('\n')}`;
-    } catch (error: any) {
-        log(`Error getting container for "${input.filePath}" at line ${input.line}: ${error.message}`);
-        return `Error getting container: ${error.message}`;
     }
 }
 
@@ -407,7 +339,7 @@ export async function sendRequestWithReadFileAccess(
     while (toolCallCount < maxToolCalls) {
         const response = await resolvedModel.sendRequest(
             messages,
-            { tools: [READ_FILE_TOOL, FILE_GLOB_TOOL, GET_CONTAINER_TOOL, getSearchIndexTool(), getSearchEmbeddingsTool()] },
+            { tools: [READ_FILE_TOOL, FILE_GLOB_TOOL, getSearchIndexTool(), getSearchEmbeddingsTool()] },
             token
         );
 
@@ -452,13 +384,6 @@ export async function sendRequestWithReadFileAccess(
                 const input = toolCall.input as { filePath: string; query: string };
                 log(`Agent requested glob search: ${input.filePath} (pattern: ${input.query})`);
                 const result = await executeFileGlobTool(input, cache);
-                toolResults.push(new vscode.LanguageModelToolResultPart(toolCall.callId, [
-                    new vscode.LanguageModelTextPart(result)
-                ]));
-            } else if (toolCall.name === 'getContainer') {
-                const input = toolCall.input as { filePath: string; line: number };
-                log(`Agent requested container: ${input.filePath} (line: ${input.line})`);
-                const result = await executeGetContainerTool(input);
                 toolResults.push(new vscode.LanguageModelToolResultPart(toolCall.callId, [
                     new vscode.LanguageModelTextPart(result)
                 ]));
