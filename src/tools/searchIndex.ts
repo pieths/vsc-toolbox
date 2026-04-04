@@ -31,7 +31,7 @@ const SEARCH_RESULTS_HEADER_PREFIX = '# Search Results for';
  * Input parameters for the language model tool
  */
 interface SearchIndexParams {
-    /** Search query with space-separated OR terms and glob wildcards */
+    /** Search query with space-separated terms ranked by BM25 relevance. Supports glob wildcards (* and ?). */
     query: string;
     /** Optional comma-separated glob patterns to include only matching file paths */
     include?: string;
@@ -41,7 +41,7 @@ interface SearchIndexParams {
     filter?: string;
     /** Optional maximum number of files to include in results. Defaults to DEFAULT_MAX_FILE_RESULTS. Use 0 or -1 for no limit. */
     maxResults?: number;
-    /** When true, the query is treated as a single regex pattern instead of space-separated glob terms with AND semantics */
+    /** When true, the query is treated as a single regex pattern instead of space-separated glob terms */
     isRegexp?: boolean;
     /** Number of context lines to show before and after each match. Context is bounded by enclosing code structure. Default is 0 (no context). */
     contextLines?: number;
@@ -250,7 +250,7 @@ function formatResultsForKnowledgeBaseDoc(fsr: FileSearchResults): string {
         const content = fs.readFileSync(fsr.filePath, 'utf8');
         const lines = content.split('\n');
         const overviewLines = lines.slice(startLine, endLine + 1);
-        const overviewText = overviewLines.join('\n').trimEnd();
+        const overviewText = overviewLines.join('\n').trim();
         return overviewText + `\n\n*For more details, read: ${fsr.filePath}*\n\n`;
     } catch {
         return '*(Could not read Overview section)*\n\n';
@@ -273,31 +273,22 @@ async function formatResults(
     fileResults: FileSearchResults[],
     symbolsByFile: Map<string, FileSymbols>,
     query: string,
-    maxFileResults: number,
+    totalFiles: number,
+    totalMatches: number,
     numContextLines: number = 0
 ): Promise<string> {
     if (fileResults.length === 0) {
         return `No matches found for: \`${query}\``;
     }
 
-    const totalFiles = fileResults.length;
-    const totalMatches = fileResults.reduce((sum, f) => sum + f.results.length, 0);
-    const hasLimit = maxFileResults > 0;
-    const truncated = hasLimit && totalFiles > maxFileResults;
-
     let markdown = `${SEARCH_RESULTS_HEADER_PREFIX} \`${query}\`\n\n`;
     markdown += `Found **${totalMatches}** matches in **${totalFiles}** files.`;
-    if (truncated) {
-        markdown += ` Showing first **${maxFileResults}** files.`;
+    if (fileResults.length < totalFiles) {
+        markdown += ` Showing top **${fileResults.length}** files by relevance.`;
     }
     markdown += '\n\n';
 
-    let filesShown = 0;
     for (const fsr of fileResults) {
-        if (hasLimit && filesShown >= maxFileResults) {
-            break;
-        }
-        filesShown++;
 
         markdown += `## ${fsr.filePath}\n\n`;
 
@@ -311,8 +302,8 @@ async function formatResults(
         }
     }
 
-    if (truncated) {
-        const omittedFiles = totalFiles - maxFileResults;
+    if (fileResults.length < totalFiles) {
+        const omittedFiles = totalFiles - fileResults.length;
         markdown += `---\n\n${omittedFiles} additional file(s) omitted. Use \`maxResults\` to increase the limit or set to 0 for no limit.\n`;
     }
 
@@ -356,7 +347,8 @@ export class SearchIndexTool implements vscode.LanguageModelTool<SearchIndexPara
             // Perform the search using ContentIndex
             const { include, exclude } = options.input;
             const isRegexp = options.input.isRegexp ?? false;
-            const searchResult = await contentIndex.getDocumentMatches(query, include, exclude, isRegexp, token);
+            const maxResults = options.input.maxResults ?? DEFAULT_MAX_FILE_RESULTS;
+            const searchResult = await contentIndex.getDocumentMatches(query, include, exclude, isRegexp, maxResults, token);
 
             // Check for validation error
             if (searchResult.error) {
@@ -386,12 +378,10 @@ export class SearchIndexTool implements vscode.LanguageModelTool<SearchIndexPara
                 ]);
             }
 
-            const totalMatches = fileResults.reduce((sum, f) => sum + f.results.length, 0);
+            const totalMatches = searchResult.totalMatches;
+            const totalFiles = searchResult.totalFiles;
             const elapsed = Date.now() - startTime;
             const fileCount = contentIndex.getFileCount();
-
-            // Resolve maxResults: use provided value or fall back to default
-            const maxResults = options.input.maxResults ?? DEFAULT_MAX_FILE_RESULTS;
 
             log(
                 `Content search completed in ${elapsed}ms\n` +
@@ -402,12 +392,12 @@ export class SearchIndexTool implements vscode.LanguageModelTool<SearchIndexPara
                 `   filter: ${options.input.filter ?? '(none)'}\n` +
                 `   maxResults: ${maxResults}\n` +
                 `   contextLines: ${options.input.contextLines ?? 0}\n` +
-                `   results: ${totalMatches} matches in ${fileResults.length} files (${fileCount} files indexed)`
+                `   results: ${totalMatches} matches in ${totalFiles} files, showing ${fileResults.length} (${fileCount} files indexed)`
             );
             const contextLines = options.input.contextLines ?? 0;
 
             // Format and return results
-            const markdown = await formatResults(fileResults, symbolsMap, query, maxResults, contextLines);
+            const markdown = await formatResults(fileResults, symbolsMap, query, totalFiles, totalMatches, contextLines);
 
             // Filter results using AI if a filter is provided
             const { filter } = options.input;

@@ -17,6 +17,7 @@
  */
 
 import * as path from 'path';
+import * as fs from 'fs';
 import * as os from 'os';
 import { CacheManager } from './cacheManager';
 import { ThreadPool } from './workers/threadPool';
@@ -24,6 +25,7 @@ import { FileWatcher } from './fileWatcher';
 import { LlamaServer } from './embeddings/llamaServer';
 import { PathFilter } from './pathFilter';
 import { FileSymbols } from './fileSymbols';
+import { rankFiles } from './bm25';
 import { configureLogger } from '../logger';
 import type {
     ContentIndexConfig,
@@ -196,16 +198,16 @@ async function handleInit(msg: ContentIndexInitRequest): Promise<void> {
 }
 
 async function handleSearch(msg: ContentIndexSearchRequest): Promise<void> {
-    const { messageId, query, include, exclude, isRegexp } = msg;
+    const { messageId, query, include, exclude, isRegexp, maxResults } = msg;
 
     try {
         if (!cacheManager || !threadPool || !cacheManager.isReady()) {
-            process.send?.({ type: 'search', messageId, fileMatches: [], error: 'Index not ready' });
+            process.send?.({ type: 'search', messageId, fileMatches: [], totalFiles: 0, totalMatches: 0, error: 'Index not ready' });
             return;
         }
 
         if (!query.trim()) {
-            process.send?.({ type: 'search', messageId, fileMatches: [], error: 'Search query cannot be empty' });
+            process.send?.({ type: 'search', messageId, fileMatches: [], totalFiles: 0, totalMatches: 0, error: 'Search query cannot be empty' });
             return;
         }
 
@@ -237,26 +239,48 @@ async function handleSearch(msg: ContentIndexSearchRequest): Promise<void> {
             );
 
             const error = lines.join('\n');
-            process.send?.({ type: 'search', messageId, fileMatches: [], error });
+            process.send?.({ type: 'search', messageId, fileMatches: [], totalFiles: 0, totalMatches: 0, error });
             return;
         }
 
         const outputs = await threadPool.searchAll(query, allFiles, isRegexp);
 
+        // Phase 1: BM25 scoring
+        // Filter out error outputs before scoring.
+        const validOutputs = outputs.filter(o => !o.error && o.patternMatches.length > 0);
+        const scored = rankFiles(validOutputs, allFiles.length);
+
+        // Apply maxResults limit (0 or -1 means no limit).
+        const limit = maxResults && maxResults > 0 ? maxResults : scored.length;
+        const topFiles = scored.slice(0, limit);
+
+        // Phase 2: Hydrate line text for top-N files.
+        // Read each file and extract the text for matched lines.
         const fileResults: FileSearchResults[] = [];
         const mdFileResults: FileSearchResults[] = [];
 
-        for (const output of outputs) {
-            if (!output.error && output.results.length > 0) {
-                const fsr: FileSearchResults = {
-                    filePath: output.filePath,
-                    docType: DocumentType.Standard,
-                    results: output.results,
-                };
-                fileResults.push(fsr);
-                if (output.filePath.endsWith('.md')) {
-                    mdFileResults.push(fsr);
-                }
+        for (const sf of topFiles) {
+            let lines: string[];
+            try {
+                const content = await fs.promises.readFile(sf.filePath, 'utf8');
+                lines = content.split('\n');
+            } catch {
+                continue; // File no longer readable, skip
+            }
+
+            const results = sf.lineNumbers.map(ln => ({
+                line: ln,
+                text: (lines[ln] ?? '').trimEnd(),
+            }));
+
+            const fsr: FileSearchResults = {
+                filePath: sf.filePath,
+                docType: DocumentType.Standard,
+                results,
+            };
+            fileResults.push(fsr);
+            if (sf.filePath.endsWith('.md')) {
+                mdFileResults.push(fsr);
             }
         }
 
@@ -277,10 +301,14 @@ async function handleSearch(msg: ContentIndexSearchRequest): Promise<void> {
             }
         }
 
-        process.send?.({ type: 'search', messageId, fileMatches: fileResults });
+        // Compute totals from scored (pre-truncation) results.
+        const totalFiles = scored.length;
+        const totalMatches = scored.reduce((sum, sf) => sum + sf.lineNumbers.length, 0);
+
+        process.send?.({ type: 'search', messageId, fileMatches: fileResults, totalFiles, totalMatches });
     } catch (err) {
         sendLog('error', `ContentIndexHost: Search failed — ${err}`);
-        process.send?.({ type: 'search', messageId, fileMatches: [], error: String(err) });
+        process.send?.({ type: 'search', messageId, fileMatches: [], totalFiles: 0, totalMatches: 0, error: String(err) });
     }
 }
 

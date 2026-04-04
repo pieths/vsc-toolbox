@@ -303,13 +303,13 @@
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "search-index",
         "userDescription": "Search for patterns across indexed content",
-        "modelDescription": "Fast full-text search across indexed content. Space-separated terms use AND semantics (all must match somewhere in the file). Supports glob wildcards (* and ?), OR groups with (termA|termB) syntax, and optional regex mode. Returns matching lines grouped by file with line numbers and container context. Tip: After an initial broad search identifies key symbol names, follow up with OR-grouped queries combining those symbols, with contextLines=5 (or 10), to efficiently gather detailed context in a single call to reduce the number of follow-up read file calls.",
+        "modelDescription": "Fast full-text search across indexed content with BM25 relevance ranking. Space-separated terms are searched independently and results are ranked by relevance — files matching rare terms score higher than files matching common terms, and files matching more terms rank above files matching fewer. Supports glob wildcards (* and ?) and optional regex mode. Returns matching lines grouped by file with line numbers and container context, ordered by relevance score. Tip: Use multiple terms to find files related to a concept (e.g., 'AllowMFDolbyVisionDecoding HDR streaming') — the most relevant files appear first even if they don't contain every term.",
         "inputSchema": {
           "type": "object",
           "properties": {
             "query": {
               "type": "string",
-              "description": "Search query. Space-separated terms use AND semantics (all must match somewhere in the file). Supports * (zero or more chars) and ? (single char) glob wildcards. Use (termA|termB) to match files containing either alternative. This is particularly effective when you already know multiple related symbol names and want to locate all of them in a single query rather than making separate calls. Examples: 'foo bar' (files with both foo AND bar matches), 'Get*Configs D3D1?' (two glob terms; both must match some where in the file), '(video_codec|audio_codec) MediaLogProperty' (either video_codec or audio_codec AND MediaLogProperty), '(HEVC*|AV1*) GetSupported*' (either of the two profile prefixes AND GetSupported*)."
+              "description": "Search query with BM25 relevance ranking. Space-separated terms are searched independently and results are ranked by relevance. Supports * (zero or more chars) and ? (single char) glob wildcards. Files matching more terms and rarer terms score higher. Examples: 'AllowMFDolbyVisionDecoding HDR streaming' (ranked results — files with the rare identifier score highest), 'Get*Configs D3D1?' (two glob terms), '(video_codec|audio_codec) MediaLogProperty' (either alternative plus MediaLogProperty). Do NOT use natural-language phrases like 'function that handles HDR support' — this is not a semantic search."
             },
             "include": {
               "type": "string",
@@ -329,7 +329,7 @@
             },
             "isRegexp": {
               "type": "boolean",
-              "description": "When true, the query is treated as a single regular expression pattern. No space-separated AND semantics or glob wildcards are applied — the raw regex is matched per-line. Use for character classes, word boundaries, anchoring, or precise alternation that glob cannot express. Default is false (glob mode)."
+              "description": "When true, the query is treated as a single regular expression pattern. No space-separated terms or glob wildcards are applied — the raw regex is matched per-line. Results are still ranked by match frequency. Use for character classes, word boundaries, anchoring, or precise alternation that glob cannot express. Default is false (glob mode)."
             },
             "contextLines": {
               "type": "number",

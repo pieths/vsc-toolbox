@@ -17,10 +17,10 @@ $ErrorActionPreference = "Stop"
 # Configuration
 # ============================================================================
 
-$release = "v0.1.2"
+$release = "v0.1.3"
 
 $runoSearchUrl     = "https://github.com/pieths/runo-search/releases/download/$release/runo-search_${release}_win-x64.zip"
-$expectedHash      = "701daed0e078c51af8f6593d8ba5f5aa79cb5fd95ac6661484f556f1728752e4"
+$expectedHash      = "76ea7f80bd2a7e2c214c6b88fbdcdb6d12b2af22bbe1bb36265710dafbfb4ddd"
 
 # Paths (script lives in scripts/, output goes to project root bin/)
 $projectRoot       = Split-Path $PSScriptRoot -Parent

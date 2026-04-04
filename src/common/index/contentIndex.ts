@@ -566,34 +566,36 @@ export class ContentIndex {
     }
 
     /**
-     * Search for content matching a glob pattern query.
+     * Search for content matching a query with BM25 relevance ranking.
      *
-     * @param query - User search query with glob patterns (* and ?) and space-separated AND terms
+     * @param query - User search query with glob patterns (* and ?) and space-separated terms (OR semantics, ranked by BM25)
      * @param include - Optional comma-separated glob patterns to include only matching file paths
      * @param exclude - Optional comma-separated glob patterns to exclude matching file paths
      * @param isRegexp - When true, treat query as a single regex pattern
+     * @param maxResults - Maximum number of files to return (0 or -1 for no limit)
      * @param token - Optional cancellation token
-     * @returns SearchResults with per-file results array and optional error
+     * @returns SearchResults with per-file results ranked by relevance and optional error
      */
     async getDocumentMatches(
         query: string,
         include?: string,
         exclude?: string,
         isRegexp: boolean = false,
+        maxResults?: number,
         token?: vscode.CancellationToken
     ): Promise<SearchResults> {
         if (!query.trim()) {
-            return { fileMatches: [], error: 'Search query cannot be empty' };
+            return { fileMatches: [], totalFiles: 0, totalMatches: 0, error: 'Search query cannot be empty' };
         }
 
         if (!this.ready) {
             warn('ContentIndex: Not ready');
-            return { fileMatches: [] };
+            return { fileMatches: [], totalFiles: 0, totalMatches: 0 };
         }
 
         if (this.disposed) {
             warn('ContentIndex: Instance has been disposed');
-            return { fileMatches: [] };
+            return { fileMatches: [], totalFiles: 0, totalMatches: 0 };
         }
 
         try {
@@ -605,14 +607,17 @@ export class ContentIndex {
                 include,
                 exclude,
                 isRegexp,
+                maxResults,
             });
             return {
                 fileMatches: response.fileMatches,
+                totalFiles: response.totalFiles,
+                totalMatches: response.totalMatches,
                 error: response.error,
             };
         } catch (err) {
             error(`ContentIndex: Search failed - ${err}`);
-            return { fileMatches: [] };
+            return { fileMatches: [], totalFiles: 0, totalMatches: 0 };
         }
     }
 

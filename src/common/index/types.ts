@@ -49,20 +49,39 @@ export interface FileSearchResults {
 export interface SearchResults {
     /** Per-file search results (empty if error or no matches) */
     fileMatches: FileSearchResults[];
+    /** Total number of files that matched (before maxResults truncation) */
+    totalFiles: number;
+    /** Total number of line matches across all matched files (before maxResults truncation) */
+    totalMatches: number;
     /** Error message if the search failed */
     error?: string;
 }
 
 /**
- * Search output data returned from a worker thread
+ * Per-pattern match data from a search.
+ */
+export interface PatternMatch {
+    /** Index into the patterns array (0-based) */
+    patternIndex: number;
+    /** Number of matches for this pattern in the file */
+    frequency: number;
+    /** 0-based line numbers where this pattern matched (deduplicated, sorted) */
+    lineNumbers: number[];
+}
+
+/**
+ * Search output data returned from a worker thread.
+ * Contains per-pattern frequency and line number data.
  */
 export interface SearchOutput {
     /** Discriminator for message type */
     type: 'search';
     /** Absolute file path that was searched */
     filePath: string;
-    /** Array of search results */
-    results: SearchResult[];
+    /** Total number of lines in the file */
+    totalLines: number;
+    /** Per-pattern match data. Only patterns with >= 1 match are included. */
+    patternMatches: PatternMatch[];
     /** Error message if search failed */
     error?: string;
 }
@@ -194,7 +213,7 @@ export interface WorkerLogMessage {
 export interface SearchBatchRequest {
     type: 'searchBatch';
     messageId: number;
-    /** Glob query string (space-separated AND terms with * and ? wildcards) */
+    /** Search query string (space-separated terms) */
     query: string;
     /** Absolute file paths to search */
     filePaths: string[];
@@ -391,6 +410,8 @@ export interface ContentIndexSearchRequest {
     exclude?: string;
     /** When true, treat query as a single regex pattern */
     isRegexp: boolean;
+    /** Maximum number of files to return. 0 or -1 for no limit. */
+    maxResults?: number;
 }
 
 /** Get symbols for one or more files */
@@ -441,6 +462,8 @@ export interface ContentIndexSearchResponse {
     type: 'search';
     messageId: number;
     fileMatches: FileSearchResults[];
+    totalFiles: number;
+    totalMatches: number;
     error?: string;
 }
 

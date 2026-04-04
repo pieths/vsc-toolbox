@@ -27,10 +27,24 @@
  * Convert a single glob term to a regex pattern string.
  * Escapes regex special characters and converts `*` and `?` to regex equivalents.
  *
+ * Word boundary (`\b`) rules (applied to the original term before conversion):
+ * - If the first/last character is a glob wildcard (`*`), no boundary on that side.
+ * - If the first/last character is a word character (`\w`), add `\b` on that side.
+ * - If the first/last character is a non-word character, no boundary on that side.
+ *
  * @param term - A single search term with optional glob wildcards
  * @returns Regex pattern string (without flags)
  */
 function globTermToRegex(term: string): string {
+    // Determine word boundaries based on the original term's first/last characters.
+    // Word chars (\w) get \b to prevent substring matches (e.g., "off" won't match "offset").
+    // Glob chars (*) skip the boundary to allow open-ended matching.
+    // Non-word chars (e.g., -, >, .) skip the boundary since \b would be unreliable there.
+    const firstChar = term[0];
+    const lastChar = term[term.length - 1];
+    const addLeadingBoundary = firstChar !== '*' && /\w/.test(firstChar);
+    const addTrailingBoundary = lastChar !== '*' && /\w/.test(lastChar);
+
     // Escape regex special characters (except * and ?)
     // Special chars: . + ^ $ { } ( ) | [ ] \
     let escaped = term.replace(/[.+^${}()|[\]\\]/g, '\\$&');
@@ -43,6 +57,14 @@ function globTermToRegex(term: string): string {
     // Note: Without the 's' (dotAll) flag, '.' does NOT match newlines,
     // so this naturally stays within a single line.
     escaped = escaped.replace(/\?/g, '.');
+
+    // Apply word boundaries
+    if (addLeadingBoundary) {
+        escaped = '\\b' + escaped;
+    }
+    if (addTrailingBoundary) {
+        escaped = escaped + '\\b';
+    }
 
     return escaped;
 }

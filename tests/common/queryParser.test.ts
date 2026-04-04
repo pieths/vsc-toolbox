@@ -409,4 +409,107 @@ describe('parseQueryAsAndOr', () => {
             assertMatches(result[1], 'D3D11');
         });
     });
+
+    // ── Word boundary behavior ──────────────────────
+
+    describe('word boundary behavior', () => {
+        it('plain word term does not match as substring', () => {
+            const result = parseQueryAsAndOr('off');
+            assert.strictEqual(result.length, 1);
+            assertMatches(result[0], 'off');
+            assertMatches(result[0], 'turn off the light');
+            assertNoMatch(result[0], 'offset');
+            assertNoMatch(result[0], 'turnoff');
+            assertNoMatch(result[0], 'offscreen');
+        });
+
+        it('plain identifier does not match inside longer identifiers', () => {
+            const result = parseQueryAsAndOr('hdr');
+            assert.strictEqual(result.length, 1);
+            assertMatches(result[0], 'hdr');
+            assertMatches(result[0], 'use hdr mode');
+            assertNoMatch(result[0], 'hdr_metadata');
+            assertNoMatch(result[0], 'thdr');
+            assertNoMatch(result[0], 'is_hdr_enabled');
+        });
+
+        it('trailing glob suppresses trailing boundary', () => {
+            const result = parseQueryAsAndOr('hdr*');
+            assert.strictEqual(result.length, 1);
+            assertMatches(result[0], 'hdr');
+            assertMatches(result[0], 'hdr_metadata');
+            assertMatches(result[0], 'hdr10');
+            assertNoMatch(result[0], 'thdr');
+        });
+
+        it('leading glob suppresses leading boundary', () => {
+            const result = parseQueryAsAndOr('*Factory');
+            assert.strictEqual(result.length, 1);
+            assertMatches(result[0], 'Factory');
+            assertMatches(result[0], 'CdmFactory');
+            assertMatches(result[0], 'MediaFoundationCdmFactory');
+            assertNoMatch(result[0], 'FactoryMethod');
+        });
+
+        it('both globs suppress both boundaries', () => {
+            const result = parseQueryAsAndOr('*cdm*');
+            assert.strictEqual(result.length, 1);
+            assertMatches(result[0], 'cdm');
+            assertMatches(result[0], 'cdm_factory');
+            assertMatches(result[0], 'is_cdm_enabled');
+            assertMatches(result[0], 'media_cdm_service');
+        });
+
+        it('non-word first char gets no leading boundary', () => {
+            const result = parseQueryAsAndOr('->Create');
+            assert.strictEqual(result.length, 1);
+            assertMatches(result[0], 'ptr->Create(args)');
+            assertMatches(result[0], 'factory->Create()');
+            assertNoMatch(result[0], 'ptr->CreateAndDestroy()');
+        });
+
+        it('non-word last char gets no trailing boundary', () => {
+            const result = parseQueryAsAndOr('Create(');
+            assert.strictEqual(result.length, 1);
+            assertMatches(result[0], 'Create(args)');
+            assertMatches(result[0], 'factory.Create(x)');
+            assertNoMatch(result[0], 'CreateFactory(x)');
+        });
+
+        it('term with non-word chars on both sides gets no boundaries', () => {
+            const result = parseQueryAsAndOr('.Create(');
+            assert.strictEqual(result.length, 1);
+            assertMatches(result[0], 'obj.Create(args)');
+            assertMatches(result[0], '.Create(x)');
+        });
+
+        it('word boundaries work in OR groups', () => {
+            const result = parseQueryAsAndOr('(off|hdr)');
+            assert.strictEqual(result.length, 1);
+            assertMatches(result[0], 'off');
+            assertMatches(result[0], 'hdr');
+            assertNoMatch(result[0], 'offset');
+            assertNoMatch(result[0], 'hdr_metadata');
+        });
+
+        it('mixed glob and plain terms have correct boundaries', () => {
+            const result = parseQueryAsAndOr('hdr* streaming');
+            assert.strictEqual(result.length, 2);
+            // hdr* has leading boundary only
+            assertMatches(result[0], 'hdr_metadata');
+            assertNoMatch(result[0], 'thdr_metadata');
+            // streaming has both boundaries
+            assertMatches(result[1], 'streaming');
+            assertNoMatch(result[1], 'livestreaming');
+        });
+
+        it('underscore is a word character for boundaries', () => {
+            const result = parseQueryAsAndOr('media');
+            assert.strictEqual(result.length, 1);
+            assertMatches(result[0], 'media');
+            assertMatches(result[0], 'the media player');
+            assertNoMatch(result[0], 'media_player');
+            assertNoMatch(result[0], 'multimedia');
+        });
+    });
 });
