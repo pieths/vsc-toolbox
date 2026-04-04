@@ -54,6 +54,11 @@
         "command": "vscToolbox.openFileUnderCursor",
         "title": "Open File Under Cursor",
         "category": "VSC Toolbox"
+      },
+      {
+        "command": "vscToolbox.selectDefaultModel",
+        "title": "Select Default Language Model",
+        "category": "VSC Toolbox"
       }
     ],
     "configuration": {
@@ -111,6 +116,11 @@
           "type": "string",
           "default": "chrome",
           "description": "Module name to use as prefix for WinDbg breakpoint locations"
+        },
+        "vscToolbox.defaultModelId": {
+          "type": "string",
+          "default": "",
+          "description": "The ID of the language model to use as the default (e.g. 'claude-sonnet-4.5'). Use the 'Select Default Language Model' command to pick from available models. Leave empty to use the built-in default."
         },
         "vscToolbox.enableLlmReranker": {
           "type": "boolean",

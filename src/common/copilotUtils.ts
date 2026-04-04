@@ -24,14 +24,39 @@ import { parseQueryAsOr } from './queryParser';
 
 /** Cached default language model instance (lazy-initialized on first use) */
 let cachedDefaultModel: vscode.LanguageModelChat | undefined;
+let defaultModelId: string = '';
+
+function setDefaultModelIdFromConfig(): void {
+    const id = vscode.workspace.getConfiguration('vscToolbox').get<string>('defaultModelId', '');
+    if (id !== defaultModelId) {
+        defaultModelId = id;
+        cachedDefaultModel = undefined;
+    }
+}
+
+/**
+ * Initialize copilot utilities. Reads the default model ID from settings
+ * and registers a listener to update it when the setting changes.
+ */
+export function initializeCopilotUtils(context: vscode.ExtensionContext): void {
+    setDefaultModelIdFromConfig();
+
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeConfiguration(e => {
+            if (e.affectsConfiguration('vscToolbox.defaultModelId')) {
+                setDefaultModelIdFromConfig();
+            }
+        })
+    );
+}
 
 /**
  * Get the cached default language model, initializing it on first call.
- * Uses `getModel()` with no parameters (defaults to claude-sonnet-4.5).
+ * Uses the defaultModelId if set, otherwise falls back to getModel() default.
  */
 async function getDefaultModel(): Promise<vscode.LanguageModelChat> {
     if (!cachedDefaultModel) {
-        cachedDefaultModel = await getModel();
+        cachedDefaultModel = await getModel(defaultModelId || undefined);
         if (!cachedDefaultModel) {
             throw new Error('No default language model available');
         }
@@ -299,27 +324,7 @@ export async function getAvailableModels(): Promise<Array<{ id: string; name: st
 
 /**
  * Select a language model by ID.
- * Defaults to 'claude-sonnet-4.5' if no ID is specified.
- *
- * Potentially available model IDs (use these strings):
- *
- * OpenAI:
- *   - 'gpt-4o-mini', 'gpt-4o', 'gpt-4.1'
- *   - 'gpt-5-mini', 'gpt-5', 'gpt-5.1', 'gpt-5.2'
- *   - 'gpt-5-codex', 'gpt-5.1-codex', 'gpt-5.1-codex-mini', 'gpt-5.1-codex-max', 'gpt-5.2-codex'
- *
- * Anthropic:
- *   - 'claude-haiku-4.5' (fast/cheap)
- *   - 'claude-sonnet-4', 'claude-sonnet-4.5'
- *   - 'claude-opus-41', 'claude-opus-4.5' (premium)
- *
- * Google:
- *   - 'gemini-2.5-pro'
- *   - 'gemini-3-flash-preview' (fast/cheap), 'gemini-3-pro-preview'
- *
- * Special:
- *   - 'copilot-fast' (alias for gpt-4o-mini)
- *   - 'auto' (auto-select)
+ * Defaults to 'claude-opus-4.6' if no ID is specified.
  *
  * @param id - The model ID to select (e.g., 'gpt-4o', 'claude-haiku-4.5')
  * @returns The selected language model, or undefined if none available

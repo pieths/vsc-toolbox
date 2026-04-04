@@ -8,6 +8,7 @@ import { GetGnTargetsForFileCommand } from './getGnTargetsForFile';
 import { TestLanguageModelToolCommand } from './testLanguageModelTool';
 import { FilterLinesByPatternCommand } from './filterLinesByPattern';
 import { OpenFileUnderCursorCommand } from './openFileUnderCursor';
+import { SelectDefaultModelCommand } from './selectDefaultModel';
 
 /**
  * Command registry - add new commands here to automatically register them
@@ -20,4 +21,5 @@ export const COMMAND_REGISTRY = [
     TestLanguageModelToolCommand,
     FilterLinesByPatternCommand,
     OpenFileUnderCursorCommand,
+    SelectDefaultModelCommand,
 ] as const;

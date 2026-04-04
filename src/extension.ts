@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 import { TOOL_REGISTRY } from './tools/index';
 import { COMMAND_REGISTRY } from './commands/index';
 import { configureLogger, log } from './common/logger';
+import { initializeCopilotUtils } from './common/copilotUtils';
 import { ContentIndex } from './common/index';
 
 // ── Logger initialization ─────────────────────────────────────────────
@@ -88,6 +89,8 @@ export async function activate(
   // Initialize the shared logger first
   initLogger(context);
   log('VSC Toolbox extension is activating...');
+
+  initializeCopilotUtils(context);
 
   try {
     ContentIndex.getInstance().initialize(context);
