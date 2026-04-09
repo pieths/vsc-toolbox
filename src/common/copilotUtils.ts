@@ -357,39 +357,6 @@ export async function getModel(id?: string): Promise<vscode.LanguageModelChat | 
 }
 
 /**
- * Send text to a language model and return the response.
- * No tools are available - pure text in/out.
- *
- * @param model - The language model to use, or null to use the cached default model
- * @param text - The text to send to the model
- * @param cancellationToken - Optional cancellation token
- * @returns The model's response as a string
- */
-export async function sendSingleRequest(
-    model: vscode.LanguageModelChat | null,
-    text: string,
-    cancellationToken?: vscode.CancellationToken
-): Promise<string> {
-    const resolvedModel = model ?? await getDefaultModel();
-
-    const messages: vscode.LanguageModelChatMessage[] = [
-        vscode.LanguageModelChatMessage.User(text)
-    ];
-
-    const token = cancellationToken ?? new vscode.CancellationTokenSource().token;
-
-    const response = await resolvedModel.sendRequest(messages, {}, token);
-
-    // Collect all text fragments from the response stream
-    const fragments: string[] = [];
-    for await (const fragment of response.text) {
-        fragments.push(fragment);
-    }
-
-    return fragments.join('');
-}
-
-/**
  * Send text to a language model with file reading capability.
  * The model can use the readFileLines tool to read file contents.
  *
