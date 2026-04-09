@@ -139,11 +139,16 @@ export class SearchEmbeddingsTool implements vscode.LanguageModelTool<SearchEmbe
             }
 
             // Perform the embedding search
-            // Fetch more results when re-ranker is enabled to give it a wider pool to filter from
-            const enableReranker = vscode.workspace.getConfiguration('vscToolbox')
-                .get<boolean>('enableLlmReranker', false);
-            const searchLimit = enableReranker ? 50 : 30;
-            const rawResults: NearestEmbeddingResult[] = await contentIndex.searchEmbeddings(query, searchLimit);
+            const config = vscode.workspace.getConfiguration('vscToolbox');
+            const enableReranker = config.get<boolean>('enableLlmReranker', false);
+            const topK = config.get<number>('embeddingSearchTopK', 30);
+            const offset = config.get<number>('embeddingSearchOffset', 0);
+            // Fetch enough results to cover the offset + topK, plus extra when re-ranker is enabled
+            const searchLimit = offset + (enableReranker ? (topK + 20) : topK);
+
+            const allResults: NearestEmbeddingResult[] = await contentIndex.searchEmbeddings(query, searchLimit);
+            // Slice to the requested window
+            const rawResults = allResults.slice(offset);
 
             if (token.isCancellationRequested) {
                 return new vscode.LanguageModelToolResult([
