@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import * as vscode from 'vscode';
-import { getAvailableModels } from '../common/copilotUtils';
+import { getAvailableModels } from '../common/languageModelUtils';
 
 /**
  * Select Default Model Command - Shows a quick pick of available language models

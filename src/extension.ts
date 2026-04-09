@@ -5,7 +5,7 @@ import * as vscode from 'vscode';
 import { TOOL_REGISTRY } from './tools/index';
 import { COMMAND_REGISTRY } from './commands/index';
 import { configureLogger, log } from './common/logger';
-import { initializeCopilotUtils } from './common/copilotUtils';
+import { initializeCopilotUtils } from './common/languageModelUtils';
 import { ContentIndex } from './common/index';
 
 // ── Logger initialization ─────────────────────────────────────────────

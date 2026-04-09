@@ -11,7 +11,7 @@ import {
     CALLABLE_TYPES,
 } from '../common/index';
 import type { FileSymbols, IndexSymbol } from '../common/index';
-import { sendLanguageModelRequest } from '../common/copilotUtils';
+import { sendLanguageModelRequest } from '../common/languageModelUtils';
 import { log } from '../common/logger';
 import { createMarkdownCodeBlock } from '../common/markdownUtils';
 import { ScopedFileCache } from '../common/scopedFileCache';

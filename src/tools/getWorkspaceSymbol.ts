@@ -7,7 +7,7 @@ import { createMarkdownCodeBlock } from '../common/markdownUtils';
 import { getFunctionSignatureRange } from '../common/documentUtils';
 import { ScopedFileCache } from '../common/scopedFileCache';
 import { ContentIndex } from '../common/index/contentIndex';
-import { sendLanguageModelRequest } from '../common/copilotUtils';
+import { sendLanguageModelRequest } from '../common/languageModelUtils';
 import { log } from '../common/logger';
 
 /** Markdown header prefix used for symbol match results */

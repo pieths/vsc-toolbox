@@ -7,7 +7,7 @@ import { createMarkdownCodeBlock } from '../common/markdownUtils';
 import { getFunctionSignatureRange } from '../common/documentUtils';
 import { ContentIndex, IndexSymbol, AttrKey, symbolTypeToString, CALLABLE_TYPES } from '../common/index';
 import { ScopedFileCache } from '../common/scopedFileCache';
-import { sendLanguageModelRequest } from '../common/copilotUtils';
+import { sendLanguageModelRequest } from '../common/languageModelUtils';
 import { log } from '../common/logger';
 
 /** Markdown header prefix used for reference results */

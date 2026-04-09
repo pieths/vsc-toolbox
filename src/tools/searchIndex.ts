@@ -16,7 +16,7 @@ import {
 } from '../common/index';
 import { log } from '../common/logger';
 import { createMarkdownCodeBlock } from '../common/markdownUtils';
-import { sendLanguageModelRequest } from '../common/copilotUtils';
+import { sendLanguageModelRequest } from '../common/languageModelUtils';
 
 /**
  * Default maximum number of files to include in search results.
