@@ -16,7 +16,7 @@ import {
 } from '../common/index';
 import { log } from '../common/logger';
 import { createMarkdownCodeBlock } from '../common/markdownUtils';
-import { sendRequestWithReadFileAccess } from '../common/copilotUtils';
+import { sendLanguageModelRequest } from '../common/copilotUtils';
 
 /**
  * Default maximum number of files to include in search results.
@@ -452,7 +452,7 @@ export class SearchIndexTool implements vscode.LanguageModelTool<SearchIndexPara
             '',
             markdown
         ].join('\n');
-        const result = await sendRequestWithReadFileAccess(null, filterPrompt, token, 1000);
+        const result = await sendLanguageModelRequest(null, filterPrompt, token, 1000);
         const filterElapsed = Date.now() - filterStart;
         log(`AI filter completed in ${filterElapsed}ms`);
 

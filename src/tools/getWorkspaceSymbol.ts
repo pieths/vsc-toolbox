@@ -7,7 +7,7 @@ import { createMarkdownCodeBlock } from '../common/markdownUtils';
 import { getFunctionSignatureRange } from '../common/documentUtils';
 import { ScopedFileCache } from '../common/scopedFileCache';
 import { ContentIndex } from '../common/index/contentIndex';
-import { sendRequestWithReadFileAccess } from '../common/copilotUtils';
+import { sendLanguageModelRequest } from '../common/copilotUtils';
 import { log } from '../common/logger';
 
 /** Markdown header prefix used for symbol match results */
@@ -231,7 +231,7 @@ export class GetWorkspaceSymbolTool implements vscode.LanguageModelTool<IWorkspa
             '',
             markdown
         ].join('\n');
-        const result = await sendRequestWithReadFileAccess(null, filterPrompt, token, 1000, fileCache);
+        const result = await sendLanguageModelRequest(null, filterPrompt, token, 1000, fileCache);
         const filterElapsed = Date.now() - filterStart;
         log(`AI filter completed in ${filterElapsed}ms`);
 

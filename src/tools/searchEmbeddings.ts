@@ -11,7 +11,7 @@ import {
     CALLABLE_TYPES,
 } from '../common/index';
 import type { FileSymbols, IndexSymbol } from '../common/index';
-import { sendRequestWithReadFileAccess } from '../common/copilotUtils';
+import { sendLanguageModelRequest } from '../common/copilotUtils';
 import { log } from '../common/logger';
 import { createMarkdownCodeBlock } from '../common/markdownUtils';
 import { ScopedFileCache } from '../common/scopedFileCache';
@@ -361,7 +361,7 @@ export class SearchEmbeddingsTool implements vscode.LanguageModelTool<SearchEmbe
             '',
             markdown
         ].join('\n');
-        const result = await sendRequestWithReadFileAccess(null, rerankerPrompt, token, 1000, fileCache);
+        const result = await sendLanguageModelRequest(null, rerankerPrompt, token, 1000, fileCache);
         const rerankerElapsed = Date.now() - rerankerStart;
         log(`LLM re-ranker completed in ${rerankerElapsed}ms`);
 

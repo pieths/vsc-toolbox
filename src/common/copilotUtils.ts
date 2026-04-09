@@ -8,18 +8,11 @@ import { parseQueryAsOr } from './queryParser';
 import { ConcurrencyLimiter } from './concurrencyLimiter';
 
 /**
- * Utility functions for sending text to a Copilot language model.
+ * Utility functions for sending requests to a VS Code language model.
  *
  * Usage:
  * ```typescript
- * // With explicit model:
- * const model = await getModel();
- * if (model) {
- *     const result = await sendSingleRequest(model, 'Summarize this code: ...');
- * }
- * // Or use the cached default model by passing null:
- * const result = await sendSingleRequest(null, 'Summarize this code: ...');
- * const result2 = await sendRequestWithReadFileAccess(null, 'Analyze the code in src/main.ts');
+ * const result = await sendLanguageModelRequest(null, 'Analyze the code in src/main.ts');
  * ```
  */
 
@@ -357,8 +350,7 @@ export async function getModel(id?: string): Promise<vscode.LanguageModelChat | 
 }
 
 /**
- * Send text to a language model with file reading capability.
- * The model can use the readFileLines tool to read file contents.
+ * Send text to a language model with tool capability.
  *
  * @param model - The language model to use, or null to use the cached default model
  * @param text - The text to send to the model
@@ -368,7 +360,7 @@ export async function getModel(id?: string): Promise<vscode.LanguageModelChat | 
  * @param enabledTools - Which tools to make available, or null for all
  * @returns The model's final response as a string
  */
-export async function sendRequestWithReadFileAccess(
+export async function sendLanguageModelRequest(
     model: vscode.LanguageModelChat | null,
     text: string,
     cancellationToken?: vscode.CancellationToken,
@@ -389,7 +381,7 @@ export async function sendRequestWithReadFileAccess(
 
     while (toolCallCount < maxToolCalls) {
         const { fragments, toolCalls } = await sendRequestLimiter.run(async () => {
-            log(`sendRequestWithReadFileAccess: Using model ${resolvedModel.id} - call ${++totalCallCount}`);
+            log(`sendLanguageModelRequest: Using model ${resolvedModel.id} - call ${++totalCallCount}`);
 
             const response = await resolvedModel.sendRequest(
                 messages,

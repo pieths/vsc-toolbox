@@ -7,7 +7,7 @@ import { createMarkdownCodeBlock } from '../common/markdownUtils';
 import { getFunctionSignatureRange } from '../common/documentUtils';
 import { ContentIndex, IndexSymbol, AttrKey, symbolTypeToString, CALLABLE_TYPES } from '../common/index';
 import { ScopedFileCache } from '../common/scopedFileCache';
-import { sendRequestWithReadFileAccess } from '../common/copilotUtils';
+import { sendLanguageModelRequest } from '../common/copilotUtils';
 import { log } from '../common/logger';
 
 /** Markdown header prefix used for reference results */
@@ -215,7 +215,7 @@ export class GetDocumentSymbolReferencesTool implements vscode.LanguageModelTool
             '',
             markdown
         ].join('\n');
-        const result = await sendRequestWithReadFileAccess(null, filterPrompt, token, 1000, fileCache);
+        const result = await sendLanguageModelRequest(null, filterPrompt, token, 1000, fileCache);
         const filterElapsed = Date.now() - filterStart;
         log(`AI filter completed in ${filterElapsed}ms`);
 
