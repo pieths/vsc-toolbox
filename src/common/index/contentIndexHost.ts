@@ -330,7 +330,7 @@ async function handleGetSymbols(msg: ContentIndexGetSymbolsRequest): Promise<voi
 }
 
 async function handleSearchEmbeddings(msg: ContentIndexSearchEmbeddingsRequest): Promise<void> {
-    const { messageId, query, topK } = msg;
+    const { messageId, query, topK, negated } = msg;
 
     try {
         if (!cacheManager || !cacheManager.isReady() || !llamaServer?.isReady()) {
@@ -354,6 +354,15 @@ async function handleSearchEmbeddings(msg: ContentIndexSearchEmbeddingsRequest):
         // Float32Array to throw a RangeError.
         const buf = Buffer.from(queryVectorB64, 'base64');
         const queryVector = new Float32Array(new Uint8Array(buf).buffer);
+
+        // Negate the query vector to find the least similar results.
+        // cos_dist(a, b) + cos_dist(-a, b) = 2, so the nearest
+        // results to -a are the farthest from a.
+        if (negated) {
+            for (let i = 0; i < queryVector.length; i++) {
+                queryVector[i] = -queryVector[i];
+            }
+        }
 
         const results = await cacheManager.getNearestEmbeddings(queryVector, topK);
         process.send?.({ type: 'searchEmbeddings', messageId, results });

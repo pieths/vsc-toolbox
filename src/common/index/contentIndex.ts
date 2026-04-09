@@ -658,9 +658,14 @@ export class ContentIndex {
      *
      * @param query - Natural language or code query to search for
      * @param topK - Maximum number of results to return (default 50)
-     * @returns Array of nearest embedding results ordered from most to least similar
+     * @param negated - When true, negate the query vector to find the least similar results
+     * @returns Array of nearest embedding results ordered by similarity
      */
-    async searchEmbeddings(query: string, topK: number = 50): Promise<NearestEmbeddingResult[]> {
+    async searchEmbeddings(
+        query: string,
+        topK: number = 50,
+        negated: boolean = false
+    ): Promise<NearestEmbeddingResult[]> {
         if (!this.ready) {
             warn('ContentIndex: Not ready');
             return [];
@@ -673,6 +678,7 @@ export class ContentIndex {
                 messageId,
                 query,
                 topK,
+                negated,
             });
             return response.results;
         } catch (err) {

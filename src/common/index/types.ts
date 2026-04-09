@@ -427,6 +427,7 @@ export interface ContentIndexSearchEmbeddingsRequest {
     messageId: number;
     query: string;
     topK: number;
+    negated: boolean;
 }
 
 /** Notify host of configuration change (triggers reset) */
