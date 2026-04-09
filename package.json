@@ -122,6 +122,18 @@
           "default": "",
           "description": "The ID of the language model to use as the default (e.g. 'claude-sonnet-4.5'). Use the 'Select Default Language Model' command to pick from available models. Leave empty to use the built-in default."
         },
+        "vscToolbox.modelRequestMaxConcurrency": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "description": "Maximum number of concurrent language model requests allowed in flight at once."
+        },
+        "vscToolbox.modelRequestDelayMs": {
+          "type": "number",
+          "default": 500,
+          "minimum": 0,
+          "description": "Minimum gap in milliseconds between dispatching language model requests."
+        },
         "vscToolbox.enableLlmReranker": {
           "type": "boolean",
           "default": false,

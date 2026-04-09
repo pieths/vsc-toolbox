@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 import { ScopedFileCache } from './scopedFileCache';
 import { log } from './logger';
 import { parseQueryAsOr } from './queryParser';
+import { ConcurrencyLimiter } from './concurrencyLimiter';
 
 /**
  * Utility functions for sending text to a Copilot language model.
@@ -21,6 +22,18 @@ import { parseQueryAsOr } from './queryParser';
  * const result2 = await sendRequestWithReadFileAccess(null, 'Analyze the code in src/main.ts');
  * ```
  */
+
+let totalCallCount = 0;
+
+/** Limits concurrent sendRequest calls to avoid rate-limit errors */
+let sendRequestLimiter = new ConcurrencyLimiter(10, 500);
+
+function updateLimiterFromConfig(): void {
+    const config = vscode.workspace.getConfiguration('vscToolbox');
+    const maxConcurrency = config.get<number>('modelRequestMaxConcurrency', 10);
+    const delayMs = config.get<number>('modelRequestDelayMs', 500);
+    sendRequestLimiter = new ConcurrencyLimiter(maxConcurrency, delayMs);
+}
 
 /** Cached default language model instance (lazy-initialized on first use) */
 let cachedDefaultModel: vscode.LanguageModelChat | undefined;
@@ -40,11 +53,16 @@ function setDefaultModelIdFromConfig(): void {
  */
 export function initializeCopilotUtils(context: vscode.ExtensionContext): void {
     setDefaultModelIdFromConfig();
+    updateLimiterFromConfig();
 
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration(e => {
             if (e.affectsConfiguration('vscToolbox.defaultModelId')) {
                 setDefaultModelIdFromConfig();
+            }
+            if (e.affectsConfiguration('vscToolbox.modelRequestMaxConcurrency') ||
+                e.affectsConfiguration('vscToolbox.modelRequestDelayMs')) {
+                updateLimiterFromConfig();
             }
         })
     );
@@ -397,31 +415,35 @@ export async function sendRequestWithReadFileAccess(
         vscode.LanguageModelChatMessage.User(text)
     ];
 
-    log(`sendRequestWithReadFileAccess: Using model "${resolvedModel.name}" (${resolvedModel.id})`);
-
     const token = cancellationToken ?? new vscode.CancellationTokenSource().token;
     const cache = fileCache ?? new ScopedFileCache();
     const tools = (enabledTools ?? ALL_AGENT_TOOLS).map(t => TOOL_MAP[t]());
     let toolCallCount = 0;
 
     while (toolCallCount < maxToolCalls) {
-        const response = await resolvedModel.sendRequest(
-            messages,
-            { tools },
-            token
-        );
+        const { fragments, toolCalls } = await sendRequestLimiter.run(async () => {
+            log(`sendRequestWithReadFileAccess: Using model ${resolvedModel.id} - call ${++totalCallCount}`);
 
-        const fragments: string[] = [];
-        const toolCalls: vscode.LanguageModelToolCallPart[] = [];
+            const response = await resolvedModel.sendRequest(
+                messages,
+                { tools },
+                token
+            );
 
-        // Collect response parts
-        for await (const part of response.stream) {
-            if (part instanceof vscode.LanguageModelTextPart) {
-                fragments.push(part.value);
-            } else if (part instanceof vscode.LanguageModelToolCallPart) {
-                toolCalls.push(part);
+            const fragments: string[] = [];
+            const toolCalls: vscode.LanguageModelToolCallPart[] = [];
+
+            // Collect response parts
+            for await (const part of response.stream) {
+                if (part instanceof vscode.LanguageModelTextPart) {
+                    fragments.push(part.value);
+                } else if (part instanceof vscode.LanguageModelToolCallPart) {
+                    toolCalls.push(part);
+                }
             }
-        }
+
+            return { fragments, toolCalls };
+        });
 
         // If no tool calls, we're done - return the text response
         if (toolCalls.length === 0) {
