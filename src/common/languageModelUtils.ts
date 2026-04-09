@@ -41,10 +41,10 @@ function setDefaultModelIdFromConfig(): void {
 }
 
 /**
- * Initialize copilot utilities. Reads the default model ID from settings
+ * Initialize language model utilities. Reads the default model ID from settings
  * and registers a listener to update it when the setting changes.
  */
-export function initializeCopilotUtils(context: vscode.ExtensionContext): void {
+export function initializeLanguageModelUtils(context: vscode.ExtensionContext): void {
     setDefaultModelIdFromConfig();
     updateLimiterFromConfig();
 

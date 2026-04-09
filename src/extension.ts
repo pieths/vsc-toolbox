@@ -5,7 +5,7 @@ import * as vscode from 'vscode';
 import { TOOL_REGISTRY } from './tools/index';
 import { COMMAND_REGISTRY } from './commands/index';
 import { configureLogger, log } from './common/logger';
-import { initializeCopilotUtils } from './common/languageModelUtils';
+import { initializeLanguageModelUtils } from './common/languageModelUtils';
 import { ContentIndex } from './common/index';
 
 // ── Logger initialization ─────────────────────────────────────────────
@@ -90,7 +90,7 @@ export async function activate(
   initLogger(context);
   log('VSC Toolbox extension is activating...');
 
-  initializeCopilotUtils(context);
+  initializeLanguageModelUtils(context);
 
   try {
     ContentIndex.getInstance().initialize(context);
