@@ -621,8 +621,18 @@ export class CacheManager {
             if (this.taskQueue.length > 0) {
                 const tasks = [...this.taskQueue];
                 this.taskQueue.length = 0;
-                for (const task of tasks) {
-                    await this.executeTask(task);
+                for (let i = 0; i < tasks.length; i++) {
+                    // Batch consecutive vectorSearch tasks for parallel execution
+                    if (tasks[i].type === 'vectorSearch') {
+                        const batch = [this.executeTask(tasks[i])];
+                        while (i + 1 < tasks.length && tasks[i + 1].type === 'vectorSearch') {
+                            batch.push(this.executeTask(tasks[++i]));
+                        }
+
+                        await Promise.all(batch);
+                    } else {
+                        await this.executeTask(tasks[i]);
+                    }
                 }
             }
 
