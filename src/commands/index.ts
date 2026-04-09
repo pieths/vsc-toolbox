@@ -9,6 +9,7 @@ import { TestLanguageModelToolCommand } from './testLanguageModelTool';
 import { FilterLinesByPatternCommand } from './filterLinesByPattern';
 import { OpenFileUnderCursorCommand } from './openFileUnderCursor';
 import { SelectDefaultModelCommand } from './selectDefaultModel';
+import { GeneratePerFileEmbeddingTrainingDataCommand } from './generatePerFileEmbeddingTrainingData';
 
 /**
  * Command registry - add new commands here to automatically register them
@@ -22,4 +23,5 @@ export const COMMAND_REGISTRY = [
     FilterLinesByPatternCommand,
     OpenFileUnderCursorCommand,
     SelectDefaultModelCommand,
+    GeneratePerFileEmbeddingTrainingDataCommand,
 ] as const;

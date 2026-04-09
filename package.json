@@ -59,6 +59,11 @@
         "command": "vscToolbox.selectDefaultModel",
         "title": "Select Default Language Model",
         "category": "VSC Toolbox"
+      },
+      {
+        "command": "vscToolbox.generatePerFileEmbeddingTrainingData",
+        "title": "Generate Per-File Embedding Training Data",
+        "category": "VSC Toolbox"
       }
     ],
     "configuration": {
