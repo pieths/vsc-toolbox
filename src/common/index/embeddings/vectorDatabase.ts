@@ -143,6 +143,11 @@ export class VectorDatabase {
     private vectorsTable: Table | null = null;
     private deletedVectorsTable: Table | null = null;
 
+    // ── In-memory LanceDB (optional, for fast vector search) ────────────
+    private readonly useInMemorySearch: boolean;
+    private inMemoryDb: Connection | null = null;
+    private inMemoryVectorsTable: Table | null = null;
+
     /**
      * Counter for LanceDB vector IDs.  SQLite tables use AUTOINCREMENT
      * but LanceDB has no built-in auto-increment, so we maintain this
@@ -167,10 +172,17 @@ export class VectorDatabase {
      * @param dbPath — directory where database files will be stored.
      *                 SQLite at `dbPath/metadata.db`, LanceDB at `dbPath/vectors/`.
      * @param vectorDimension — the fixed length of every embedding vector.
+     * @param useInMemorySearch — when true, maintain an in-memory copy of the
+     *                            vectors table for faster search.
      */
-    constructor(dbPath: string, vectorDimension: number) {
+    constructor(
+        dbPath: string,
+        vectorDimension: number,
+        useInMemorySearch: boolean = false
+    ) {
         this.dbPath = dbPath;
         this.vectorDimension = vectorDimension;
+        this.useInMemorySearch = useInMemorySearch;
     }
 
     // ── Lifecycle ───────────────────────────────────────────────────────────
@@ -324,6 +336,11 @@ export class VectorDatabase {
         // Create scalar indexes on vectors table (no-op if they already exist)
         await this.ensureVectorIndexes();
 
+        // Copy vectors into an in-memory LanceDB table for fast search
+        if (this.useInMemorySearch && this.vectorsTable) {
+            await this.rebuildInMemoryVectors();
+        }
+
         log(`VectorDatabase: opened (${this.filePathCache.size} file paths loaded)`);
     }
 
@@ -351,6 +368,12 @@ export class VectorDatabase {
         // Close SQLite
         this.sqliteDb?.close();
         this.sqliteDb = null;
+
+        // Close in-memory LanceDB
+        this.inMemoryVectorsTable?.close();
+        this.inMemoryVectorsTable = null;
+        this.inMemoryDb?.close();
+        this.inMemoryDb = null;
 
         // Close LanceDB
         this.vectorsTable?.close();
@@ -644,7 +667,7 @@ export class VectorDatabase {
             // Settle the arrow promise to prevent unhandled rejection.
             // Any orphaned vectors are cleaned up by checkIntegrity().
             if (arrowPromise) {
-                await arrowPromise.catch(() => {});
+                await arrowPromise.catch(() => { });
             }
             throw err;
         }
@@ -686,6 +709,18 @@ export class VectorDatabase {
                 await this.vectorsTable.delete(`id IN (${allVectorIds.join(', ')})`);
             } catch (err) {
                 warn(`VectorDatabase: failed to delete ${allVectorIds.length} vector(s): ${err}`);
+            }
+        }
+
+        // Mirror deletion to in-memory table
+        if (this.inMemoryVectorsTable && allVectorIds.length > 0) {
+            try {
+                await this.inMemoryVectorsTable.delete(
+                    `id IN (${allVectorIds.join(', ')})`
+                );
+            } catch (err) {
+                warn(`VectorDatabase: in-memory delete failed, rebuilding: ${err}`);
+                await this.rebuildInMemoryVectors();
             }
         }
     }
@@ -787,8 +822,9 @@ export class VectorDatabase {
             return [];
         }
 
-        // Vector search in LanceDB
-        const vectorHits = await this.vectorsTable
+        // Vector search in LanceDB (use in-memory table if available)
+        const searchTable = this.inMemoryVectorsTable ?? this.vectorsTable;
+        const vectorHits = await searchTable
             .vectorSearch(queryVector)
             .distanceType('cosine')
             .select(['id'])
@@ -1033,6 +1069,15 @@ export class VectorDatabase {
             }
         }
 
+        // LanceDB: optimize in-memory vectors table
+        if (this.inMemoryVectorsTable) {
+            try {
+                await this.inMemoryVectorsTable.optimize(optimizeOptions);
+            } catch (err) {
+                warn(`VectorDatabase: in-memory vectors compaction failed: ${err}`);
+            }
+        }
+
         // LanceDB: optimize deleted_vectors table
         if (this.deletedVectorsTable) {
             try {
@@ -1068,8 +1113,23 @@ export class VectorDatabase {
         if (!this.vectorsTable) {
             this.vectorsTable = await this.lanceDb!.createTable(TBL_VECTORS, rows);
             await this.createIndexSafe(this.vectorsTable, 'id');
-        } else {
-            await this.vectorsTable.add(rows);
+
+            if (this.useInMemorySearch) {
+                await this.rebuildInMemoryVectors();
+            }
+            return;
+        }
+
+        await this.vectorsTable.add(rows);
+
+        // Mirror to in-memory table
+        if (this.inMemoryVectorsTable) {
+            try {
+                await this.inMemoryVectorsTable.add(rows);
+            } catch (err) {
+                warn(`VectorDatabase: in-memory add failed, rebuilding: ${err}`);
+                await this.rebuildInMemoryVectors();
+            }
         }
     }
 
@@ -1155,8 +1215,23 @@ export class VectorDatabase {
         if (!this.vectorsTable) {
             this.vectorsTable = await this.lanceDb!.createTable(TBL_VECTORS, arrowData);
             await this.createIndexSafe(this.vectorsTable, 'id');
-        } else {
-            await this.vectorsTable.add(arrowData);
+
+            if (this.useInMemorySearch) {
+                await this.rebuildInMemoryVectors();
+            }
+            return;
+        }
+
+        await this.vectorsTable.add(arrowData);
+
+        // Mirror to in-memory table
+        if (this.inMemoryVectorsTable) {
+            try {
+                await this.inMemoryVectorsTable.add(arrowData);
+            } catch (err) {
+                warn(`VectorDatabase: in-memory restore failed, rebuilding: ${err}`);
+                await this.rebuildInMemoryVectors();
+            }
         }
     }
 
@@ -1176,6 +1251,41 @@ export class VectorDatabase {
         const now = Math.floor(Date.now() / 1000);
         for (const sha256 of sha256s) {
             this.stmtUpdateDeletedChunkTouchedAt!.run(now, sha256);
+        }
+    }
+
+    /**
+     * Rebuild the in-memory vectors table from the on-disk vectors table.
+     *
+     * Called on startup (when useInMemorySearch is enabled) and as a
+     * recovery fallback if an incremental in-memory mutation fails.
+     * Closes the existing in-memory table (if any) and creates a fresh
+     * copy from the current disk state.
+     */
+    private async rebuildInMemoryVectors(): Promise<void> {
+        if (!this.vectorsTable) {
+            return;
+        }
+        try {
+            const t0 = Date.now();
+            const lancedb = await import('@lancedb/lancedb');
+            const arrowData = await this.vectorsTable.query().toArrow();
+            this.inMemoryVectorsTable?.close();
+            if (!this.inMemoryDb) {
+                this.inMemoryDb = await lancedb.connect('memory://vectors');
+            }
+            const tableNames = await this.inMemoryDb.tableNames();
+            if (tableNames.includes(TBL_VECTORS)) {
+                await this.inMemoryDb.dropTable(TBL_VECTORS);
+            }
+            this.inMemoryVectorsTable = await this.inMemoryDb.createTable(
+                TBL_VECTORS, arrowData,
+            );
+            log(`VectorDatabase: rebuilt in-memory table (${arrowData.numRows} vectors) in ${Date.now() - t0}ms`);
+        } catch (err) {
+            warn(`VectorDatabase: failed to rebuild in-memory table: ${err}`);
+            this.inMemoryVectorsTable?.close();
+            this.inMemoryVectorsTable = null;
         }
     }
 
@@ -1480,6 +1590,12 @@ export class VectorDatabase {
         }
 
         log(`VectorDatabase: integrity repair complete — removed ${total} orphan(s)`);
+
+        // Resync in-memory table after repair modified disk vectors
+        if (this.inMemoryVectorsTable) {
+            await this.rebuildInMemoryVectors();
+        }
+
         return result;
     }
 }

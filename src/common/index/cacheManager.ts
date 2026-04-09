@@ -107,6 +107,7 @@ export class CacheManager {
      * @param vectorCacheHttpHost - Bind address for the HTTP cache server
      * @param vectorCacheMemoryMB - SQLite page cache size in MB for the vector cache (default: 50)
      * @param remoteEmbeddingServerAddress - Base URL of a remote vector cache server
+     * @param enableInMemoryVectorSearch - If true, load vectors into memory for faster search
      */
     async initialize(
         pathFilter: PathFilter,
@@ -120,6 +121,7 @@ export class CacheManager {
         vectorCacheHttpHost?: string,
         vectorCacheMemoryMB: number = 50,
         remoteEmbeddingServerAddress: string = '',
+        enableInMemoryVectorSearch: boolean = false,
     ): Promise<void> {
         this.pathFilter = pathFilter;
         this.threadPool = threadPool;
@@ -135,7 +137,9 @@ export class CacheManager {
         // Open (or create) the vector database and embedding processor
         if (enableEmbeddings && this.cacheDir) {
             const dbPath = path.join(this.cacheDir, 'vectordb');
-            this.vectorDatabase = new VectorDatabase(dbPath, this.llamaServer.getDimensions());
+            this.vectorDatabase = new VectorDatabase(
+                dbPath, this.llamaServer.getDimensions(), enableInMemoryVectorSearch
+            );
             await this.vectorDatabase.open();
             log(`Content index: VectorDatabase opened at ${dbPath}`);
 

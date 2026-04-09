@@ -173,6 +173,11 @@
           "default": false,
           "description": "Enable embedding generation and vector/semantic search."
         },
+        "vscToolbox.contentIndex.enableInMemoryVectorSearch": {
+          "type": "boolean",
+          "default": false,
+          "description": "Load the vectors table into memory for faster embedding search. Requires a content index restart to take effect."
+        },
         "vscToolbox.contentIndex.knowledgeBaseDirectory": {
           "type": "string",
           "default": "",

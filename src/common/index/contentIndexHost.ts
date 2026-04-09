@@ -104,6 +104,7 @@ async function startComponents(config: ContentIndexConfig): Promise<number> {
             excludePatterns,
             fileExtensions,
             enableEmbeddings,
+            enableInMemoryVectorSearch,
             knowledgeBaseDirectory,
             enableVectorCache,
             enableVectorCacheServer,
@@ -155,6 +156,7 @@ async function startComponents(config: ContentIndexConfig): Promise<number> {
             enableVectorCacheServer ? vectorCacheServerHost : undefined,
             vectorCacheMemoryMB,
             remoteEmbeddingServerAddress,
+            enableInMemoryVectorSearch,
         );
 
         const fileCount = cacheManager.getFileCount();

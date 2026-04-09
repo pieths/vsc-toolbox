@@ -371,6 +371,8 @@ export interface ContentIndexConfig {
     fileExtensions: string[];
     /** Whether to enable embedding generation and vector search */
     enableEmbeddings: boolean;
+    /** Whether to load the vectors table into memory for faster search */
+    enableInMemoryVectorSearch: boolean;
     /** Directory containing the knowledge base documents */
     knowledgeBaseDirectory: string;
     /** Whether to enable the vector cache for caching embedding vectors */
