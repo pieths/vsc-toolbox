@@ -306,7 +306,7 @@ const TOOL_MAP: Record<AgentTool, () => vscode.LanguageModelChatTool> = {
     searchEmbeddings: () => getSearchEmbeddingsTool(),
 };
 
-const ALL_AGENT_TOOLS = Object.keys(TOOL_MAP) as AgentTool[];
+export const ALL_AGENT_TOOLS = Object.keys(TOOL_MAP) as AgentTool[];
 
 /**
  * Log all available language models to the output channel.

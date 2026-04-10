@@ -6,7 +6,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import picomatch from 'picomatch';
-import { AgentTool, getModel, sendLanguageModelRequest } from '../common/languageModelUtils';
+import {
+    AgentTool,
+    ALL_AGENT_TOOLS,
+    getModel,
+    sendLanguageModelRequest,
+} from '../common/languageModelUtils';
 import { ContentIndex, NearestEmbeddingResult } from '../common/index';
 import { ScopedFileCache } from '../common/scopedFileCache';
 import { log } from '../common/logger';
@@ -34,6 +39,10 @@ interface TrainingConfig {
     maxHardNegatives: number;
     /** Number of easy negatives to generate per query */
     numEasyNegatives: number;
+    /** Language model tools to enable during Phase 1 (query generation) */
+    phase1Tools: AgentTool[];
+    /** Language model tools to enable during Phase 2 (hard negative identification) */
+    phase2Tools: AgentTool[];
     /** File names to debug */
     fileNamesToDebug: string[];
 }
@@ -107,6 +116,8 @@ const CONFIG_TEMPLATE = `---
     "delayBetweenBatches": 20,
     "maxHardNegatives": 5,
     "numEasyNegatives": 10,
+    "phase1Tools": [],
+    "phase2Tools": [],
     "fileNamesToDebug": []
 }
 ---
@@ -315,6 +326,22 @@ function parseConfigFile(raw: string): ParsedConfigFile {
     }
     if (config.numEasyNegatives === undefined) {
         config.numEasyNegatives = 10;
+    }
+    if (config.phase1Tools === undefined) {
+        config.phase1Tools = [];
+    }
+    if (config.phase2Tools === undefined) {
+        config.phase2Tools = [];
+    }
+    for (const tool of config.phase1Tools) {
+        if (!ALL_AGENT_TOOLS.includes(tool)) {
+            throw new Error(`Invalid phase1Tools value: "${tool}". Valid values: ${ALL_AGENT_TOOLS.join(', ')}`);
+        }
+    }
+    for (const tool of config.phase2Tools) {
+        if (!ALL_AGENT_TOOLS.includes(tool)) {
+            throw new Error(`Invalid phase2Tools value: "${tool}". Valid values: ${ALL_AGENT_TOOLS.join(', ')}`);
+        }
     }
     if (config.fileNamesToDebug === undefined) {
         config.fileNamesToDebug = [];
@@ -735,7 +762,7 @@ async function processFileGroup(
 ): Promise<{ samples: number; discarded: number }> {
     // Phase 1: Generate queries with positive samples
     const { samples: validSamples, discarded } = await runPhase1(
-        group, phase1Template, model, fileCache, token,
+        group, phase1Template, model, fileCache, token, config.phase1Tools
     );
 
     if (validSamples.length === 0 || token.isCancellationRequested) {
@@ -781,6 +808,7 @@ async function runPhase1(
     model: vscode.LanguageModelChat,
     fileCache: ScopedFileCache,
     token: vscode.CancellationToken,
+    phase1Tools: AgentTool[],
 ): Promise<{ samples: Phase1Sample[]; discarded: number }> {
     // Read all files in the group (loads into fileCache for reuse)
     const fileContents: { filePath: string; lines: string[] }[] = [];
@@ -805,7 +833,7 @@ async function runPhase1(
     let phase1Response: string;
     try {
         phase1Response = await callWithRetry(
-            model, phase1Prompt, fileCache, token
+            model, phase1Prompt, fileCache, token, phase1Tools
         );
     } catch (err: any) {
         throw new Error(`Phase 1 LLM call failed for ${group.files[0]}: ${err.message}`);
@@ -942,7 +970,7 @@ async function processSingleSample(
         // No try/catch — LLM or parse failures should fail the entire
         // file group to avoid writing incomplete training data.
         const phase2Response = await callWithRetry(
-            model, phase2Prompt, fileCache, token
+            model, phase2Prompt, fileCache, token, config.phase2Tools
         );
         const irrelevantIds = parsePhase2Response(
             phase2Response, searchResults.length,
