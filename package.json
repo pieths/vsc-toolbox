@@ -64,6 +64,11 @@
         "command": "vscToolbox.generatePerFileEmbeddingTrainingData",
         "title": "Generate Per-File Embedding Training Data",
         "category": "VSC Toolbox"
+      },
+      {
+        "command": "vscToolbox.openPerFileEmbeddingTrainingData",
+        "title": "Open Per-File Embedding Training Data",
+        "category": "VSC Toolbox"
       }
     ],
     "configuration": {

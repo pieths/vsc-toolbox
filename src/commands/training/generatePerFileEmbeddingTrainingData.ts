@@ -64,7 +64,7 @@ interface Phase1Sample {
 }
 
 /** A chunk reference using line numbers (content extracted programmatically) */
-interface ChunkRef {
+export interface ChunkRef {
     /** Absolute file path */
     filePath: string;
     /** 1-based start line (inclusive) */
@@ -74,7 +74,7 @@ interface ChunkRef {
 }
 
 /** A training sample with content resolved from the actual file */
-interface ResolvedTrainingSample {
+export interface ResolvedTrainingSample {
     query: string;
     queryType: string;
     positive: ChunkRef;

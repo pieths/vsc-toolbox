@@ -10,6 +10,7 @@ import { FilterLinesByPatternCommand } from './filterLinesByPattern';
 import { OpenFileUnderCursorCommand } from './openFileUnderCursor';
 import { SelectDefaultModelCommand } from './selectDefaultModel';
 import { GeneratePerFileEmbeddingTrainingDataCommand } from './training/generatePerFileEmbeddingTrainingData';
+import { OpenPerFileEmbeddingTrainingDataCommand } from './training/openPerFileEmbeddingTrainingData';
 
 /**
  * Command registry - add new commands here to automatically register them
@@ -24,4 +25,5 @@ export const COMMAND_REGISTRY = [
     OpenFileUnderCursorCommand,
     SelectDefaultModelCommand,
     GeneratePerFileEmbeddingTrainingDataCommand,
+    OpenPerFileEmbeddingTrainingDataCommand,
 ] as const;
