@@ -31,7 +31,7 @@ interface TrainingConfig {
     excludePatterns: string[];
     /** Language model ID to use for generation */
     modelId: string;
-    /** Maximum number of concurrent LLM calls */
+    /** Maximum number of concurrent file groups to process */
     concurrency: number;
     /** Seconds to wait between dispatching batches */
     delayBetweenBatches: number;
@@ -668,7 +668,10 @@ function delay(seconds: number): Promise<void> {
 // ── File group processing ───────────────────────────────────────────
 
 /**
- * Process all pending file groups in batches with progress reporting.
+ * Process all pending file groups using a worker pool with progress reporting.
+ * Spawns N workers (config.concurrency) that each pull the next pending
+ * group from a shared index counter. As soon as one group finishes, the
+ * worker immediately picks up the next.
  */
 async function processAllGroups(
     pendingGroups: FileGroup[],
@@ -687,56 +690,56 @@ async function processAllGroups(
 
     const fileCache = new ScopedFileCache();
 
-    // Process in batches based on concurrency
-    let index = 0;
+    // Shared index counter — each worker atomically grabs the next group.
+    // Safe without locks because JS is single-threaded (no concurrent mutation).
+    let nextIndex = 0;
 
-    while (index < pendingGroups.length && !token.isCancellationRequested) {
-        // Dispatch a batch
-        const batchSize = Math.min(config.concurrency, pendingGroups.length - index);
-        const batch = pendingGroups.slice(index, index + batchSize);
-        index += batchSize;
+    function reportProgress(): void {
+        const elapsed = (Date.now() - startTime) / 1000;
+        const rate = completed / elapsed;
+        const remaining = (pendingGroups.length - completed) / rate;
 
-        const batchPromises = batch.map(fileGroup => processFileGroup(
-            fileGroup, config, phase1Template, phase2Template,
-            model, fileCache, token,
-        ));
+        progress.report({
+            increment: (1 / pendingGroups.length) * 100,
+            message: `${completed}/${pendingGroups.length} groups (${totalSamples} samples, ${errors} errors, ~${Math.ceil(remaining / 60)}m remaining)`,
+        });
+    }
 
-        // Wait for all groups in the batch to complete.
-        // Uses allSettled so that a failure in one file group does not
-        // prevent other groups in the batch from completing. Failed
-        // groups are counted as errors and can be retried on subsequent runs.
-        const results = await Promise.allSettled(batchPromises);
+    // Each worker loops pulling the next group until none remain
+    async function worker(): Promise<void> {
+        while (!token.isCancellationRequested) {
+            const index = nextIndex++;
+            if (index >= pendingGroups.length) break;
 
-        for (const result of results) {
-            completed++;
-            if (result.status === 'fulfilled') {
-                totalSamples += result.value.samples;
-                totalDiscarded += result.value.discarded;
-            } else {
+            try {
+                const result = await processFileGroup(
+                    pendingGroups[index], config, phase1Template,
+                    phase2Template, model, fileCache, token
+                );
+                totalSamples += result.samples;
+                totalDiscarded += result.discarded;
+            } catch (err) {
                 errors++;
-                log(`Training: Error — ${result.reason}`);
+                log(`Training: Error — ${err}`);
             }
 
-            const elapsed = (Date.now() - startTime) / 1000;
-            const rate = completed / elapsed;
-            const remaining = (pendingGroups.length - completed) / rate;
+            completed++;
+            reportProgress();
 
-            progress.report({
-                increment: (1 / pendingGroups.length) * 100,
-                message: `${completed}/${pendingGroups.length} groups (${totalSamples} samples, ${errors} errors, ~${Math.ceil(remaining / 60)}m remaining)`,
-            });
-        }
-
-        // Periodically clear the file cache to limit memory usage
-        if (completed % 50 === 0) {
-            fileCache.clear();
-        }
-
-        // Delay between batches (unless this is the last batch or cancelled)
-        if (index < pendingGroups.length && !token.isCancellationRequested) {
-            await delay(config.delayBetweenBatches);
+            // Periodically clear the file cache to limit memory usage
+            if (completed % 100 === 0) {
+                fileCache.clear();
+            }
         }
     }
+
+    // Spawn N workers — they all share the same index counter
+    const workers: Promise<void>[] = [];
+    for (let i = 0; i < config.concurrency; i++) {
+        workers.push(worker());
+    }
+
+    await Promise.all(workers);
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     const message = token.isCancellationRequested
