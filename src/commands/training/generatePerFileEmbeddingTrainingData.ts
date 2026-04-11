@@ -11,11 +11,11 @@ import {
     ALL_AGENT_TOOLS,
     getModel,
     sendLanguageModelRequest,
-} from '../common/languageModelUtils';
-import { ContentIndex, NearestEmbeddingResult } from '../common/index';
-import { ScopedFileCache } from '../common/scopedFileCache';
-import { log } from '../common/logger';
-import { createMarkdownCodeBlock } from '../common/markdownUtils';
+} from '../../common/languageModelUtils';
+import { ContentIndex, NearestEmbeddingResult } from '../../common/index';
+import { ScopedFileCache } from '../../common/scopedFileCache';
+import { log } from '../../common/logger';
+import { createMarkdownCodeBlock } from '../../common/markdownUtils';
 
 // ── Types ─────────────────────────────────────────────────────────────
 

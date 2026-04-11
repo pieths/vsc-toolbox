@@ -9,7 +9,7 @@ import { TestLanguageModelToolCommand } from './testLanguageModelTool';
 import { FilterLinesByPatternCommand } from './filterLinesByPattern';
 import { OpenFileUnderCursorCommand } from './openFileUnderCursor';
 import { SelectDefaultModelCommand } from './selectDefaultModel';
-import { GeneratePerFileEmbeddingTrainingDataCommand } from './generatePerFileEmbeddingTrainingData';
+import { GeneratePerFileEmbeddingTrainingDataCommand } from './training/generatePerFileEmbeddingTrainingData';
 
 /**
  * Command registry - add new commands here to automatically register them
