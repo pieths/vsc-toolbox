@@ -349,6 +349,31 @@ export async function getModel(id?: string): Promise<vscode.LanguageModelChat | 
     return models.length > 0 ? models[0] : undefined;
 }
 
+async function sendRequest(
+    model: vscode.LanguageModelChat,
+    messages: vscode.LanguageModelChatMessage[],
+    tools: vscode.LanguageModelChatTool[],
+    token: vscode.CancellationToken
+): Promise<{ fragments: string[]; toolCalls: vscode.LanguageModelToolCallPart[] }> {
+    log(`sendLanguageModelRequest: Using model ${model.id} - call ${++totalCallCount}`);
+
+    const response = await model.sendRequest(messages, { tools }, token);
+
+    const fragments: string[] = [];
+    const toolCalls: vscode.LanguageModelToolCallPart[] = [];
+
+    // Collect response parts
+    for await (const part of response.stream) {
+        if (part instanceof vscode.LanguageModelTextPart) {
+            fragments.push(part.value);
+        } else if (part instanceof vscode.LanguageModelToolCallPart) {
+            toolCalls.push(part);
+        }
+    }
+
+    return { fragments, toolCalls };
+}
+
 /**
  * Send text to a language model with tool capability.
  *
@@ -379,29 +404,25 @@ export async function sendLanguageModelRequest(
     const tools = (enabledTools ?? ALL_AGENT_TOOLS).map(t => TOOL_MAP[t]());
     let toolCallCount = 0;
 
+    const requestTimeoutMs = 120_000; // 2 minutes per LLM request
+
     while (toolCallCount < maxToolCalls) {
         const { fragments, toolCalls } = await sendRequestLimiter.run(async () => {
-            log(`sendLanguageModelRequest: Using model ${resolvedModel.id} - call ${++totalCallCount}`);
-
-            const response = await resolvedModel.sendRequest(
-                messages,
-                { tools },
-                token
-            );
-
-            const fragments: string[] = [];
-            const toolCalls: vscode.LanguageModelToolCallPart[] = [];
-
-            // Collect response parts
-            for await (const part of response.stream) {
-                if (part instanceof vscode.LanguageModelTextPart) {
-                    fragments.push(part.value);
-                } else if (part instanceof vscode.LanguageModelToolCallPart) {
-                    toolCalls.push(part);
-                }
+            let timeoutId: ReturnType<typeof setTimeout>;
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                timeoutId = setTimeout(() => {
+                    log(`\nsendLanguageModelRequest: *** TIMEOUT *** LLM request timed out after ${requestTimeoutMs / 1000}s (call ${totalCallCount})\n`);
+                    reject(new Error('LLM request timed out'));
+                }, requestTimeoutMs);
+            });
+            try {
+                return await Promise.race([
+                    sendRequest(resolvedModel, messages, tools, token),
+                    timeoutPromise,
+                ]);
+            } finally {
+                clearTimeout(timeoutId!);
             }
-
-            return { fragments, toolCalls };
         });
 
         // If no tool calls, we're done - return the text response
