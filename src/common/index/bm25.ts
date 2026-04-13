@@ -31,7 +31,7 @@ export interface ScoredFile {
  * @param results - Raw search outputs from worker threads (merged across all workers)
  * @param totalFilesSearched - Total number of files that were searched (for IDF)
  * @param k1 - BM25 term frequency saturation parameter (default: 1.2)
- * @param b - BM25 document length normalization parameter (default: 0.75)
+ * @param b - BM25 document length normalization parameter (default: 0.15)
  * @param proximityWeight - Weight for the co-occurrence proximity bonus (default: 0.5)
  * @returns Scored files sorted by score descending
  */
@@ -39,7 +39,7 @@ export function rankFiles(
     results: SearchOutput[],
     totalFilesSearched: number,
     k1: number = 1.2,
-    b: number = 0.75,
+    b: number = 0.15,
     proximityWeight: number = 0.5,
 ): ScoredFile[] {
     if (results.length === 0) {
