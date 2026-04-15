@@ -8,12 +8,13 @@ import * as fs from 'fs';
  * during a single invocation of a tool or command.
  */
 export class ScopedFileCache {
-    private cache = new Map<string, string[]>();
+    private cache = new Map<string, Promise<string[]>>();
 
     async getLines(filePath: string): Promise<string[]> {
         if (!this.cache.has(filePath)) {
-            const content = await fs.promises.readFile(filePath, 'utf8');
-            this.cache.set(filePath, content.split('\n'));
+            this.cache.set(filePath, fs.promises.readFile(filePath, 'utf8')
+                .then(content => content.split('\n'))
+                .catch(err => { this.cache.delete(filePath); throw err; }));
         }
         return this.cache.get(filePath)!;
     }
