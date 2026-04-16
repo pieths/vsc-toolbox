@@ -18,6 +18,8 @@ interface HardNegativeVerification {
     chunk: ChunkRef;
     /** Whether this hard negative was found in the current search results */
     foundInSearchResults: boolean;
+    /** Similarity score from the embedding search, if found */
+    score?: number;
 }
 
 /** Verification result for a single training sample */
@@ -47,14 +49,14 @@ async function loadTrainingData(filePath: string): Promise<ResolvedTrainingSampl
 // ── Search verification ───────────────────────────────────────────────
 
 /**
- * Check whether a ChunkRef exactly matches any entry in the search results.
+ * Find a ChunkRef in the search results and return the matching result.
  * Comparison is by filePath, startLine, and endLine.
  */
-function isChunkInSearchResults(
+function findChunkInSearchResults(
     chunk: ChunkRef,
     searchResults: NearestEmbeddingResult[],
-): boolean {
-    return searchResults.some(r =>
+): NearestEmbeddingResult | undefined {
+    return searchResults.find(r =>
         r.filePath === chunk.filePath
         && r.startLine === chunk.startLine
         && r.endLine === chunk.endLine
@@ -74,10 +76,14 @@ async function verifySample(
     const searchResults = await contentIndex.searchEmbeddings(sample.query, topK);
 
     // Check each hard negative against the full search result set
-    const hardNegativeResults: HardNegativeVerification[] = sample.hardNegatives.map(chunk => ({
-        chunk,
-        foundInSearchResults: isChunkInSearchResults(chunk, searchResults),
-    }));
+    const hardNegativeResults: HardNegativeVerification[] = sample.hardNegatives.map(chunk => {
+        const match = findChunkInSearchResults(chunk, searchResults);
+        return {
+            chunk,
+            foundInSearchResults: !!match,
+            score: match?.score,
+        };
+    });
 
     return { sample, hardNegativeResults };
 }
@@ -126,8 +132,9 @@ async function formatVerifiedSampleAsMarkdown(
     if (hardNegativeResults.length > 0) {
         md += `## Hard Negatives (${hardNegativeResults.length})\n\n`;
         for (let j = 0; j < hardNegativeResults.length; j++) {
-            const { chunk, foundInSearchResults } = hardNegativeResults[j];
-            const tag = foundInSearchResults ? '' : ' [NOT IN SEARCH RESULTS]';
+            const { chunk, foundInSearchResults, score } = hardNegativeResults[j];
+            const scoreTag = score !== undefined ? ` (score: ${score.toFixed(4)})` : '';
+            const tag = foundInSearchResults ? scoreTag : ' [NOT IN SEARCH RESULTS]';
             md += `### Hard Negative ${j + 1}${tag}\n\n`;
             md += await formatChunkRefAsMarkdown(chunk, fileCache);
         }
