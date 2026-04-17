@@ -124,9 +124,9 @@ directly answer the query.
 ### Query Types
 
 Include a mix of these query types, varying from broad to specific.
-Each query must be at least 8 words long. Most queries (~70%) should be natural
+Each query must be at least 8 words long. Most queries (~80%) should be natural
 language descriptions of what the code does, as if the developer does not yet
-know which class or function implements the behavior. The remaining ~30% can
+know which class or function implements the behavior. The remaining ~20% can
 include specific class or method names for symbol-based lookups.
 
 - **conceptual**: "how does a navigation get committed after all throttles approve",
@@ -160,6 +160,10 @@ include specific class or method names for symbol-based lookups.
 - Line numbers must be 1-based and refer to actual lines in the file.
 - Keep line ranges focused — typically 10-50 lines covering a meaningful code
   unit (a function, a method, a struct definition, etc.).
+- For conceptual, behavioral, and debugging queries, do not use the exact
+  class or method name from the positive. Describe the behavior using general
+  terms a developer would use if they didn't already know the implementation.
+  Symbol and feature-level queries are exempt from this rule.
 
 ### Output Format
 
@@ -219,6 +223,8 @@ A result IS relevant (do NOT include it) if it:
 - Is a caller, wrapper, or delegate of the correct answer
 - Defines interfaces or base classes that the correct answer implements
 - Is part of the same feature or workflow as the correct answer
+- Would itself be a valid answer to the query — e.g., an overload, override,
+  or alternative implementation of the same function as the correct answer.
 
 When in doubt, consider the result relevant and do NOT include it.
 
