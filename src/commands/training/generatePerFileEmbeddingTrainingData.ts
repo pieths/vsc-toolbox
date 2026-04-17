@@ -36,8 +36,6 @@ interface TrainingConfig {
     concurrency: number;
     /** Maximum number of hard negatives to include with each query */
     maxHardNegatives: number;
-    /** Number of easy negatives to generate per query */
-    numEasyNegatives: number;
     /** Language model tools to enable during Phase 1 (query generation) */
     phase1Tools: AgentTool[];
     /** Language model tools to enable during Phase 2 (hard negative identification) */
@@ -92,7 +90,6 @@ const CONFIG_TEMPLATE = `---
     "modelId": "",
     "concurrency": 3,
     "maxHardNegatives": 5,
-    "numEasyNegatives": 10,
     "phase1Tools": [],
     "phase2Tools": []
 }
@@ -296,9 +293,6 @@ function parseConfigFile(raw: string): ParsedConfigFile {
     // Default optional fields
     if (config.maxHardNegatives === undefined) {
         config.maxHardNegatives = 5;
-    }
-    if (config.numEasyNegatives === undefined) {
-        config.numEasyNegatives = 10;
     }
     if (config.phase1Tools === undefined) {
         config.phase1Tools = [];
@@ -877,19 +871,6 @@ async function processSingleSample(
             .slice(0, config.maxHardNegatives);
 
         resolved.hardNegatives = hardNegCandidates.map(r => ({
-            filePath: r.filePath,
-            startLine: r.startLine,
-            endLine: r.endLine,
-        }));
-    }
-
-    // Easy negatives: negated vector search.
-    // No try/catch — incomplete training data should not be written.
-    if (config.numEasyNegatives > 0) {
-        const easyResults = await contentIndex.searchEmbeddings(
-            sample.query, config.numEasyNegatives, true // negated
-        );
-        resolved.easyNegatives = easyResults.map(r => ({
             filePath: r.filePath,
             startLine: r.startLine,
             endLine: r.endLine,
