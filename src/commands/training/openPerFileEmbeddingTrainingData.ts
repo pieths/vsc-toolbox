@@ -73,11 +73,10 @@ async function verifySample(
     contentIndex: ContentIndex,
     topK: number,
 ): Promise<VerifiedSample> {
-    // Run the same embedding searches that were used during training data generation
+    // Run the embedding search covering both hard and easy negative ranges
     const searchResults = await contentIndex.searchEmbeddings(sample.query, topK);
-    const negatedSearchResults = await contentIndex.searchEmbeddings(sample.query, topK, true);
 
-    // Check each hard negative against the standard search results
+    // Check each hard negative against the search results
     const hardNegativeResults: NegativeVerification[] = sample.hardNegatives.map(chunk => {
         const match = findChunkInSearchResults(chunk, searchResults);
         return {
@@ -87,9 +86,9 @@ async function verifySample(
         };
     });
 
-    // Check each easy negative against the negated search results
+    // Check each easy negative against the search results
     const easyNegativeResults: NegativeVerification[] = sample.easyNegatives.map(chunk => {
-        const match = findChunkInSearchResults(chunk, negatedSearchResults);
+        const match = findChunkInSearchResults(chunk, searchResults);
         return {
             chunk,
             foundInSearchResults: !!match,
@@ -253,10 +252,27 @@ export class OpenPerFileEmbeddingTrainingDataCommand {
             return;
         }
 
-        // Step 3: Verify each sample's hard negatives against current search results
+        // Step 3: Prompt user for topK value
+        const topKInput = await vscode.window.showInputBox({
+            prompt: 'Maximum number of search results to validate negatives against (topK)',
+            value: '2000',
+            validateInput: (value) => {
+                const n = Number(value);
+                if (!Number.isInteger(n) || n < 1) {
+                    return 'Please enter a positive integer';
+                }
+                return undefined;
+            },
+        });
+
+        if (!topKInput) {
+            return;
+        }
+
+        const topK = Number(topKInput);
+
+        // Step 4: Verify each sample's negatives against current search results
         const contentIndex = ContentIndex.getInstance();
-        const topK = vscode.workspace.getConfiguration('vscToolbox')
-            .get<number>('embeddingSearchTopK', 30);
         const fileCache = new ScopedFileCache();
 
         const verifiedSamples: VerifiedSample[] = [];
