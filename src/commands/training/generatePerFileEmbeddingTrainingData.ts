@@ -34,8 +34,6 @@ interface TrainingConfig {
     modelId: string;
     /** Maximum number of concurrent file groups to process */
     concurrency: number;
-    /** Seconds to wait between dispatching batches */
-    delayBetweenBatches: number;
     /** Maximum number of hard negatives to include with each query */
     maxHardNegatives: number;
     /** Number of easy negatives to generate per query */
@@ -95,7 +93,6 @@ const CONFIG_TEMPLATE = `---
     ],
     "modelId": "",
     "concurrency": 3,
-    "delayBetweenBatches": 20,
     "maxHardNegatives": 5,
     "numEasyNegatives": 10,
     "phase1Tools": [],
@@ -272,7 +269,7 @@ function parseConfigFile(raw: string): ParsedConfigFile {
     // Validate required fields
     const required: (keyof TrainingConfig)[] = [
         'outputDir', 'rootDirs', 'fileExtensions', 'excludePatterns',
-        'modelId', 'concurrency', 'delayBetweenBatches',
+        'modelId', 'concurrency'
     ];
     for (const field of required) {
         if (config[field] === undefined || config[field] === null) {
@@ -291,9 +288,6 @@ function parseConfigFile(raw: string): ParsedConfigFile {
     }
     if (config.concurrency < 1) {
         throw new Error('concurrency must be at least 1');
-    }
-    if (config.delayBetweenBatches < 0) {
-        throw new Error('delayBetweenBatches must not be negative');
     }
     if (!phase1PromptTemplate) {
         throw new Error('Phase 1 prompt template must not be empty');
