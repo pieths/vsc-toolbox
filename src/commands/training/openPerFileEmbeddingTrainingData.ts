@@ -6,10 +6,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { ContentIndex, NearestEmbeddingResult } from '../../common/index';
 import { ScopedFileCache } from '../../common/scopedFileCache';
-import {
-    ChunkRef,
-    ResolvedTrainingSample,
-} from './generatePerFileEmbeddingTrainingData';
+import { ChunkRef, ResolvedTrainingSample } from './types';
 
 // ── Types ─────────────────────────────────────────────────────────────
 

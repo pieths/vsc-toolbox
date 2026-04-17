@@ -13,6 +13,7 @@ import {
     sendLanguageModelRequest,
 } from '../../common/languageModelUtils';
 import { ContentIndex, NearestEmbeddingResult } from '../../common/index';
+import { ChunkRef, ResolvedTrainingSample } from './types';
 import { ScopedFileCache } from '../../common/scopedFileCache';
 import { log } from '../../common/logger';
 import { createMarkdownCodeBlock } from '../../common/markdownUtils';
@@ -61,25 +62,6 @@ interface Phase1Sample {
     filePath: string;
     startLine: number;
     endLine: number;
-}
-
-/** A chunk reference using line numbers (content extracted programmatically) */
-export interface ChunkRef {
-    /** Absolute file path */
-    filePath: string;
-    /** 1-based start line (inclusive) */
-    startLine: number;
-    /** 1-based end line (inclusive) */
-    endLine: number;
-}
-
-/** A training sample with content resolved from the actual file */
-export interface ResolvedTrainingSample {
-    query: string;
-    queryType: string;
-    positive: ChunkRef;
-    hardNegatives: ChunkRef[];
-    easyNegatives: ChunkRef[];  // content resolved at training time
 }
 
 /** A group of files with the same basename in the same directory */
