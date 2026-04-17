@@ -13,10 +13,10 @@ import {
 
 // ── Types ─────────────────────────────────────────────────────────────
 
-/** Verification result for a single hard negative */
-interface HardNegativeVerification {
+/** Verification result for a single negative */
+interface NegativeVerification {
     chunk: ChunkRef;
-    /** Whether this hard negative was found in the current search results */
+    /** Whether this negative was found in the current search results */
     foundInSearchResults: boolean;
     /** Similarity score from the embedding search, if found */
     score?: number;
@@ -25,7 +25,8 @@ interface HardNegativeVerification {
 /** Verification result for a single training sample */
 interface VerifiedSample {
     sample: ResolvedTrainingSample;
-    hardNegativeResults: HardNegativeVerification[];
+    hardNegativeResults: NegativeVerification[];
+    easyNegativeResults: NegativeVerification[];
 }
 
 // ── JSONL loading ─────────────────────────────────────────────────────
@@ -65,18 +66,19 @@ function findChunkInSearchResults(
 
 /**
  * Verify a single training sample by running the query through the
- * embedding index and checking each hard negative against the results.
+ * embedding index and checking each negative against the results.
  */
 async function verifySample(
     sample: ResolvedTrainingSample,
     contentIndex: ContentIndex,
     topK: number,
 ): Promise<VerifiedSample> {
-    // Run the same embedding search that was used during training data generation
+    // Run the same embedding searches that were used during training data generation
     const searchResults = await contentIndex.searchEmbeddings(sample.query, topK);
+    const negatedSearchResults = await contentIndex.searchEmbeddings(sample.query, topK, true);
 
-    // Check each hard negative against the full search result set
-    const hardNegativeResults: HardNegativeVerification[] = sample.hardNegatives.map(chunk => {
+    // Check each hard negative against the standard search results
+    const hardNegativeResults: NegativeVerification[] = sample.hardNegatives.map(chunk => {
         const match = findChunkInSearchResults(chunk, searchResults);
         return {
             chunk,
@@ -85,7 +87,17 @@ async function verifySample(
         };
     });
 
-    return { sample, hardNegativeResults };
+    // Check each easy negative against the negated search results
+    const easyNegativeResults: NegativeVerification[] = sample.easyNegatives.map(chunk => {
+        const match = findChunkInSearchResults(chunk, negatedSearchResults);
+        return {
+            chunk,
+            foundInSearchResults: !!match,
+            score: match?.score,
+        };
+    });
+
+    return { sample, hardNegativeResults, easyNegativeResults };
 }
 
 // ── Markdown formatting ───────────────────────────────────────────────
@@ -120,7 +132,7 @@ async function formatVerifiedSampleAsMarkdown(
     verified: VerifiedSample,
     fileCache: ScopedFileCache,
 ): Promise<string> {
-    const { sample, hardNegativeResults } = verified;
+    const { sample, hardNegativeResults, easyNegativeResults } = verified;
     let md = `# Sample ${index + 1}: ${sample.query}\n\n`;
     md += `**Query Type:** ${sample.queryType}\n\n`;
 
@@ -140,12 +152,15 @@ async function formatVerifiedSampleAsMarkdown(
         }
     }
 
-    // Easy negatives (shown as-is, no verification)
-    if (sample.easyNegatives.length > 0) {
-        md += `## Easy Negatives (${sample.easyNegatives.length})\n\n`;
-        for (let j = 0; j < sample.easyNegatives.length; j++) {
-            md += `### Easy Negative ${j + 1}\n\n`;
-            md += await formatChunkRefAsMarkdown(sample.easyNegatives[j], fileCache);
+    // Easy negatives with verification annotations
+    if (easyNegativeResults.length > 0) {
+        md += `## Easy Negatives (${easyNegativeResults.length})\n\n`;
+        for (let j = 0; j < easyNegativeResults.length; j++) {
+            const { chunk, foundInSearchResults, score } = easyNegativeResults[j];
+            const scoreTag = score !== undefined ? ` (score: ${score.toFixed(4)})` : '';
+            const tag = foundInSearchResults ? scoreTag : ' [NOT IN SEARCH RESULTS]';
+            md += `### Easy Negative ${j + 1}${tag}\n\n`;
+            md += await formatChunkRefAsMarkdown(chunk, fileCache);
         }
     }
 
@@ -162,23 +177,33 @@ async function buildVerificationReport(
     fileCache: ScopedFileCache,
     sourceFileName: string,
 ): Promise<string> {
-    // Count how many hard negatives were not found across all samples
+    // Count how many negatives were not found across all samples
     let totalHardNegatives = 0;
-    let totalMismatches = 0;
+    let hardMismatches = 0;
+    let totalEasyNegatives = 0;
+    let easyMismatches = 0;
     for (const v of verifiedSamples) {
         for (const hn of v.hardNegativeResults) {
             totalHardNegatives++;
             if (!hn.foundInSearchResults) {
-                totalMismatches++;
+                hardMismatches++;
+            }
+        }
+        for (const en of v.easyNegativeResults) {
+            totalEasyNegatives++;
+            if (!en.foundInSearchResults) {
+                easyMismatches++;
             }
         }
     }
 
     // Summary header
     let report = `# Verification Report: ${sourceFileName}\n\n`;
-    report += `**Samples:** ${verifiedSamples.length} | `;
+    report += `**Samples:** ${verifiedSamples.length}\n\n`;
     report += `**Hard Negatives:** ${totalHardNegatives} | `;
-    report += `**Not In Search Results:** ${totalMismatches}\n\n`;
+    report += `**Not In Search Results:** ${hardMismatches}\n\n`;
+    report += `**Easy Negatives:** ${totalEasyNegatives} | `;
+    report += `**Not In Search Results:** ${easyMismatches}\n\n`;
     report += `---\n\n`;
 
     // Each sample's detailed output
