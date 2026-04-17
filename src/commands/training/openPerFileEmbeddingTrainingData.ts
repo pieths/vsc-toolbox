@@ -6,7 +6,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { ContentIndex, NearestEmbeddingResult } from '../../common/index';
 import { ScopedFileCache } from '../../common/scopedFileCache';
-import { ChunkRef, ResolvedTrainingSample } from './types';
+import { ChunkRef, TrainingSample } from './types';
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -21,7 +21,7 @@ interface NegativeVerification {
 
 /** Verification result for a single training sample */
 interface VerifiedSample {
-    sample: ResolvedTrainingSample;
+    sample: TrainingSample;
     hardNegativeResults: NegativeVerification[];
     easyNegativeResults: NegativeVerification[];
 }
@@ -29,15 +29,15 @@ interface VerifiedSample {
 // ── JSONL loading ─────────────────────────────────────────────────────
 
 /**
- * Read a JSONL file and parse each line as a ResolvedTrainingSample.
+ * Read a JSONL file and parse each line as a TrainingSample.
  * Skips blank lines; throws on invalid JSON.
  */
-async function loadTrainingData(filePath: string): Promise<ResolvedTrainingSample[]> {
+async function loadTrainingData(filePath: string): Promise<TrainingSample[]> {
     const content = await fs.promises.readFile(filePath, 'utf8');
     const lines = content.split('\n').filter(line => line.trim());
     return lines.map((line, i) => {
         try {
-            return JSON.parse(line) as ResolvedTrainingSample;
+            return JSON.parse(line) as TrainingSample;
         } catch {
             throw new Error(`Invalid JSON on line ${i + 1} of ${filePath}`);
         }
@@ -66,7 +66,7 @@ function findChunkInSearchResults(
  * embedding index and checking each negative against the results.
  */
 async function verifySample(
-    sample: ResolvedTrainingSample,
+    sample: TrainingSample,
     contentIndex: ContentIndex,
     topK: number,
 ): Promise<VerifiedSample> {
@@ -236,7 +236,7 @@ export class OpenPerFileEmbeddingTrainingDataCommand {
         const fileName = path.basename(filePath);
 
         // Step 2: Load and parse the training data
-        let samples: ResolvedTrainingSample[];
+        let samples: TrainingSample[];
         try {
             samples = await loadTrainingData(filePath);
         } catch (err: any) {

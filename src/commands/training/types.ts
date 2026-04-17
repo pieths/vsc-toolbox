@@ -11,8 +11,8 @@ export interface ChunkRef {
     endLine: number;
 }
 
-/** A training sample with content resolved from the actual file */
-export interface ResolvedTrainingSample {
+/** A training sample */
+export interface TrainingSample {
     query: string;
     queryType: string;
     positive: ChunkRef;

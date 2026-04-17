@@ -13,7 +13,7 @@ import {
     sendLanguageModelRequest,
 } from '../../common/languageModelUtils';
 import { ContentIndex, NearestEmbeddingResult } from '../../common/index';
-import { ChunkRef, ResolvedTrainingSample } from './types';
+import { ChunkRef, TrainingSample } from './types';
 import { ScopedFileCache } from '../../common/scopedFileCache';
 import { log } from '../../common/logger';
 import { createMarkdownCodeBlock } from '../../common/markdownUtils';
@@ -565,7 +565,7 @@ function validatePhase1Samples(
  */
 async function writeOutput(
     outputPath: string,
-    samples: ResolvedTrainingSample[],
+    samples: TrainingSample[],
 ): Promise<void> {
     await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
     const lines = samples.map(s => JSON.stringify(s));
@@ -579,7 +579,7 @@ async function writeOutput(
  */
 async function writeDebugOutput(
     outputPath: string,
-    samples: ResolvedTrainingSample[],
+    samples: TrainingSample[],
     fileCache: ScopedFileCache,
 ): Promise<void> {
     const ext = path.extname(outputPath);
@@ -869,9 +869,9 @@ async function runPhase2(
     model: vscode.LanguageModelChat,
     fileCache: ScopedFileCache,
     token: vscode.CancellationToken,
-): Promise<ResolvedTrainingSample[]> {
+): Promise<TrainingSample[]> {
     const contentIndex = ContentIndex.getInstance();
-    const finalSamples: ResolvedTrainingSample[] = [];
+    const finalSamples: TrainingSample[] = [];
     const topK = vscode.workspace.getConfiguration('vscToolbox')
         .get<number>('embeddingSearchTopK', 30);
     const batchSize = 100;
@@ -912,8 +912,8 @@ async function processSingleSample(
     contentIndex: ContentIndex,
     topK: number,
     token: vscode.CancellationToken,
-): Promise<ResolvedTrainingSample> {
-    const resolved: ResolvedTrainingSample = {
+): Promise<TrainingSample> {
+    const resolved: TrainingSample = {
         query: sample.query,
         queryType: sample.queryType,
         positive: {
