@@ -42,8 +42,6 @@ interface TrainingConfig {
     phase1Tools: AgentTool[];
     /** Language model tools to enable during Phase 2 (hard negative identification) */
     phase2Tools: AgentTool[];
-    /** File names to debug */
-    fileNamesToDebug: string[];
 }
 
 /** Parsed config file with both structured config and prompt template */
@@ -96,8 +94,7 @@ const CONFIG_TEMPLATE = `---
     "maxHardNegatives": 5,
     "numEasyNegatives": 10,
     "phase1Tools": [],
-    "phase2Tools": [],
-    "fileNamesToDebug": []
+    "phase2Tools": []
 }
 ---
 # Phase 1: Generate Queries with Positive Samples
@@ -318,9 +315,6 @@ function parseConfigFile(raw: string): ParsedConfigFile {
         if (!ALL_AGENT_TOOLS.includes(tool)) {
             throw new Error(`Invalid phase2Tools value: "${tool}". Valid values: ${ALL_AGENT_TOOLS.join(', ')}`);
         }
-    }
-    if (config.fileNamesToDebug === undefined) {
-        config.fileNamesToDebug = [];
     }
 
     return { config, phase1PromptTemplate, phase2PromptTemplate };
@@ -566,75 +560,6 @@ async function writeOutput(
     await fs.promises.writeFile(outputPath, lines.join('\n') + '\n', 'utf8');
 }
 
-/**
- * Write a human-readable debug file with hydrated content for all chunks.
- * The debug file is written next to the output file with a ".debug.md"
- * extension (e.g., foo.ABC123.debug.md).
- */
-async function writeDebugOutput(
-    outputPath: string,
-    samples: TrainingSample[],
-    fileCache: ScopedFileCache,
-): Promise<void> {
-    const ext = path.extname(outputPath);
-    const base = outputPath.slice(0, -ext.length);
-    const debugPath = `${base}.debug.md`;
-
-    const sections: string[] = [];
-
-    for (let i = 0; i < samples.length; i++) {
-        const sample = samples[i];
-        let md = `# Sample ${i + 1}: ${sample.query}\n\n`;
-        md += `**Query Type:** ${sample.queryType}\n\n`;
-
-        // Positive
-        md += `## Positive\n\n`;
-        md += await formatChunkRefAsMarkdown(sample.positive, fileCache);
-
-        // Hard negatives
-        if (sample.hardNegatives.length > 0) {
-            md += `## Hard Negatives (${sample.hardNegatives.length})\n\n`;
-            for (let j = 0; j < sample.hardNegatives.length; j++) {
-                md += `### Hard Negative ${j + 1}\n\n`;
-                md += await formatChunkRefAsMarkdown(sample.hardNegatives[j], fileCache);
-            }
-        }
-
-        // Easy negatives
-        if (sample.easyNegatives.length > 0) {
-            md += `## Easy Negatives (${sample.easyNegatives.length})\n\n`;
-            for (let j = 0; j < sample.easyNegatives.length; j++) {
-                md += `### Easy Negative ${j + 1}\n\n`;
-                md += await formatChunkRefAsMarkdown(sample.easyNegatives[j], fileCache);
-            }
-        }
-
-        sections.push(md);
-    }
-
-    await fs.promises.writeFile(debugPath, sections.join('\n---\n\n') + '\n', 'utf8');
-    log(`Training: Debug output written to ${debugPath}`);
-}
-
-/**
- * Format a ChunkRef as a markdown section with hydrated file content.
- */
-async function formatChunkRefAsMarkdown(
-    ref: ChunkRef,
-    fileCache: ScopedFileCache,
-): Promise<string> {
-    let md = `**${ref.filePath}** (lines ${ref.startLine}-${ref.endLine})\n\n`;
-    try {
-        const allLines = await fileCache.getLines(ref.filePath);
-        const lines = allLines.slice(ref.startLine - 1, ref.endLine);
-        const numbered = lines.map((line, i) => `${ref.startLine + i}: ${line}`).join('\n');
-        md += `\`\`\`\n${numbered}\n\`\`\`\n\n`;
-    } catch {
-        md += `\`\`\`\n[unable to read file content]\n\`\`\`\n\n`;
-    }
-    return md;
-}
-
 // ── Delay helper ────────────────────────────────────────────────────
 
 function delay(seconds: number): Promise<void> {
@@ -756,17 +681,6 @@ async function processFileGroup(
 
     if (finalSamples.length > 0 && !token.isCancellationRequested) {
         await writeOutput(group.outputPath, finalSamples);
-
-        // Write debug output if any file in the group matches fileNamesToDebug
-        if (config.fileNamesToDebug.length > 0) {
-            const debugNames = new Set(config.fileNamesToDebug.map(n => n.toLowerCase()));
-            const shouldDebug = group.files.some(f =>
-                debugNames.has(path.basename(f).toLowerCase())
-            );
-            if (shouldDebug) {
-                await writeDebugOutput(group.outputPath, finalSamples, fileCache);
-            }
-        }
     }
 
     log(`Training: ${group.files[0]} — ${finalSamples.length} samples, ${discarded} discarded`);
