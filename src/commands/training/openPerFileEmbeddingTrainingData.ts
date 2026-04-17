@@ -17,6 +17,8 @@ interface NegativeVerification {
     foundInSearchResults: boolean;
     /** Similarity score from the embedding search, if found */
     score?: number;
+    /** 1-based rank in the search results, if found */
+    rank?: number;
 }
 
 /** Verification result for a single training sample */
@@ -47,18 +49,19 @@ async function loadTrainingData(filePath: string): Promise<TrainingSample[]> {
 // ── Search verification ───────────────────────────────────────────────
 
 /**
- * Find a ChunkRef in the search results and return the matching result.
+ * Find a ChunkRef in the search results and return the index and matching result.
  * Comparison is by filePath, startLine, and endLine.
  */
 function findChunkInSearchResults(
     chunk: ChunkRef,
     searchResults: NearestEmbeddingResult[],
-): NearestEmbeddingResult | undefined {
-    return searchResults.find(r =>
+): { index: number; result: NearestEmbeddingResult } | undefined {
+    const index = searchResults.findIndex(r =>
         r.filePath === chunk.filePath
         && r.startLine === chunk.startLine
         && r.endLine === chunk.endLine
     );
+    return index >= 0 ? { index, result: searchResults[index] } : undefined;
 }
 
 /**
@@ -79,7 +82,8 @@ async function verifySample(
         return {
             chunk,
             foundInSearchResults: !!match,
-            score: match?.score,
+            score: match?.result.score,
+            rank: match ? match.index + 1 : undefined,
         };
     });
 
@@ -89,7 +93,8 @@ async function verifySample(
         return {
             chunk,
             foundInSearchResults: !!match,
-            score: match?.score,
+            score: match?.result.score,
+            rank: match ? match.index + 1 : undefined,
         };
     });
 
@@ -140,8 +145,8 @@ async function formatVerifiedSampleAsMarkdown(
     if (hardNegativeResults.length > 0) {
         md += `## Hard Negatives (${hardNegativeResults.length})\n\n`;
         for (let j = 0; j < hardNegativeResults.length; j++) {
-            const { chunk, foundInSearchResults, score } = hardNegativeResults[j];
-            const scoreTag = score !== undefined ? ` (score: ${score.toFixed(4)})` : '';
+            const { chunk, foundInSearchResults, score, rank } = hardNegativeResults[j];
+            const scoreTag = score !== undefined ? ` (rank: ${rank}, score: ${score.toFixed(4)})` : '';
             const tag = foundInSearchResults ? scoreTag : ' [NOT IN SEARCH RESULTS]';
             md += `### Hard Negative ${j + 1}${tag}\n\n`;
             md += await formatChunkRefAsMarkdown(chunk, fileCache);
@@ -152,8 +157,8 @@ async function formatVerifiedSampleAsMarkdown(
     if (easyNegativeResults.length > 0) {
         md += `## Easy Negatives (${easyNegativeResults.length})\n\n`;
         for (let j = 0; j < easyNegativeResults.length; j++) {
-            const { chunk, foundInSearchResults, score } = easyNegativeResults[j];
-            const scoreTag = score !== undefined ? ` (score: ${score.toFixed(4)})` : '';
+            const { chunk, foundInSearchResults, score, rank } = easyNegativeResults[j];
+            const scoreTag = score !== undefined ? ` (rank: ${rank}, score: ${score.toFixed(4)})` : '';
             const tag = foundInSearchResults ? scoreTag : ' [NOT IN SEARCH RESULTS]';
             md += `### Easy Negative ${j + 1}${tag}\n\n`;
             md += await formatChunkRefAsMarkdown(chunk, fileCache);
