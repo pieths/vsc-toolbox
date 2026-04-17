@@ -11,6 +11,7 @@ import { OpenFileUnderCursorCommand } from './openFileUnderCursor';
 import { SelectDefaultModelCommand } from './selectDefaultModel';
 import { GeneratePerFileEmbeddingTrainingDataCommand } from './training/generatePerFileEmbeddingTrainingData';
 import { OpenPerFileEmbeddingTrainingDataCommand } from './training/openPerFileEmbeddingTrainingData';
+import { UpdatePerFileEmbeddingTrainingDataEasyNegativesCommand } from './training/updatePerFileEmbeddingTrainingDataEasyNegatives';
 
 /**
  * Command registry - add new commands here to automatically register them
@@ -26,4 +27,5 @@ export const COMMAND_REGISTRY = [
     SelectDefaultModelCommand,
     GeneratePerFileEmbeddingTrainingDataCommand,
     OpenPerFileEmbeddingTrainingDataCommand,
+    UpdatePerFileEmbeddingTrainingDataEasyNegativesCommand,
 ] as const;

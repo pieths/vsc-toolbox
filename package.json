@@ -69,6 +69,11 @@
         "command": "vscToolbox.openPerFileEmbeddingTrainingData",
         "title": "Open Per-File Embedding Training Data",
         "category": "VSC Toolbox"
+      },
+      {
+        "command": "vscToolbox.updatePerFileEmbeddingTrainingDataEasyNegatives",
+        "title": "Update Per-File Embedding Training Data Easy Negatives",
+        "category": "VSC Toolbox"
       }
     ],
     "configuration": {
