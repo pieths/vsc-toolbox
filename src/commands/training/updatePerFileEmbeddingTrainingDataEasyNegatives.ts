@@ -19,6 +19,8 @@ interface EasyNegativeConfig {
     maxTopK: number;
     /** Number of easy negatives to select per sample */
     numNegatives: number;
+    /** Number of concurrent files to process */
+    concurrency: number;
 }
 
 // ── Config template ───────────────────────────────────────────────────
@@ -27,7 +29,8 @@ const CONFIG_TEMPLATE = `{
     "trainingSamplesDir": "",
     "minTopK": 500,
     "maxTopK": 2000,
-    "numNegatives": 10
+    "numNegatives": 10,
+    "concurrency": 10
 }
 `;
 
@@ -50,6 +53,9 @@ function parseConfig(raw: string): EasyNegativeConfig {
     }
     if (!Number.isInteger(config.numNegatives) || config.numNegatives < 1) {
         throw new Error('numNegatives must be a positive integer');
+    }
+    if (!Number.isInteger(config.concurrency) || config.concurrency < 1) {
+        throw new Error('concurrency must be a positive integer');
     }
 
     return config;
@@ -173,6 +179,53 @@ async function processFile(
     return { samples: samples.length };
 }
 
+/**
+ * Process all JSONL files using a worker pool with progress reporting.
+ * Spawns N workers (config.concurrency) that each pull the next file
+ * from a shared index counter.
+ */
+async function processAllFiles(
+    jsonlFiles: string[],
+    contentIndex: ContentIndex,
+    config: EasyNegativeConfig,
+    progress: vscode.Progress<{ increment?: number; message?: string }>,
+    token: vscode.CancellationToken,
+): Promise<{ totalFiles: number; totalSamples: number; errors: number }> {
+    let totalFiles = 0;
+    let totalSamples = 0;
+    let errors = 0;
+    let nextIndex = 0;
+
+    async function worker(): Promise<void> {
+        while (!token.isCancellationRequested) {
+            const i = nextIndex++;
+            if (i >= jsonlFiles.length) break;
+
+            try {
+                const result = await processFile(jsonlFiles[i], contentIndex, config, token);
+                totalSamples += result.samples;
+                totalFiles++;
+            } catch (err) {
+                errors++;
+                log(`Easy negatives: Error processing ${jsonlFiles[i]}: ${err}`);
+            }
+
+            progress.report({
+                increment: (1 / jsonlFiles.length) * 100,
+                message: `${totalFiles}/${jsonlFiles.length} files (${totalSamples} samples, ${errors} errors)`,
+            });
+        }
+    }
+
+    const workers: Promise<void>[] = [];
+    for (let i = 0; i < config.concurrency; i++) {
+        workers.push(worker());
+    }
+    await Promise.all(workers);
+
+    return { totalFiles, totalSamples, errors };
+}
+
 // ── Main command ────────────────────────────────────────────────────
 
 export class UpdatePerFileEmbeddingTrainingDataEasyNegativesCommand {
@@ -227,40 +280,19 @@ export class UpdatePerFileEmbeddingTrainingDataEasyNegativesCommand {
 
         log(`Easy negatives: Found ${jsonlFiles.length} JSONL files in ${config.trainingSamplesDir}`);
 
-        // Step 4: Process each file with progress
+        // Step 4: Process files with progress
         const contentIndex = ContentIndex.getInstance();
-        let totalFiles = 0;
-        let totalSamples = 0;
-        let errors = 0;
 
-        await vscode.window.withProgress(
+        const result = await vscode.window.withProgress(
             {
                 location: vscode.ProgressLocation.Notification,
                 title: 'VSC Toolbox: Updating Easy Negatives',
                 cancellable: true,
             },
-            async (progress, token) => {
-                for (let i = 0; i < jsonlFiles.length; i++) {
-                    if (token.isCancellationRequested) break;
-
-                    progress.report({
-                        increment: (1 / jsonlFiles.length) * 100,
-                        message: `${i + 1}/${jsonlFiles.length} files (${totalSamples} samples, ${errors} errors)`,
-                    });
-
-                    try {
-                        const result = await processFile(jsonlFiles[i], contentIndex, config, token);
-                        totalSamples += result.samples;
-                        totalFiles++;
-                    } catch (err) {
-                        errors++;
-                        log(`Easy negatives: Error processing ${jsonlFiles[i]}: ${err}`);
-                    }
-                }
-            },
+            (progress, token) => processAllFiles(jsonlFiles, contentIndex, config, progress, token),
         );
 
-        const message = `Easy negatives updated: ${totalSamples} samples across ${totalFiles} files. ${errors} errors.`;
+        const message = `Easy negatives updated: ${result.totalSamples} samples across ${result.totalFiles} files. ${result.errors} errors.`;
         log(`Easy negatives: ${message}`);
         vscode.window.showInformationMessage(message);
     }
