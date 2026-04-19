@@ -14,6 +14,7 @@ import { VectorCacheClient } from './vectorCache/vectorCacheClient';
 import { PathFilter } from './pathFilter';
 import { SymbolCache } from './symbolCache';
 import type { IndexSymbol } from './parsers/types';
+import type { FileScrubPatterns } from './fileScrubber';
 import { log, warn, error } from '../logger';
 
 /** Mutation queue entry — ordered for temporal "last action wins" collapse. */
@@ -63,6 +64,7 @@ export class CacheManager {
     private embeddingProcessor: EmbeddingProcessor | null = null;
     private symbolCache = new SymbolCache();
     private workspaceRoot: string = '';
+    private preParseScrubPatterns: FileScrubPatterns = {};
 
     // ── Dirty-set drain loop state ──────────────────────────────────────────
     private fileMutationQueue: FileMutationEntry[] = [];
@@ -108,6 +110,7 @@ export class CacheManager {
      * @param vectorCacheMemoryMB - SQLite page cache size in MB for the vector cache (default: 50)
      * @param remoteEmbeddingServerAddress - Base URL of a remote vector cache server
      * @param enableInMemoryVectorSearch - If true, load vectors into memory for faster search
+     * @param preParseScrubPatterns - Glob → regex-string[] map for pre-parse source scrubbing
      */
     async initialize(
         pathFilter: PathFilter,
@@ -122,11 +125,13 @@ export class CacheManager {
         vectorCacheMemoryMB: number = 50,
         remoteEmbeddingServerAddress: string = '',
         enableInMemoryVectorSearch: boolean = false,
+        preParseScrubPatterns: FileScrubPatterns = {},
     ): Promise<void> {
         this.pathFilter = pathFilter;
         this.threadPool = threadPool;
         this.llamaServer = llamaServer;
         this.indexingComplete = false;
+        this.preParseScrubPatterns = preParseScrubPatterns;
 
         // Compute cache directory once from workspace root
         this.workspaceRoot = workspaceRoot;
@@ -363,7 +368,7 @@ export class CacheManager {
         }));
 
         const startTime = Date.now();
-        const outputs = await this.threadPool.indexAll(inputs);
+        const outputs = await this.threadPool.indexAll(inputs, this.preParseScrubPatterns);
 
         // Collect files whose source was deleted
         // before the worker could read them

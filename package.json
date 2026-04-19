@@ -254,6 +254,18 @@
           "type": "string",
           "default": "",
           "description": "Base URL of a remote vector cache server to query for cached embeddings (e.g., 'http://192.168.1.50:8952'). Leave empty to disable remote lookups. Requires a content index restart to take effect."
+        },
+        "vscToolbox.contentIndex.preParseScrubPatterns": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "markdownDescription": "**WARNING**: If using a remote embedding server, ensure the server uses the same scrub patterns. Mismatched patterns cause source differences, which means some cached embeddings will no longer match and will be recomputed locally.\n\nMap of file path globs to regex patterns for scrubbing source text before parsing.\n\nFor each indexed file, the scrubber checks every glob key against the file's absolute path. If a glob matches, all associated regex patterns are run against the source and every match is replaced with spaces (preserving byte offsets so line/column numbers remain accurate).\n\n**When to use:** Strip C/C++ identifier-style macros (e.g. `MEDIA_MOJO_EXPORT`) that tree-sitter cannot parse correctly.\n\n**Format:** Each key is a picomatch glob. Each value is an array of regex body strings (no `/` delimiters, no flags — the `g` flag is added automatically).\n\n**Tips:**\n- Use `\\b` for word boundaries so partial identifiers aren't matched.\n- Lookbehind is supported — e.g. `(?<=\\bclass\\s+)MY_EXPORT\\b` only scrubs when preceded by `class`.\n- Invalid globs or regex patterns will show an error and prevent the index from starting.\n\n**Example:**\n```json\n{ \"**/*.{h,cc,cpp}\": [\"\\\\b[A-Z][A-Z0-9_]*_EXPORT(?:_PRIVATE)?\\\\b\"] }\n```\n\nRequires a content index restart to take effect."
         }
       }
     },

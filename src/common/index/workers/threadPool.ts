@@ -17,6 +17,7 @@ import {
     IndexBatchRequest,
     ComputeChunksBatchRequest,
 } from '../types';
+import type { FileScrubPatterns } from '../fileScrubber';
 import { debug, log, warn, error } from '../../logger';
 
 type WorkerMessage = WorkerBatchResponse | WorkerLogMessage;
@@ -157,9 +158,15 @@ export class ThreadPool {
      * Index multiple files in parallel.
      *
      * @param inputs - Array of index inputs to process
+     * @param preParseScrubPatterns - Glob → regex-string[] map applied to each
+     *     file's source before parsing. Identical for every input;
+     *     forwarded to workers via the batch request.
      * @returns Promise that resolves with all index results
      */
-    async indexAll(inputs: IndexInput[]): Promise<IndexOutput[]> {
+    async indexAll(
+        inputs: IndexInput[],
+        preParseScrubPatterns: FileScrubPatterns = {},
+    ): Promise<IndexOutput[]> {
         if (this.disposed) {
             return inputs.map(input => ({
                 type: 'index' as const,
@@ -203,7 +210,10 @@ export class ThreadPool {
 
                     worker.on('message', onMessage);
                     const request: IndexBatchRequest = {
-                        type: 'indexBatch', messageId, inputs: chunks[i],
+                        type: 'indexBatch',
+                        messageId,
+                        inputs: chunks[i],
+                        preParseScrubPatterns
                     };
                     worker.postMessage(request);
                 }

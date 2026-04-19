@@ -6,6 +6,7 @@
  */
 
 import type { IndexSymbol } from './parsers/types';
+import type { FileScrubPatterns } from './fileScrubber';
 
 /**
  * Represents a single line match within a file.
@@ -233,6 +234,7 @@ export interface IndexBatchRequest {
     type: 'indexBatch';
     messageId: number;
     inputs: IndexInput[];
+    preParseScrubPatterns: FileScrubPatterns;
 }
 
 /** Batch index response sent from a worker thread to ThreadPool */
@@ -387,6 +389,8 @@ export interface ContentIndexConfig {
     vectorCacheMemoryMB: number;
     /** Base URL of a remote vector cache server for cached embedding lookups */
     remoteEmbeddingServerAddress: string;
+    /** Glob → regex-string[] map for pre-parse source scrubbing. */
+    preParseScrubPatterns: FileScrubPatterns;
 }
 
 // ── IPC messages (ContentIndex ↔ ContentIndexHost) ───────────────────

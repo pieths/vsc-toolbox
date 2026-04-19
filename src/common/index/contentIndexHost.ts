@@ -112,6 +112,7 @@ async function startComponents(config: ContentIndexConfig): Promise<number> {
             vectorCacheServerPort,
             vectorCacheMemoryMB,
             remoteEmbeddingServerAddress,
+            preParseScrubPatterns,
         } = config;
 
         const workerThreads = configWorkerThreads === 0
@@ -157,6 +158,7 @@ async function startComponents(config: ContentIndexConfig): Promise<number> {
             vectorCacheMemoryMB,
             remoteEmbeddingServerAddress,
             enableInMemoryVectorSearch,
+            preParseScrubPatterns,
         );
 
         const fileCount = cacheManager.getFileCount();

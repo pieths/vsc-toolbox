@@ -20,6 +20,8 @@ import { IndexStatus } from '../../types';
 import type { IndexInput, IndexOutput } from '../../types';
 import type { IndexFile } from '../../parsers/types';
 import { getParserForFile } from '../../parsers/registry';
+import { FileScrubber } from '../../fileScrubber';
+import type { FileScrubPatterns } from '../../fileScrubber';
 import * as TreeSitter from 'web-tree-sitter';
 type TSParser = TreeSitter.Parser;
 type TSLanguage = TreeSitter.Language;
@@ -65,6 +67,9 @@ async function getLanguage(wasmFile: string): Promise<TSLanguage> {
     }
     return lang;
 }
+
+// Module-level FileScrubber which persists for the worker thread's lifetime.
+const fileScrubber = new FileScrubber({});
 
 // ── Staleness check helpers ─────────────────────────────────────────────────
 
@@ -124,9 +129,14 @@ function readIdxHeader(idxPath: string): { sha256: string; version: number } | n
  * 4. Wrap in {@link IndexFile} tuple, write `*.idx`.
  *
  * @param input - Index input containing file path and idx output path
+ * @param preParseScrubPatterns - Glob → regex-string[] map applied to the
+ *     source text before tree-sitter parses it.
  * @returns Index output with idx path or error
  */
-export async function indexFile(input: IndexInput): Promise<IndexOutput> {
+export async function indexFile(
+    input: IndexInput,
+    preParseScrubPatterns: FileScrubPatterns = {},
+): Promise<IndexOutput> {
     try {
         // Read source and compute hash — detect deleted files early
         let sourceContent: Buffer;
@@ -169,7 +179,15 @@ export async function indexFile(input: IndexInput): Promise<IndexOutput> {
             const lang = await getLanguage(fileParser.wasmGrammars[0]);
             parser.setLanguage(lang);
 
-            const tree = parser.parse(sourceContent.toString('utf8'));
+            // Tree-sitter has no preprocessor, so identifier-style macros that sit
+            // between keywords and identifiers (e.g. `class MEDIA_MOJO_EXPORT Foo`)
+            // can confuse grammars like C/C++.
+            fileScrubber.updatePatterns(preParseScrubPatterns);
+            const sourceText = fileScrubber.scrubFile(
+                sourceContent.toString('utf8'),
+                input.filePath,
+            );
+            const tree = parser.parse(sourceText);
             if (!tree) {
                 throw new Error(`tree-sitter parse returned null for ${input.filePath}`);
             }

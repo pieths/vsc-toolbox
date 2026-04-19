@@ -18,6 +18,8 @@ import {
     ContentIndexResponse,
 } from './types';
 import { FileSymbols } from './fileSymbols';
+import { FileScrubber } from './fileScrubber';
+import type { FileScrubPatterns } from './fileScrubber';
 import type { IndexSymbol } from './parsers/types';
 import { debug, log, warn, error } from '../logger';
 
@@ -56,6 +58,13 @@ function getConfig(): ContentIndexConfig {
     const vectorCacheMemoryMB = config.get<number>('vectorCacheMemoryMB', 50);
     const remoteEmbeddingServerAddress = config.get<string>('remoteEmbeddingServerAddress', '').trim();
 
+    // Deep-clone to a plain object. VS Code's getConfiguration() can
+    // return a proxy object with internal slots that V8's structured
+    // clone (used by the child-process IPC channel) cannot serialize.
+    const preParseScrubPatterns: FileScrubPatterns = JSON.parse(
+        JSON.stringify(config.get<FileScrubPatterns>('preParseScrubPatterns', {}))
+    );
+
     return {
         enable,
         workerThreads,
@@ -71,6 +80,7 @@ function getConfig(): ContentIndexConfig {
         vectorCacheServerPort,
         vectorCacheMemoryMB,
         remoteEmbeddingServerAddress,
+        preParseScrubPatterns,
     };
 }
 
@@ -171,6 +181,10 @@ export class ContentIndex {
         const config = getConfig();
         if (!config.enable) {
             log('ContentIndex: Disabled in settings, skipping initialization');
+            return;
+        }
+
+        if (!this.validateScrubPatterns(config)) {
             return;
         }
 
@@ -480,16 +494,42 @@ export class ContentIndex {
     // ── Config change handling ────────────────────────────────────────
 
     /**
+     * Validate the `preParseScrubPatterns` config. If invalid, logs an
+     * error and shows a user-facing error notification.
+     *
+     * @returns `true` if the patterns are valid, `false` if invalid.
+     */
+    private validateScrubPatterns(config: ContentIndexConfig): boolean {
+        const err = FileScrubber.validatePatterns(config.preParseScrubPatterns);
+        if (err) {
+            error(`ContentIndex: Invalid preParseScrubPatterns — ${err}`);
+            vscode.window.showErrorMessage(
+                'VSC Toolbox: "vscToolbox.contentIndex.preParseScrubPatterns"'
+                + ` is invalid — ${err}.`
+                + ' Fix the setting and restart the content index.');
+            return false;
+        }
+        return true;
+    }
+
+    /**
      * Handle configuration changes.
      * Shows a notification asking the user whether to restart the index.
      * Only one notification is shown at a time; subsequent changes while
      * a notification is visible are silently absorbed.
      */
     private handleConfigChange(): void {
-        const enabledInConfig = getConfig().enable;
+        const newConfig = getConfig();
+        const enabledInConfig = newConfig.enable;
 
         if (!this.enabled && !enabledInConfig) {
             // Was disabled, still disabled — nothing to do
+            return;
+        }
+
+        // Validate preParseScrubPatterns before any restart/start.
+        // A bad regex or glob should never reach the worker thread.
+        if (!this.validateScrubPatterns(newConfig)) {
             return;
         }
 

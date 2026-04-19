@@ -50,7 +50,7 @@ if (parentPort) {
         } else if (msg.type === 'indexBatch') {
             const outputs: IndexOutput[] = [];
             for (const input of msg.inputs) {
-                outputs.push(await indexFile(input));
+                outputs.push(await indexFile(input, msg.preParseScrubPatterns));
             }
             const response: IndexBatchResponse = {
                 type: 'indexBatch', messageId: msg.messageId, outputs,
