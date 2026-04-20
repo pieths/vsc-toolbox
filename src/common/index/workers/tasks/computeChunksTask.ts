@@ -44,23 +44,15 @@ export async function computeChunks(input: ComputeChunksInput): Promise<ComputeC
         const contentBuffer = await fs.promises.readFile(input.filePath);
         const sha256 = crypto.createHash('sha256').update(contentBuffer).digest('hex');
 
-        // Fast-path: skip if the source file hasn't changed since the last
-        // successful embedding pass (stored sha256 matches current sha256).
-        if (input.storedSha256 && sha256 === input.storedSha256) {
-            return {
-                type: 'computeChunks',
-                status: ComputeChunksStatus.Skipped,
-                filePath: input.filePath,
-                chunks: [],
-                sha256,
-            };
-        }
-
-        const fileParser = getParserForFile(input.filePath);
-
         // Read and parse the *.idx file to get symbols
         const idxContent = await fs.promises.readFile(input.idxPath, 'utf8');
-        const [idxSha256, _version, _filePath, rawSymbols] = JSON.parse(idxContent) as IndexFile;
+        const [
+            idxSha256,
+            scrubbedSha256,
+            _version,
+            _filePath,
+            rawSymbols
+        ] = JSON.parse(idxContent) as IndexFile;
 
         // If the source file has changed since the index
         // was built, skip chunking and report error.
@@ -74,6 +66,21 @@ export async function computeChunks(input: ComputeChunksInput): Promise<ComputeC
             };
         }
 
+        // Fast-path: skip if the scrubbed source hasn't changed since the
+        // last successful embedding pass. Using scrubbedSha256 (from the
+        // idx file) instead of the raw sha256 ensures that scrub-pattern
+        // changes trigger re-chunking even when the source file is unchanged.
+        if (input.storedSha256 && scrubbedSha256 === input.storedSha256) {
+            return {
+                type: 'computeChunks',
+                status: ComputeChunksStatus.Skipped,
+                filePath: input.filePath,
+                chunks: [],
+                sha256: scrubbedSha256,
+            };
+        }
+
+        const fileParser = getParserForFile(input.filePath);
         const symbols = fileParser.readIndex(rawSymbols);
 
         // Delegate chunking to the parser
@@ -96,7 +103,7 @@ export async function computeChunks(input: ComputeChunksInput): Promise<ComputeC
             status: ComputeChunksStatus.Computed,
             filePath: input.filePath,
             chunks,
-            sha256,
+            sha256: scrubbedSha256,
         };
     } catch (error) {
         return {

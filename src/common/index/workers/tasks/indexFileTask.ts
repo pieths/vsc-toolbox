@@ -76,43 +76,55 @@ const fileScrubber = new FileScrubber({});
 /**
  * Byte offsets into the `*.idx` JSON tuple for the fast-path staleness check.
  *
- * Layout: `["<64 hex chars>",<version>,…`
- *   - Bytes [0..2)   → `["`
- *   - Bytes [2..66)  → 64-char SHA-256 hex digest
- *   - Bytes [66..68) → `",`
- *   - Bytes [68..)   → version digits followed by `,`
+ * Layout: `["<64 hex sha256>","<64 hex scrubbedSha256>",<version>,…`
+ *   - Bytes [0..2)     → `["`
+ *   - Bytes [2..66)    → 64-char SHA-256 hex digest (source file)
+ *   - Bytes [66..69)   → `","`
+ *   - Bytes [69..133)  → 64-char SHA-256 hex digest (scrubbed source)
+ *   - Bytes [133..135) → `",`
+ *   - Bytes [135..)    → version digits followed by `,`
  */
 const SHA256_OFFSET = 2;
 const SHA256_HEX_LEN = 64;
 const SHA256_END = SHA256_OFFSET + SHA256_HEX_LEN; // 66
+const SCRUBBED_SHA256_OFFSET = SHA256_END + 3;     // skip `","` → 69
+const SCRUBBED_SHA256_END = SCRUBBED_SHA256_OFFSET + SHA256_HEX_LEN; // 133
 
 /**
- * Read the sha256 and format version from the first bytes of an existing
- * `*.idx` file without parsing the full JSON.
+ * Read the sha256, scrubbedSha256, and format version from the first
+ * bytes of an existing `*.idx` file without parsing the full JSON.
  *
- * @returns `{ sha256, version }` or `null` if the file cannot be read.
+ * @returns `{ sha256, scrubbedSha256, version }` or `null` if the file
+ *     cannot be read or has an unrecognized format.
  */
-function readIdxHeader(idxPath: string): { sha256: string; version: number } | null {
+function readIdxHeader(idxPath: string): {
+    sha256: string; scrubbedSha256: string; version: number;
+} | null {
     try {
         const fd = fs.openSync(idxPath, 'r');
-        const buf = Buffer.alloc(80);
-        const bytesRead = fs.readSync(fd, buf, 0, 80, 0);
+        const buf = Buffer.alloc(160);
+        const bytesRead = fs.readSync(fd, buf, 0, 160, 0);
         fs.closeSync(fd);
-        if (bytesRead < SHA256_END + 2) return null;
+        if (bytesRead < SCRUBBED_SHA256_END + 2) return null;
 
         const raw = buf.toString('utf8', 0, bytesRead);
         const sha256 = raw.substring(SHA256_OFFSET, SHA256_END);
 
-        // After the sha256 closing quote: `",<version>,…`
-        const afterQuote = SHA256_END; // points at `"`
-        if (raw[afterQuote] !== '"' || raw[afterQuote + 1] !== ',') return null;
-        const versionStart = afterQuote + 2;
+        // Validate separator between sha256 and scrubbedSha256: `","`
+        if (raw[SHA256_END] !== '"' ||
+            raw[SHA256_END + 1] !== ',' ||
+            raw[SHA256_END + 2] !== '"') return null;
+        const scrubbedSha256 = raw.substring(SCRUBBED_SHA256_OFFSET, SCRUBBED_SHA256_END);
+
+        // After scrubbedSha256 closing quote: `",<version>,…`
+        if (raw[SCRUBBED_SHA256_END] !== '"' || raw[SCRUBBED_SHA256_END + 1] !== ',') return null;
+        const versionStart = SCRUBBED_SHA256_END + 2;
         const versionEnd = raw.indexOf(',', versionStart);
         if (versionEnd === -1) return null;
         const version = parseInt(raw.substring(versionStart, versionEnd), 10);
         if (isNaN(version)) return null;
 
-        return { sha256, version };
+        return { sha256, scrubbedSha256, version };
     } catch {
         return null;
     }
@@ -161,9 +173,26 @@ export async function indexFile(
         // Look up the parser for this file
         const fileParser = getParserForFile(input.filePath);
 
+        // Compute the scrubbed source text and its hash. The scrubbed hash
+        // is stored in the idx file and used downstream by computeChunks
+        // to detect when scrub-pattern changes require re-chunking.
+        // Tree-sitter has no preprocessor, so identifier-style macros that sit
+        // between keywords and identifiers (e.g. `class MEDIA_MOJO_EXPORT Foo`)
+        // can confuse parsers for languages like C/C++.
+        fileScrubber.updatePatterns(preParseScrubPatterns);
+        const sourceText = sourceContent.toString('utf8');
+        const scrubResult = fileScrubber.scrubFile(sourceText, input.filePath);
+        const scrubbedText = scrubResult ?? sourceText;
+        const scrubbedSha256 = scrubResult !== null
+            ? crypto.createHash('sha256').update(scrubbedText).digest('hex')
+            : sha256;
+
         // Fast-path: skip if the *.idx file is already up-to-date
         const header = readIdxHeader(input.idxPath);
-        if (header && header.sha256 === sha256 && header.version === fileParser.formatVersion) {
+        if (header
+            && header.sha256 === sha256
+            && header.scrubbedSha256 === scrubbedSha256
+            && header.version === fileParser.formatVersion) {
             return {
                 type: 'index',
                 status: IndexStatus.Skipped,
@@ -179,15 +208,7 @@ export async function indexFile(
             const lang = await getLanguage(fileParser.wasmGrammars[0]);
             parser.setLanguage(lang);
 
-            // Tree-sitter has no preprocessor, so identifier-style macros that sit
-            // between keywords and identifiers (e.g. `class MEDIA_MOJO_EXPORT Foo`)
-            // can confuse grammars like C/C++.
-            fileScrubber.updatePatterns(preParseScrubPatterns);
-            const sourceText = fileScrubber.scrubFile(
-                sourceContent.toString('utf8'),
-                input.filePath,
-            );
-            const tree = parser.parse(sourceText);
+            const tree = parser.parse(scrubbedText);
             if (!tree) {
                 throw new Error(`tree-sitter parse returned null for ${input.filePath}`);
             }
@@ -203,7 +224,13 @@ export async function indexFile(
         }
 
         // Build IndexFile tuple and write
-        const idxFile: IndexFile = [sha256, fileParser.formatVersion, input.filePath, symbols];
+        const idxFile: IndexFile = [
+            sha256,
+            scrubbedSha256,
+            fileParser.formatVersion,
+            input.filePath,
+            symbols
+        ];
         const json = JSON.stringify(idxFile);
 
         // Ensure parent directory exists

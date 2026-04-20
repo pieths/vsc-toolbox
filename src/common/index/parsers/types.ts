@@ -119,16 +119,24 @@ export interface MutableAttrMap extends AttrMap {
  * On-disk representation of an `*.idx` file.
  *
  * Positional tuple: `[sha256, version, filePath, symbols]`
- *   - `[0]` sha256   — hex digest of the **source file** at index time;
- *                       used for staleness checks.
- *   - `[1]` version  — the parser's {@link IFileParser.formatVersion} at
- *                       write time. Readers compare against the current
- *                       parser's version to detect incompatible files.
- *   - `[2]` filePath — absolute path to the source file that was indexed.
- *   - `[3]` symbols  — array of symbol arrays produced by `parseCst()`.
- *                       Layout of each inner array is parser-private.
+ *   - `[0]` sha256          — hex digest of the **source file** at index time;
+ *                             used for staleness checks.
+ *   - `[1]` scrubbedSha256  — hex digest of the source after pre-parse
+ *                             scrubbing. Equals `sha256` when no scrub
+ *                             patterns matched.
+ *   - `[2]` version         — the parser's {@link IFileParser.formatVersion}
+ *                             at write time.
+ *   - `[3]` filePath        — absolute path to the source file.
+ *   - `[4]` symbols         — array of symbol arrays produced by `parseCst()`.
+ *                             Layout of each inner array is parser-private.
  */
-export type IndexFile = [sha256: string, version: number, filePath: string, symbols: unknown[][]];
+export type IndexFile = [
+    sha256: string,
+    scrubbedSha256: string,
+    version: number,
+    filePath: string,
+    symbols: unknown[][]
+];
 
 // ── IndexSymbol ─────────────────────────────────────────────────────────────
 

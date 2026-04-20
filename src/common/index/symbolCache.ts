@@ -111,7 +111,13 @@ export class SymbolCache {
         // Read and parse the idx file
         try {
             const content = await fs.promises.readFile(idxPath, 'utf8');
-            const [_sha256, _version, _filePath, rawSymbols] = JSON.parse(content) as IndexFile;
+            const [
+                _sha256,
+                _scrubbedSha256,
+                _version,
+                _filePath,
+                rawSymbols
+            ] = JSON.parse(content) as IndexFile;
 
             const fileParser = getParserForFile(filePath);
             const symbols = this.sortSymbols(fileParser.readIndex(rawSymbols));
