@@ -102,9 +102,9 @@ export class FileScrubber {
     /**
      * Apply the configured scrub patterns to source text.
      *
-     * Returns the original string (by reference) when no glob matches,
-     * or a new string with every regex match replaced by spaces of
-     * equal length when at least one glob matches.
+     * Returns `null` when no changes were made (no glob matched, or
+     * no regex produced a match), or the scrubbed string when at
+     * least one replacement occurred.
      *
      * Assumes all globs and regex patterns have already been validated
      * via {@link validatePatterns}.
@@ -112,16 +112,20 @@ export class FileScrubber {
      * @param source - The full source text of the file.
      * @param filePath - Absolute path of the file (used to test globs).
      */
-    scrubFile(source: string, filePath: string): string {
+    scrubFile(source: string, filePath: string): string | null {
+        let changed = false;
         for (const glob in this.patterns) {
             if (this.getGlobMatcher(glob)(filePath)) {
                 const re = this.getGlobRegex(glob, this.patterns[glob]);
                 if (re) {
-                    source = source.replace(re, m => ' '.repeat(m.length));
+                    source = source.replace(re, m => {
+                        changed = true;
+                        return ' '.repeat(m.length);
+                    });
                 }
             }
         }
-        return source;
+        return changed ? source : null;
     }
 
     private getGlobMatcher(glob: string): (testPath: string) => boolean {

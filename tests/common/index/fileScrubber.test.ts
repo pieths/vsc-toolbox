@@ -115,8 +115,9 @@ describe('FileScrubber.scrubFile', () => {
         });
         const source = 'class BASE_EXPORT Foo {';
         const result = scrubber.scrubFile(source, 'd:/src/foo.h');
+        assert.notEqual(result, null);
         assert.equal(result, 'class             Foo {');
-        assert.equal(result.length, source.length);
+        assert.equal(result!.length, source.length);
     });
 
     it('replaces multiple matches in the same source', () => {
@@ -125,8 +126,9 @@ describe('FileScrubber.scrubFile', () => {
         });
         const source = 'EXPORT void foo(); EXPORT int bar();';
         const result = scrubber.scrubFile(source, 'd:/src/test.h');
+        assert.notEqual(result, null);
         assert.equal(result, '       void foo();        int bar();');
-        assert.equal(result.length, source.length);
+        assert.equal(result!.length, source.length);
     });
 
     it('replaces matches from multiple patterns under one glob', () => {
@@ -135,22 +137,22 @@ describe('FileScrubber.scrubFile', () => {
         });
         const source = 'class BASE_EXPORT Foo {}; class NET_EXPORT Bar {};';
         const result = scrubber.scrubFile(source, 'd:/src/foo.h');
-        // Both macros replaced
-        assert.ok(!result.includes('BASE_EXPORT'));
-        assert.ok(!result.includes('NET_EXPORT'));
-        assert.equal(result.length, source.length);
+        assert.notEqual(result, null);
+        assert.ok(!result!.includes('BASE_EXPORT'));
+        assert.ok(!result!.includes('NET_EXPORT'));
+        assert.equal(result!.length, source.length);
         assert.equal(result, 'class             Foo {}; class            Bar {};');
     });
 
     // ── Glob matching ───────────────────────────────────────────────────
 
-    it('returns source unchanged when no glob matches the file path', () => {
+    it('returns null when no glob matches the file path', () => {
         const scrubber = new FileScrubber({
             '**/*.cc': ['\\bBASE_EXPORT\\b'],
         });
         const source = 'class BASE_EXPORT Foo {';
         const result = scrubber.scrubFile(source, 'd:/src/foo.h');
-        assert.equal(result, source);
+        assert.equal(result, null);
     });
 
     it('applies patterns from all matching globs (union)', () => {
@@ -161,10 +163,11 @@ describe('FileScrubber.scrubFile', () => {
         const source = 'BASE_EXPORT void foo(); MEDIA_EXPORT void bar();';
         // File matches both globs
         const result = scrubber.scrubFile(source, 'd:/src/media/foo.h');
-        assert.ok(!result.includes('BASE_EXPORT'));
-        assert.ok(!result.includes('MEDIA_EXPORT'));
+        assert.notEqual(result, null);
+        assert.ok(!result!.includes('BASE_EXPORT'));
+        assert.ok(!result!.includes('MEDIA_EXPORT'));
         assert.equal(result, '            void foo();              void bar();');
-        assert.equal(result.length, source.length);
+        assert.equal(result!.length, source.length);
     });
 
     it('only applies patterns from matching globs, not all globs', () => {
@@ -175,9 +178,10 @@ describe('FileScrubber.scrubFile', () => {
         const source = 'BASE_EXPORT void foo(); MEDIA_EXPORT void bar();';
         // File matches only the *.h glob, not the media glob
         const result = scrubber.scrubFile(source, 'd:/src/chrome/foo.h');
-        assert.ok(!result.includes('BASE_EXPORT'));
-        assert.ok(result.includes('MEDIA_EXPORT')); // Not scrubbed
-        assert.equal(result.length, source.length);
+        assert.notEqual(result, null);
+        assert.ok(!result!.includes('BASE_EXPORT'));
+        assert.ok(result!.includes('MEDIA_EXPORT')); // Not scrubbed
+        assert.equal(result!.length, source.length);
     });
 
     it('brace-expansion glob matches multiple file extensions', () => {
@@ -194,11 +198,11 @@ describe('FileScrubber.scrubFile', () => {
         // .cpp matches
         assert.equal(scrubber.scrubFile(source, 'd:/src/foo.cpp'), expected);
         // .c does NOT match
-        assert.equal(scrubber.scrubFile(source, 'd:/src/foo.c'), source);
+        assert.equal(scrubber.scrubFile(source, 'd:/src/foo.c'), null);
         // .hpp does NOT match
-        assert.equal(scrubber.scrubFile(source, 'd:/src/foo.hpp'), source);
+        assert.equal(scrubber.scrubFile(source, 'd:/src/foo.hpp'), null);
         // .md does NOT match
-        assert.equal(scrubber.scrubFile(source, 'd:/src/foo.md'), source);
+        assert.equal(scrubber.scrubFile(source, 'd:/src/foo.md'), null);
     });
 
     // ── Byte-offset preservation ────────────────────────────────────────
@@ -211,14 +215,14 @@ describe('FileScrubber.scrubFile', () => {
         const result = scrubber.scrubFile(source, 'd:/src/media/service.h');
 
         // Length preserved
-        assert.equal(result.length, source.length);
+        assert.equal(result!.length, source.length);
 
         // Characters before the macro are untouched
-        assert.equal(result.substring(0, 6), 'class ');
+        assert.equal(result!.substring(0, 6), 'class ');
 
         // Characters after the macro are untouched at the same positions
         const macroEnd = source.indexOf('MEDIA_MOJO_EXPORT') + 'MEDIA_MOJO_EXPORT'.length;
-        assert.equal(result.substring(macroEnd), source.substring(macroEnd));
+        assert.equal(result!.substring(macroEnd), source.substring(macroEnd));
     });
 
     // ── Non-capturing group wrapping ────────────────────────────────────
@@ -241,7 +245,7 @@ describe('FileScrubber.scrubFile', () => {
         const result = scrubber.scrubFile(source, 'd:/src/foo.h');
         // abd and acd replaced with 3 spaces each; aed untouched
         assert.equal(result, '        aed');
-        assert.equal(result.length, source.length);
+        assert.equal(result!.length, source.length);
     });
 
     // ── Lookbehind ──────────────────────────────────────────────────────
@@ -253,11 +257,11 @@ describe('FileScrubber.scrubFile', () => {
         const source = 'class MEDIA_MOJO_EXPORT MediaFoundationService';
         const result = scrubber.scrubFile(source, 'd:/src/foo.h');
         // 'class ' is preserved, macro is blanked
-        assert.ok(result.startsWith('class '));
-        assert.ok(!result.includes('MEDIA_MOJO_EXPORT'));
-        assert.ok(result.includes('MediaFoundationService'));
+        assert.ok(result!.startsWith('class '));
+        assert.ok(!result!.includes('MEDIA_MOJO_EXPORT'));
+        assert.ok(result!.includes('MediaFoundationService'));
         assert.equal(result, 'class                   MediaFoundationService');
-        assert.equal(result.length, source.length);
+        assert.equal(result!.length, source.length);
     });
 
     it('lookbehind does not match when context is absent', () => {
@@ -267,7 +271,7 @@ describe('FileScrubber.scrubFile', () => {
         const source = 'void MEDIA_MOJO_EXPORT foo();';
         const result = scrubber.scrubFile(source, 'd:/src/foo.h');
         // Not preceded by 'class ', so no replacement
-        assert.equal(result, source);
+        assert.equal(result, null);
     });
 
     it('combines multiple lookbehind patterns under one glob', () => {
@@ -286,17 +290,17 @@ describe('FileScrubber.scrubFile', () => {
         const result = scrubber.scrubFile(source, 'd:/src/foo.h');
 
         // class context → MEDIA_MOJO_EXPORT scrubbed
-        assert.ok(result.includes('class '));
-        assert.ok(result.includes('MediaService'));
+        assert.ok(result!.includes('class '));
+        assert.ok(result!.includes('MediaService'));
         // struct context → BASE_EXPORT scrubbed
-        assert.ok(result.includes('struct '));
-        assert.ok(result.includes('Config'));
+        assert.ok(result!.includes('struct '));
+        assert.ok(result!.includes('Config'));
         // Wrong context → not scrubbed
-        assert.ok(result.includes('void MEDIA_MOJO_EXPORT'));
-        assert.ok(result.includes('int BASE_EXPORT'));
-        assert.equal(result.length, source.length);
+        assert.ok(result!.includes('void MEDIA_MOJO_EXPORT'));
+        assert.ok(result!.includes('int BASE_EXPORT'));
+        assert.equal(result!.length, source.length);
 
-        const lines = result.split('\n');
+        const lines = result!.split('\n');
         assert.equal(lines[0], 'class                   MediaService {');
         assert.equal(lines[1], 'struct             Config {');
         assert.equal(lines[2], 'void MEDIA_MOJO_EXPORT standalone();');
@@ -311,14 +315,14 @@ describe('FileScrubber.scrubFile', () => {
         });
         const source = 'EXPORT first\nEXPORT second\nmid EXPORT third';
         const result = scrubber.scrubFile(source, 'd:/src/foo.h');
-        const lines = result.split('\n');
+        const lines = result!.split('\n');
         // First line: no preceding \n, so EXPORT is NOT scrubbed
         assert.equal(lines[0], 'EXPORT first');
         // Second line: preceded by \n, EXPORT IS scrubbed
         assert.equal(lines[1], '       second');
         // Third line: EXPORT is mid-line (preceded by space, not \n), NOT scrubbed
         assert.equal(lines[2], 'mid EXPORT third');
-        assert.equal(result.length, source.length);
+        assert.equal(result!.length, source.length);
     });
 
     it('lookbehind with ^|\\n matches macro at start of string or start of line', () => {
@@ -327,14 +331,14 @@ describe('FileScrubber.scrubFile', () => {
         });
         const source = 'EXPORT first\nEXPORT second\nmid EXPORT third';
         const result = scrubber.scrubFile(source, 'd:/src/foo.h');
-        const lines = result.split('\n');
+        const lines = result!.split('\n');
         // First line: start of string, EXPORT IS scrubbed
         assert.equal(lines[0], '       first');
         // Second line: start of line, EXPORT IS scrubbed
         assert.equal(lines[1], '       second');
         // Third line: mid-line, NOT scrubbed
         assert.equal(lines[2], 'mid EXPORT third');
-        assert.equal(result.length, source.length);
+        assert.equal(result!.length, source.length);
     });
 
     it('lookahead with \\n matches macro only at the end of a line', () => {
@@ -343,14 +347,14 @@ describe('FileScrubber.scrubFile', () => {
         });
         const source = 'first EXPORT\nEXPORT second\nthird EXPORT';
         const result = scrubber.scrubFile(source, 'd:/src/foo.h');
-        const lines = result.split('\n');
+        const lines = result!.split('\n');
         // First line: EXPORT followed by \n, IS scrubbed
         assert.equal(lines[0], 'first       ');
         // Second line: EXPORT followed by space, NOT scrubbed
         assert.equal(lines[1], 'EXPORT second');
         // Third line: EXPORT at end of string (no \n), NOT scrubbed
         assert.equal(lines[2], 'third EXPORT');
-        assert.equal(result.length, source.length);
+        assert.equal(result!.length, source.length);
     });
 
     it('lookahead with \\n|$ matches macro at end of line or end of string', () => {
@@ -359,14 +363,14 @@ describe('FileScrubber.scrubFile', () => {
         });
         const source = 'first EXPORT\nEXPORT second\nthird EXPORT';
         const result = scrubber.scrubFile(source, 'd:/src/foo.h');
-        const lines = result.split('\n');
+        const lines = result!.split('\n');
         // First line: EXPORT followed by \n, IS scrubbed
         assert.equal(lines[0], 'first       ');
         // Second line: EXPORT followed by space, NOT scrubbed
         assert.equal(lines[1], 'EXPORT second');
         // Third line: EXPORT at end of string, IS scrubbed
         assert.equal(lines[2], 'third       ');
-        assert.equal(result.length, source.length);
+        assert.equal(result!.length, source.length);
     });
 
     it('uses lookaround to assert surrounding whitespace without consuming it', () => {
@@ -378,7 +382,7 @@ describe('FileScrubber.scrubFile', () => {
         });
         const source = 'class MACRO Foo;\nno_space_MACRO_here;\n  MACRO  end';
         const result = scrubber.scrubFile(source, 'd:/src/foo.h');
-        const lines = result.split('\n');
+        const lines = result!.split('\n');
         // 'class MACRO Foo;' → MACRO has \s before and after, scrubbed
         assert.equal(lines[0], 'class       Foo;');
         // 'no_space_MACRO_here;' → MACRO not surrounded by \s, NOT scrubbed
@@ -387,40 +391,40 @@ describe('FileScrubber.scrubFile', () => {
         // original: '  MACRO  end' (2 + 5 + 2 + 3 = 12 chars)
         // result:   '         end' (2 + 5 + 2 + 3 = 12 chars, MACRO → 5 spaces)
         assert.equal(lines[2], '         end');
-        assert.equal(result.length, source.length);
+        assert.equal(result!.length, source.length);
     });
 
     // ── Edge cases ──────────────────────────────────────────────────────
 
-    it('returns source unchanged for empty FileScrubPatterns map', () => {
+    it('returns null for empty FileScrubPatterns map', () => {
         const scrubber = new FileScrubber({});
         const source = 'class BASE_EXPORT Foo {';
         const result = scrubber.scrubFile(source, 'd:/src/foo.h');
-        assert.equal(result, source);
+        assert.equal(result, null);
     });
 
-    it('returns source unchanged when glob matches but pattern array is empty', () => {
+    it('returns null when glob matches but pattern array is empty', () => {
         const scrubber = new FileScrubber({ '**/*.h': [] });
         const source = 'class BASE_EXPORT Foo {';
         const result = scrubber.scrubFile(source, 'd:/src/foo.h');
-        assert.equal(result, source);
+        assert.equal(result, null);
     });
 
-    it('returns source unchanged when pattern does not match any text', () => {
+    it('returns null when pattern does not match any text', () => {
         const scrubber = new FileScrubber({
             '**/*.h': ['\\bNONEXISTENT_MACRO\\b'],
         });
         const source = 'class Foo {};';
         const result = scrubber.scrubFile(source, 'd:/src/foo.h');
-        assert.equal(result, source);
+        assert.equal(result, null);
     });
 
-    it('handles source with no text (empty string)', () => {
+    it('returns null for empty source string', () => {
         const scrubber = new FileScrubber({
             '**/*.h': ['\\bFOO\\b'],
         });
         const result = scrubber.scrubFile('', 'd:/src/foo.h');
-        assert.equal(result, '');
+        assert.equal(result, null);
     });
 
     it('handles Windows-style absolute paths', () => {
@@ -429,8 +433,8 @@ describe('FileScrubber.scrubFile', () => {
         });
         const source = 'BASE_EXPORT void foo();';
         const result = scrubber.scrubFile(source, 'd:/cs/src/base/foo.h');
-        assert.ok(!result.includes('BASE_EXPORT'));
-        assert.equal(result.length, source.length);
+        assert.ok(!result!.includes('BASE_EXPORT'));
+        assert.equal(result!.length, source.length);
     });
 
     it('handles backslash Windows paths', () => {
@@ -439,8 +443,8 @@ describe('FileScrubber.scrubFile', () => {
         });
         const source = 'BASE_EXPORT void foo();';
         const result = scrubber.scrubFile(source, 'd:\\cs\\src\\base\\foo.h');
-        assert.ok(!result.includes('BASE_EXPORT'));
-        assert.equal(result.length, source.length);
+        assert.ok(!result!.includes('BASE_EXPORT'));
+        assert.equal(result!.length, source.length);
     });
 
     it('does not replace partial identifier matches without word boundary', () => {
@@ -450,8 +454,8 @@ describe('FileScrubber.scrubFile', () => {
         const source = 'MY_BASE_EXPORTER is not BASE_EXPORT';
         const result = scrubber.scrubFile(source, 'd:/src/foo.h');
         // Only standalone BASE_EXPORT replaced, not MY_BASE_EXPORTER
-        assert.ok(result.includes('MY_BASE_EXPORTER'));
-        assert.ok(!result.endsWith('BASE_EXPORT'));
+        assert.ok(result!.includes('MY_BASE_EXPORTER'));
+        assert.ok(!result!.endsWith('BASE_EXPORT'));
         assert.equal(result, 'MY_BASE_EXPORTER is not            ');
     });
 
@@ -461,12 +465,12 @@ describe('FileScrubber.scrubFile', () => {
         });
         const source = 'line1 EXPORT foo\nline2 EXPORT bar\nline3 plain';
         const result = scrubber.scrubFile(source, 'd:/src/foo.h');
-        const lines = result.split('\n');
+        const lines = result!.split('\n');
         assert.equal(lines.length, 3);
         assert.ok(!lines[0].includes('EXPORT'));
         assert.ok(!lines[1].includes('EXPORT'));
         assert.ok(lines[2].includes('plain'));
-        assert.equal(result.length, source.length);
+        assert.equal(result!.length, source.length);
     });
 
     it('handles the Chromium wildcard export pattern', () => {
@@ -480,11 +484,12 @@ describe('FileScrubber.scrubFile', () => {
             'class NormalClass {};',
         ].join('\n');
         const result = scrubber.scrubFile(source, 'd:/cs/src/foo.h');
-        assert.ok(!result.includes('BASE_EXPORT'));
-        assert.ok(!result.includes('CONTENT_EXPORT_PRIVATE'));
-        assert.ok(!result.includes('MEDIA_MOJO_EXPORT'));
-        assert.ok(result.includes('class NormalClass {}'));
-        assert.equal(result.length, source.length);
+        assert.notEqual(result, null);
+        assert.ok(!result!.includes('BASE_EXPORT'));
+        assert.ok(!result!.includes('CONTENT_EXPORT_PRIVATE'));
+        assert.ok(!result!.includes('MEDIA_MOJO_EXPORT'));
+        assert.ok(result!.includes('class NormalClass {}'));
+        assert.equal(result!.length, source.length);
     });
 });
 
@@ -550,17 +555,19 @@ describe('FileScrubber.updatePatterns', () => {
 
         // Before update: only OLD_MACRO is scrubbed
         let result = scrubber.scrubFile(source, 'd:/src/foo.h');
-        assert.ok(!result.includes('OLD_MACRO'));
-        assert.ok(result.includes('NEW_MACRO'));
+        assert.notEqual(result, null);
+        assert.ok(!result!.includes('OLD_MACRO'));
+        assert.ok(result!.includes('NEW_MACRO'));
 
         // Update to target NEW_MACRO instead
         scrubber.updatePatterns({ '**/*.h': ['\\bNEW_MACRO\\b'] });
 
         // After update: only NEW_MACRO is scrubbed
         result = scrubber.scrubFile(source, 'd:/src/foo.h');
-        assert.ok(result.includes('OLD_MACRO'));
-        assert.ok(!result.includes('NEW_MACRO'));
-        assert.equal(result.length, source.length);
+        assert.notEqual(result, null);
+        assert.ok(result!.includes('OLD_MACRO'));
+        assert.ok(!result!.includes('NEW_MACRO'));
+        assert.equal(result!.length, source.length);
     });
 
     it('clears regex cache on update so stale patterns are not used', () => {
@@ -576,10 +583,11 @@ describe('FileScrubber.updatePatterns', () => {
         scrubber.updatePatterns({ '**/*.h': ['\\bSECOND\\b'] });
 
         const result = scrubber.scrubFile(source, 'd:/src/foo.h');
+        assert.notEqual(result, null);
         // FIRST should NOT be scrubbed (old pattern gone)
         // SECOND should be scrubbed (new pattern active)
-        assert.ok(result.includes('FIRST'));
-        assert.ok(!result.includes('SECOND'));
+        assert.ok(result!.includes('FIRST'));
+        assert.ok(!result!.includes('SECOND'));
         assert.equal(result, 'FIRST       ');
     });
 });
