@@ -307,6 +307,71 @@ describe('FileScrubber.scrubFile', () => {
         assert.equal(lines[3], 'int BASE_EXPORT other();');
     });
 
+    it('scrubs multiple macros on one line regardless of order using advanced lookbehind', () => {
+        // Uses (?<=\b(?:class|struct)\s+(?:[A-Z][A-Z0-9_]*\s+)*) to skip
+        // over any number of ALL_CAPS macros between class/struct and the
+        // target macro. Both patterns share the same lookbehind so they
+        // only match in class/struct declarations.
+        const scrubber = new FileScrubber({
+            '**/*.h': [
+                '(?<=\\b(?:class|struct)\\s+(?:[A-Z][A-Z0-9_]*\\s+)*)[A-Z][A-Z0-9_]*_EXPORT\\b',
+                '(?<=\\b(?:class|struct)\\s+(?:[A-Z][A-Z0-9_]*\\s+)*)(?:LOCKABLE|SCOPED_LOCKABLE)\\b',
+            ],
+        });
+
+        // Order 1: export macro first, annotation macro second
+        const source1 = 'class MEDIA_EXPORT SCOPED_LOCKABLE SecureGuard {';
+        const result1 = scrubber.scrubFile(source1, 'd:/src/foo.h');
+        assert.notEqual(result1, null);
+        assert.ok(!result1!.includes('MEDIA_EXPORT'));
+        assert.ok(!result1!.includes('SCOPED_LOCKABLE'));
+        assert.ok(result1!.includes('class '));
+        assert.ok(result1!.includes('SecureGuard'));
+        assert.equal(result1!.length, source1.length);
+        assert.equal(result1, 'class                              SecureGuard {');
+
+        // Order 2: annotation macro first, export macro second
+        const source2 = 'class SCOPED_LOCKABLE MEDIA_EXPORT SecureGuard {';
+        const result2 = scrubber.scrubFile(source2, 'd:/src/foo.h');
+        assert.notEqual(result2, null);
+        assert.ok(!result2!.includes('SCOPED_LOCKABLE'));
+        assert.ok(!result2!.includes('MEDIA_EXPORT'));
+        assert.ok(result2!.includes('class '));
+        assert.ok(result2!.includes('SecureGuard'));
+        assert.equal(result2!.length, source2.length);
+        assert.equal(result1, 'class                              SecureGuard {');
+
+        // Neither should match outside of class/struct context
+        const source3 = '#define LOCKABLE\nvoid MEDIA_EXPORT foo();';
+        const result3 = scrubber.scrubFile(source3, 'd:/src/foo.h');
+        assert.equal(result3, null);
+    });
+
+    it('lookbehind fails when another macro sits between keyword and export macro', () => {
+        // When LOCKABLE appears between "class" and "BASE_EXPORT", the
+        // lookbehind (?<=\bclass\s+) cannot reach past LOCKABLE because
+        // .replace() evaluates the regex against the ORIGINAL string,
+        // not the incrementally-modified one.
+        // LOCKABLE is scrubbed (no lookbehind), but BASE_EXPORT is NOT.
+        const scrubber = new FileScrubber({
+            '**/*.h': [
+                '\\bLOCKABLE\\b',
+                '(?<=\\b(?:class|struct)\\s+)[A-Z][A-Z0-9_]*_EXPORT\\b',
+            ],
+        });
+
+        const source = 'class LOCKABLE BASE_EXPORT Lock {';
+        const result = scrubber.scrubFile(source, 'd:/src/foo.h');
+        assert.notEqual(result, null);
+        // LOCKABLE is scrubbed (no lookbehind needed)
+        assert.ok(!result!.includes('LOCKABLE'));
+        // BASE_EXPORT is NOT scrubbed — lookbehind sees original text
+        // where LOCKABLE (not spaces) is between "class " and "BASE_EXPORT"
+        assert.ok(result!.includes('BASE_EXPORT'));
+        assert.equal(result!.length, source.length);
+        assert.equal(result, 'class          BASE_EXPORT Lock {');
+    });
+
     // ── Newline anchoring via lookahead / lookbehind ─────────────────────
 
     it('lookbehind with \\n matches macro only at the start of a line', () => {
