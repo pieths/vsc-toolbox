@@ -220,14 +220,22 @@ export class ThreadPool {
             });
 
             // Log results
+            const indexed: string[] = [];
+            const deleted: string[] = [];
             for (const output of outputs) {
                 if (output.status === IndexStatus.Indexed) {
-                    log(`Content index: Indexed ${output.filePath}`);
+                    indexed.push(output.filePath);
                 } else if (output.status === IndexStatus.Deleted) {
-                    log(`Content index: Source deleted ${output.filePath}`);
+                    deleted.push(output.filePath);
                 } else if (output.status === IndexStatus.Failed && output.error) {
                     error(`Content index: Failed to index ${output.filePath}: ${output.error}`);
                 }
+            }
+            if (indexed.length > 0) {
+                log(`Content index: Indexed ${indexed.length} files:\n  ${indexed.join('\n  ')}`);
+            }
+            if (deleted.length > 0) {
+                log(`Content index: Deleted ${deleted.length} index files:\n  ${deleted.join('\n  ')}`);
             }
 
             return outputs;
