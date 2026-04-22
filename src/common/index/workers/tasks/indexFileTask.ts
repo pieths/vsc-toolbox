@@ -189,8 +189,17 @@ export async function indexFile(
             const scrubResult = fileScrubber.scrubFile(sourceText, input.filePath);
             scrubbedText = scrubResult ?? sourceText;
             if (scrubResult !== null) {
-                scrubbedSha256 = crypto.createHash('sha256')
+                // Combine source and scrubbed hashes so that changes to
+                // either the source file or the scrub output are detected
+                // as changes — even when a same-length macro swap
+                // leaves the scrubbed text identical. For example, changing
+                // `class FOO_EXPORT Foo` to `class BAR_EXPORT Foo` produces
+                // the same scrubbed text (both macros become 10 spaces) but
+                // the original source text differs and must be re-embedded.
+                const scrubResultSha256 = crypto.createHash('sha256')
                     .update(scrubbedText).digest('hex');
+                scrubbedSha256 = crypto.createHash('sha256')
+                    .update(sha256 + scrubResultSha256).digest('hex');
             }
         }
 
