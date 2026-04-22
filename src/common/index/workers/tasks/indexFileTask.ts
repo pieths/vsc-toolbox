@@ -179,13 +179,20 @@ export async function indexFile(
         // Tree-sitter has no preprocessor, so identifier-style macros that sit
         // between keywords and identifiers (e.g. `class MEDIA_MOJO_EXPORT Foo`)
         // can confuse parsers for languages like C/C++.
-        fileScrubber.updatePatterns(preParseScrubPatterns);
-        const sourceText = sourceContent.toString('utf8');
-        const scrubResult = fileScrubber.scrubFile(sourceText, input.filePath);
-        const scrubbedText = scrubResult ?? sourceText;
-        const scrubbedSha256 = scrubResult !== null
-            ? crypto.createHash('sha256').update(scrubbedText).digest('hex')
-            : sha256;
+        let scrubbedText: string | undefined;
+        let scrubbedSha256 = sha256;
+        const hasPatterns = preParseScrubPatterns
+            && Object.keys(preParseScrubPatterns).length > 0;
+        if (hasPatterns) {
+            fileScrubber.updatePatterns(preParseScrubPatterns);
+            const sourceText = sourceContent.toString('utf8');
+            const scrubResult = fileScrubber.scrubFile(sourceText, input.filePath);
+            scrubbedText = scrubResult ?? sourceText;
+            if (scrubResult !== null) {
+                scrubbedSha256 = crypto.createHash('sha256')
+                    .update(scrubbedText).digest('hex');
+            }
+        }
 
         // Fast-path: skip if the *.idx file is already up-to-date
         const header = readIdxHeader(input.idxPath);
@@ -199,6 +206,11 @@ export async function indexFile(
                 filePath: input.filePath,
                 idxPath: input.idxPath,
             };
+        }
+
+        // Ensure we have a UTF-8 string for tree-sitter parsing
+        if (scrubbedText === undefined) {
+            scrubbedText = sourceContent.toString('utf8');
         }
 
         // Parse source with tree-sitter (if grammar available)
