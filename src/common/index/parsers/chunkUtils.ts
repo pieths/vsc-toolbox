@@ -6,6 +6,7 @@
  * suitable for embedding search.
  */
 
+import * as http from 'http';
 import type { Chunk } from '../types';
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -31,6 +32,67 @@ export const MIN_CHUNK_CHARS = 75;
 export type BoilerplateFilter = (trimmedText: string) => boolean;
 
 // ── Low-level splitting ─────────────────────────────────────────────────────
+
+/** Keep-alive agent for reusing TCP connections to the tokenize server. */
+const tokenizeAgent = new http.Agent({
+    keepAlive: true,
+    maxSockets: 10,
+    timeout: 10000,
+});
+
+/**
+ * Get the token count for a string via the llama-server
+ * /tokenize endpoint. Returns -1 on any error.
+ *
+ * @param content - The text to tokenize
+ * @param port - Server port (default 8384)
+ */
+function getTokenCount(content: string, port = 8384): Promise<number> {
+    return new Promise((resolve) => {
+        const data = JSON.stringify({ content });
+        const req = http.request({
+            hostname: 'localhost',
+            port,
+            path: '/tokenize',
+            method: 'POST',
+            agent: tokenizeAgent,
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(data)
+            },
+        }, res => {
+            let body = '';
+            res.on('data', (c: string) => body += c);
+            res.on('end', () => {
+                try {
+                    const r = JSON.parse(body);
+                    resolve(r.tokens.length);
+                } catch {
+                    resolve(-1);
+                }
+            });
+        });
+        req.on('error', () => resolve(-1));
+        req.setTimeout(10000, () => {
+            req.destroy();
+            resolve(-1);
+        });
+        req.end(data);
+    });
+}
+
+/**
+ * Get token counts for multiple strings in parallel.
+ * Each element is the token count for the corresponding input,
+ * or -1 if that request failed.
+ *
+ * @param contents - Array of text strings to tokenize
+ * @param port - Server port (default 8384)
+ * @returns Array of token counts, one per input string
+ */
+export function getTokenCounts(contents: string[], port = 8384): Promise<number[]> {
+    return Promise.all(contents.map(c => getTokenCount(c, port)));
+}
 
 /**
  * Scan forward from `start`, accumulating character counts (including
