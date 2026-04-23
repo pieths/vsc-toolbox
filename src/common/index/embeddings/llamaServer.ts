@@ -585,7 +585,7 @@ export class LlamaServer {
             this.httpAgent = new http.Agent({
                 keepAlive: true,
                 maxSockets: 50, // Allow enough concurrent connections for slots + overhead
-                keepAliveMsecs: 1000,
+                timeout: 30000, // Clean up idle sockets after 30s
             });
 
             // Select device-specific settings
