@@ -57,6 +57,7 @@ function getConfig(): ContentIndexConfig {
     const vectorCacheServerPort = config.get<number>('vectorCacheServerPort', 8952);
     const vectorCacheMemoryMB = config.get<number>('vectorCacheMemoryMB', 50);
     const remoteEmbeddingServerAddress = config.get<string>('remoteEmbeddingServerAddress', '').trim();
+    const embeddingServerPort = config.get<number>('embeddingServerPort', 8384);
 
     // Deep-clone to a plain object. VS Code's getConfiguration() can
     // return a proxy object with internal slots that V8's structured
@@ -80,6 +81,7 @@ function getConfig(): ContentIndexConfig {
         vectorCacheServerPort,
         vectorCacheMemoryMB,
         remoteEmbeddingServerAddress,
+        embeddingServerPort,
         preParseScrubPatterns,
     };
 }

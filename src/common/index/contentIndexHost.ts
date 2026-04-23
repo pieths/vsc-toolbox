@@ -112,6 +112,7 @@ async function startComponents(config: ContentIndexConfig): Promise<number> {
             vectorCacheServerPort,
             vectorCacheMemoryMB,
             remoteEmbeddingServerAddress,
+            embeddingServerPort,
             preParseScrubPatterns,
         } = config;
 
@@ -139,6 +140,7 @@ async function startComponents(config: ContentIndexConfig): Promise<number> {
             llamaServer.initialize(
                 llamaCppDir,
                 modelDir,
+                embeddingServerPort,
                 (level, message) => sendNotification(level, message),
             );
             await llamaServer.start();

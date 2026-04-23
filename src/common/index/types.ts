@@ -389,6 +389,8 @@ export interface ContentIndexConfig {
     vectorCacheMemoryMB: number;
     /** Base URL of a remote vector cache server for cached embedding lookups */
     remoteEmbeddingServerAddress: string;
+    /** TCP port for the local embedding server */
+    embeddingServerPort: number;
     /** Glob → regex-string[] map for pre-parse source scrubbing. */
     preParseScrubPatterns: FileScrubPatterns;
 }

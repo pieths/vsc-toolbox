@@ -369,13 +369,16 @@ export class LlamaServer {
      *
      * @param llamaCppDir - Absolute path to the directory containing llama-server.exe and ggml-cuda.dll
      * @param modelDir - Absolute path to the directory where models are stored (or will be downloaded to)
+     * @param port - TCP port for the llama-server HTTP endpoint
      * @param onNotification - Optional callback for user-facing notifications (info/error messages)
      */
     initialize(
         llamaCppDir: string,
         modelDir: string,
+        port: number,
         onNotification?: (level: 'info' | 'error', message: string) => void,
     ): void {
+        this.port = port;
         this.serverExePath = path.join(llamaCppDir, 'llama-server.exe');
         this.cudaAvailable = fs.existsSync(path.join(llamaCppDir, 'ggml-cuda.dll'));
         this.modelPath = path.join(modelDir, this.model.filename);
@@ -385,6 +388,13 @@ export class LlamaServer {
         log(`  Server Path: ${this.serverExePath}`);
         log(`  CUDA Available: ${this.cudaAvailable}`);
         log(`  Model Path:  ${this.modelPath}`);
+    }
+
+    /**
+     * Get the TCP port the server listens on.
+     */
+    getPort(): number {
+        return this.port;
     }
 
     /**
