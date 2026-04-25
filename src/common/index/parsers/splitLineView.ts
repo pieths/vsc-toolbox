@@ -19,6 +19,9 @@ export class SplitLineView {
     /** Total number of virtual lines. */
     readonly lineCount: number;
 
+    /** True when no lines were split — virtual indices equal source indices. */
+    readonly isIdentity: boolean;
+
     /**
      * Virtual line texts. When no lines were split, this is the original
      * source array reference (zero-copy). Otherwise, it contains a mix
@@ -61,6 +64,7 @@ export class SplitLineView {
             this.virtualToSourceIndices = null;
             this.sourceToVirtualIndices = null;
             this.lineCount = lines.length;
+            this.isIdentity = true;
             return;
         }
 
@@ -68,6 +72,7 @@ export class SplitLineView {
         const virtualLines: string[] = [];
         const virtualToSourceIndices: number[] = [];
         this.sourceToVirtualIndices = new Array(lines.length);
+        this.isIdentity = false;
 
         for (let srcIdx = 0; srcIdx < lines.length; srcIdx++) {
             const line = lines[srcIdx];
