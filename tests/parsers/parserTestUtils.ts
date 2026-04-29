@@ -8,6 +8,7 @@
 import type { Node as SyntaxNode } from 'web-tree-sitter';
 import { SymbolType, AttrKey } from '../../src/common/index/parsers/types';
 import type { IndexSymbol } from '../../src/common/index/parsers/types';
+import { _setGetTokenCountsMock } from '../../src/common/index/parsers/chunkUtils';
 
 // Re-export for convenience so test files don't need a separate import.
 export { SymbolType, AttrKey };
@@ -135,4 +136,28 @@ export function debugPrintSyntaxTree(
 
     walk(node, 0);
     return lines.join('\n');
+}
+
+// ── Tokenizer mock utilities ────────────────────────────────────────────────
+
+/**
+ * Install a mock tokenizer that returns `tokensPerChar * text.length`
+ * for each input string. This simulates a uniform chars/token ratio
+ * and avoids hitting the real llama-server during tests.
+ *
+ * Call {@link clearTokenizerMock} in `afterEach` to restore the real
+ * implementation.
+ */
+export function setUniformTokenizer(tokensPerChar: number): void {
+    _setGetTokenCountsMock(async (contents: string[]) =>
+        contents.map(c => Math.round(c.length * tokensPerChar)),
+    );
+}
+
+/**
+ * Remove the mock tokenizer, restoring the real `getTokenCounts`
+ * implementation. Should be called in `afterEach`.
+ */
+export function clearTokenizerMock(): void {
+    _setGetTokenCountsMock(null);
 }

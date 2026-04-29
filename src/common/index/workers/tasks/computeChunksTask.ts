@@ -90,7 +90,7 @@ export async function computeChunks(input: ComputeChunksInput): Promise<ComputeC
         // Use workspace-relative path for chunk prefixes when available,
         // otherwise fall back to just the filename.
         const displayPath = input.workspacePath || path.basename(input.filePath);
-        const chunks = fileParser.computeChunks(sourceLines, symbols, displayPath);
+        const chunks = await fileParser.computeChunks(sourceLines, symbols, displayPath);
 
         // Compute sha256 over the final chunk text (including context prefix)
         // so that the hash accurately reflects what gets embedded.

@@ -17,10 +17,20 @@ import { describe, it, before } from 'node:test';
 import * as assert from 'node:assert/strict';
 import * as path from 'node:path';
 import { Parser, Language } from 'web-tree-sitter';
-import { cppParser } from '../../src/common/index/parsers/cppParser';
+import {
+    cppParser,
+    _buildContextPrefix as buildContextPrefix,
+    _FILE_ONLY_OVERHEAD as FILE_ONLY_OVERHEAD,
+    _CONTAINER_OVERHEAD as CONTAINER_OVERHEAD,
+    _SIGNATURE_LINE_OVERHEAD as SIGNATURE_LINE_OVERHEAD,
+} from '../../src/common/index/parsers/cppParser';
 import { SymbolType, AttrKey } from '../../src/common/index/parsers/types';
 import {
-    toComparable, expectedSymbol, filterSymbols, debugPrintSyntaxTree
+    toComparable,
+    expectedSymbol,
+    filterSymbols,
+    debugPrintSyntaxTree,
+    setUniformTokenizer,
 } from './parserTestUtils';
 
 // ── Paths ───────────────────────────────────────────────────────────────────
@@ -61,6 +71,7 @@ before(async () => {
     cppLanguage = await Language.load(CPP_WASM);
     parser = new Parser();
     parser.setLanguage(cppLanguage);
+    setUniformTokenizer(0.3);
 });
 
 // ── parseCst + readIndex ────────────────────────────────────────────────────
@@ -1702,9 +1713,9 @@ describe('function-like macro multi-line', () => {
 /**
  * Helper: parse source through the full pipeline and return chunks.
  */
-function chunkFixture(source: string, filePath: string = 'test.cpp') {
+async function chunkFixture(source: string, filePath: string = 'test.cpp') {
     const { lines, symbols } = parseFixture(source, filePath);
-    const chunks = cppParser.computeChunks(lines, symbols, filePath);
+    const chunks = await cppParser.computeChunks(lines, symbols, filePath);
     return { chunks, lines, symbols };
 }
 
@@ -1732,8 +1743,8 @@ void func() {
 `;
 
 describe('chunking: preamble skipping', () => {
-    it('should skip copyright and includes, start chunking at content', () => {
-        const { chunks } = chunkFixture(CHUNK_PREAMBLE_SKIP_SOURCE);
+    it('should skip copyright and includes, start chunking at content', async () => {
+        const { chunks } = await chunkFixture(CHUNK_PREAMBLE_SKIP_SOURCE);
         assert.ok(chunks.length == 1, 'There should be exactly one chunk');
         const chunk = chunks[0];
         // Chunk should not contain the copyright line
@@ -1764,8 +1775,8 @@ void doWork() {
 `;
 
 describe('chunking: no includes in file', () => {
-    it('should start from line 0 when there are no includes', () => {
-        const { chunks } = chunkFixture(CHUNK_NO_INCLUDES_SOURCE);
+    it('should start from line 0 when there are no includes', async () => {
+        const { chunks } = await chunkFixture(CHUNK_NO_INCLUDES_SOURCE);
         // With no includes, preamble end is 0, so the copyright comment
         // could appear in a chunk. In this case the copyright header is too
         // small and should not be included (removed via boilerPlate check).
@@ -1787,8 +1798,8 @@ const CHUNK_ONLY_INCLUDES_SOURCE = `\
 `;
 
 describe('chunking: file with only includes', () => {
-    it('should produce no chunks when file is all preamble', () => {
-        const { chunks } = chunkFixture(CHUNK_ONLY_INCLUDES_SOURCE);
+    it('should produce no chunks when file is all preamble', async () => {
+        const { chunks } = await chunkFixture(CHUNK_ONLY_INCLUDES_SOURCE);
         // After skipping the preamble, there's nothing left to chunk
         assert.equal(chunks.length, 0, 'expected no chunks for includes-only file');
     });
@@ -1810,8 +1821,8 @@ void myFunction(int param) {
 `;
 
 describe('chunking: function context prefix', () => {
-    it('should include file and Function prefix in chunk text', () => {
-        const { chunks } = chunkFixture(CHUNK_FUNCTION_PREFIX_SOURCE, 'src/foo.cpp');
+    it('should include file and Function prefix in chunk text', async () => {
+        const { chunks } = await chunkFixture(CHUNK_FUNCTION_PREFIX_SOURCE, 'src/foo.cpp');
         assert.ok(chunks.length >= 1, 'expected at least one chunk');
         const funcChunk = chunks.find(c => c.text.includes('void myFunction'));
         assert.ok(funcChunk, 'expected a chunk containing the function');
@@ -1819,8 +1830,8 @@ describe('chunking: function context prefix', () => {
             'chunk should include file prefix');
         assert.ok(funcChunk!.text.includes('// Function: myFunction'),
             'chunk should include Function kind prefix');
-        assert.equal(funcChunk.startLine, 3);
-        assert.equal(funcChunk.endLine, 10);
+        assert.equal(funcChunk!.startLine, 3);
+        assert.equal(funcChunk!.endLine, 10);
     });
 });
 
@@ -1837,8 +1848,8 @@ class MyClass {
 `;
 
 describe('chunking: class context prefix', () => {
-    it('should include Class prefix in chunk text', () => {
-        const { chunks } = chunkFixture(CHUNK_CLASS_PREFIX_SOURCE, 'src/bar.cpp');
+    it('should include Class prefix in chunk text', async () => {
+        const { chunks } = await chunkFixture(CHUNK_CLASS_PREFIX_SOURCE, 'src/bar.cpp');
         assert.ok(chunks.length == 1, 'expected one chunk');
         const classChunk = chunks.find(c => c.text.includes('class MyClass'));
         assert.ok(classChunk, 'expected a chunk containing the class');
@@ -1846,8 +1857,8 @@ describe('chunking: class context prefix', () => {
             'chunk should include file prefix');
         assert.ok(classChunk!.text.includes('// Class: MyClass'),
             'chunk should include Class kind prefix');
-        assert.equal(classChunk.startLine, 3);
-        assert.equal(classChunk.endLine, 9);
+        assert.equal(classChunk!.startLine, 3);
+        assert.equal(classChunk!.endLine, 9);
     });
 });
 
@@ -1863,15 +1874,15 @@ struct MyPoint {
 `;
 
 describe('chunking: struct context prefix', () => {
-    it('should include Struct prefix in chunk text', () => {
-        const { chunks } = chunkFixture(CHUNK_STRUCT_PREFIX_SOURCE, 'src/point.h');
+    it('should include Struct prefix in chunk text', async () => {
+        const { chunks } = await chunkFixture(CHUNK_STRUCT_PREFIX_SOURCE, 'src/point.h');
         assert.ok(chunks.length == 1);
         const structChunk = chunks.find(c => c.text.includes('struct MyPoint'));
         assert.ok(structChunk, 'expected a chunk containing the struct');
         assert.ok(structChunk!.text.includes('// Struct: MyPoint'),
             'chunk should include Struct kind prefix');
-        assert.equal(structChunk.startLine, 3);
-        assert.equal(structChunk.endLine, 8);
+        assert.equal(structChunk!.startLine, 3);
+        assert.equal(structChunk!.endLine, 8);
     });
 });
 
@@ -1889,15 +1900,15 @@ enum class Direction {
 `;
 
 describe('chunking: enum context prefix', () => {
-    it('should include Enum prefix in chunk text', () => {
-        const { chunks } = chunkFixture(CHUNK_ENUM_PREFIX_SOURCE, 'src/dir.h');
+    it('should include Enum prefix in chunk text', async () => {
+        const { chunks } = await chunkFixture(CHUNK_ENUM_PREFIX_SOURCE, 'src/dir.h');
         assert.ok(chunks.length == 1);
         const enumChunk = chunks.find(c => c.text.includes('enum class Direction'));
         assert.ok(enumChunk, 'expected a chunk containing the enum');
         assert.ok(enumChunk!.text.includes('// Enum: Direction'),
             'chunk should include Enum kind prefix');
-        assert.equal(enumChunk.startLine, 3);
-        assert.equal(enumChunk.endLine, 10);
+        assert.equal(enumChunk!.startLine, 3);
+        assert.equal(enumChunk!.endLine, 10);
     });
 });
 
@@ -1926,8 +1937,8 @@ void stop() {
 `;
 
 describe('chunking: namespace does not wrap entire file', () => {
-    it('should produce separate chunks for functions, not one big namespace chunk', () => {
-        const { chunks } = chunkFixture(CHUNK_NAMESPACE_EXCLUSION_SOURCE);
+    it('should produce separate chunks for functions, not one big namespace chunk', async () => {
+        const { chunks } = await chunkFixture(CHUNK_NAMESPACE_EXCLUSION_SOURCE);
         assert.ok(chunks.length == 2, 'expected two chunks (one per function)');
         // Should have Function prefixes, not a Namespace prefix
         const hasNamespacePrefix = chunks.some(c => c.text.includes('// Namespace:'));
@@ -1938,11 +1949,11 @@ describe('chunking: namespace does not wrap entire file', () => {
         assert.ok(playChunk, 'expected a chunk for play()');
         assert.ok(stopChunk, 'expected a chunk for stop()');
 
-        assert.equal(playChunk.startLine, 5);
-        assert.equal(playChunk.endLine, 10);
+        assert.equal(playChunk!.startLine, 5);
+        assert.equal(playChunk!.endLine, 10);
 
-        assert.equal(stopChunk.startLine, 12);
-        assert.equal(stopChunk.endLine, 17);
+        assert.equal(stopChunk!.startLine, 12);
+        assert.equal(stopChunk!.endLine, 17);
     });
 });
 
@@ -1966,15 +1977,15 @@ void Player::play() {
 `;
 
 describe('chunking: scoped FQN in prefix', () => {
-    it('should use the fully qualified name in the context prefix', () => {
-        const { chunks } = chunkFixture(CHUNK_SCOPED_FQN_SOURCE);
+    it('should use the fully qualified name in the context prefix', async () => {
+        const { chunks } = await chunkFixture(CHUNK_SCOPED_FQN_SOURCE);
         assert.ok(chunks.length == 1);
         const playChunk = chunks.find(c => c.text.includes('void Player::play()'));
         assert.ok(playChunk, 'expected a chunk for Player::play()');
         assert.ok(playChunk!.text.includes('// Function: media::win::Player::play'),
             'chunk should include fully qualified name in prefix');
-        assert.equal(playChunk.startLine, 6);
-        assert.equal(playChunk.endLine, 11);
+        assert.equal(playChunk!.startLine, 6);
+        assert.equal(playChunk!.endLine, 11);
     });
 });
 
@@ -2000,8 +2011,8 @@ class MyClass {
 `;
 
 describe('chunking: gap content between preamble and container', () => {
-    it('should produce a gap chunk for forward declarations', () => {
-        const { chunks } = chunkFixture(CHUNK_GAP_CONTENT_SOURCE);
+    it('should produce a gap chunk for forward declarations', async () => {
+        const { chunks } = await chunkFixture(CHUNK_GAP_CONTENT_SOURCE);
         assert.ok(chunks.length == 2);
         // The forward declarations appear between the includes and the class.
         // They should be in a gap chunk with a file-only prefix (no container prefix).
@@ -2013,8 +2024,8 @@ describe('chunking: gap content between preamble and container', () => {
         assert.ok(!gapChunk!.text.includes('// Class:'),
             'gap chunk should not have a container prefix');
 
-        assert.equal(gapChunk.startLine, 3);
-        assert.equal(gapChunk.endLine, 8);
+        assert.equal(gapChunk!.startLine, 3);
+        assert.equal(gapChunk!.endLine, 8);
     });
 });
 
@@ -2039,14 +2050,14 @@ static const char* kAuthor = "anonymous";
 `;
 
 describe('chunking: trailing content after last container', () => {
-    it('should produce chunks for content after the last function', () => {
-        const { chunks } = chunkFixture(CHUNK_TRAILING_CONTENT_SOURCE);
+    it('should produce chunks for content after the last function', async () => {
+        const { chunks } = await chunkFixture(CHUNK_TRAILING_CONTENT_SOURCE);
         assert.ok(chunks.length >= 1);
         const trailingChunk = chunks.find(c => c.text.includes('kMaxSize'));
         assert.ok(trailingChunk, 'expected a chunk containing trailing constants');
 
-        assert.equal(trailingChunk.startLine, 9);
-        assert.equal(trailingChunk.endLine, 15);
+        assert.equal(trailingChunk!.startLine, 9);
+        assert.equal(trailingChunk!.endLine, 15);
     });
 });
 
@@ -2061,8 +2072,8 @@ const CHUNK_BOILERPLATE_SOURCE = `\
 `;
 
 describe('chunking: boilerplate-only content is filtered', () => {
-    it('should produce no chunks when remaining content is pure boilerplate', () => {
-        const { chunks } = chunkFixture(CHUNK_BOILERPLATE_SOURCE);
+    it('should produce no chunks when remaining content is pure boilerplate', async () => {
+        const { chunks } = await chunkFixture(CHUNK_BOILERPLATE_SOURCE);
         // After skipping the include, only closing brace + #endif remain,
         // which are boilerplate. Short boilerplate is filtered out.
         assert.equal(chunks.length, 0, 'expected no chunks for boilerplate-only content');
@@ -2084,8 +2095,8 @@ void func() {
 `;
 
 describe('chunking: line numbers are 1-based inclusive', () => {
-    it('should have startLine >= 1 and endLine >= startLine', () => {
-        const { chunks } = chunkFixture(CHUNK_LINE_NUMBERS_SOURCE);
+    it('should have startLine >= 1 and endLine >= startLine', async () => {
+        const { chunks } = await chunkFixture(CHUNK_LINE_NUMBERS_SOURCE);
         assert.ok(chunks.length >= 1);
         for (const chunk of chunks) {
             assert.ok(chunk.startLine >= 1,
@@ -2103,8 +2114,8 @@ describe('chunking: line numbers are 1-based inclusive', () => {
 // -- Chunk SHA-256 digest -----------------------------------------------------
 
 describe('chunking: SHA-256 digest', () => {
-    it('sha256 should be empty at parser level (computed by worker task)', () => {
-        const { chunks } = chunkFixture(CHUNK_LINE_NUMBERS_SOURCE);
+    it('sha256 should be empty at parser level (computed by worker task)', async () => {
+        const { chunks } = await chunkFixture(CHUNK_LINE_NUMBERS_SOURCE);
         assert.ok(chunks.length >= 1);
         for (const chunk of chunks) {
             assert.equal(chunk.sha256, '',
@@ -2144,8 +2155,8 @@ void gamma() {
 `;
 
 describe('chunking: multiple functions get separate chunks', () => {
-    it('should produce at least one chunk per function', () => {
-        const { chunks } = chunkFixture(CHUNK_MULTIPLE_FUNCTIONS_SOURCE);
+    it('should produce at least one chunk per function', async () => {
+        const { chunks } = await chunkFixture(CHUNK_MULTIPLE_FUNCTIONS_SOURCE);
         const alphaChunk = chunks.find(c => c.text.includes('void alpha()'));
         const betaChunk = chunks.find(c => c.text.includes('void beta()'));
         const gammaChunk = chunks.find(c => c.text.includes('void gamma()'));
@@ -2154,8 +2165,8 @@ describe('chunking: multiple functions get separate chunks', () => {
         assert.ok(gammaChunk, 'expected a chunk for gamma()');
     });
 
-    it('each function chunk should have its own FQN prefix', () => {
-        const { chunks } = chunkFixture(CHUNK_MULTIPLE_FUNCTIONS_SOURCE);
+    it('each function chunk should have its own FQN prefix', async () => {
+        const { chunks } = await chunkFixture(CHUNK_MULTIPLE_FUNCTIONS_SOURCE);
         const alphaChunk = chunks.find(c => c.text.includes('void alpha()'));
         const betaChunk = chunks.find(c => c.text.includes('void beta()'));
         const gammaChunk = chunks.find(c => c.text.includes('void gamma()'));
@@ -2164,8 +2175,8 @@ describe('chunking: multiple functions get separate chunks', () => {
         assert.ok(gammaChunk!.text.includes('// Function: gamma'));
     });
 
-    it('each function chunk should have the correct line numbers', () => {
-        const { chunks } = chunkFixture(CHUNK_MULTIPLE_FUNCTIONS_SOURCE);
+    it('each function chunk should have the correct line numbers', async () => {
+        const { chunks } = await chunkFixture(CHUNK_MULTIPLE_FUNCTIONS_SOURCE);
         const alphaChunk = chunks.find(c => c.text.includes('void alpha()'));
         const betaChunk = chunks.find(c => c.text.includes('void beta()'));
         const gammaChunk = chunks.find(c => c.text.includes('void gamma()'));
@@ -2195,8 +2206,8 @@ void doWork(int param) {
 `;
 
 describe('chunking: doc comment absorbed into container', () => {
-    it('should include the preceding comment in the function chunk', () => {
-        const { chunks } = chunkFixture(CHUNK_DOC_COMMENT_ABSORBED_SOURCE);
+    it('should include the preceding comment in the function chunk', async () => {
+        const { chunks } = await chunkFixture(CHUNK_DOC_COMMENT_ABSORBED_SOURCE);
         assert.ok(chunks.length >= 1);
         const funcChunk = chunks.find(c => c.text.includes('void doWork'));
         assert.ok(funcChunk, 'expected a chunk for doWork()');
@@ -2233,8 +2244,8 @@ class Widget {
 `;
 
 describe('chunking: header with include guard', () => {
-    it('should skip the include guard and includes', () => {
-        const { chunks } = chunkFixture(CHUNK_HEADER_GUARD_SOURCE, 'widget.h');
+    it('should skip the include guard and includes', async () => {
+        const { chunks } = await chunkFixture(CHUNK_HEADER_GUARD_SOURCE, 'widget.h');
         assert.ok(chunks.length == 1);
         // No chunk should contain the include guard
         for (const chunk of chunks) {
@@ -2249,8 +2260,8 @@ describe('chunking: header with include guard', () => {
         const classChunk = chunks.find(c => c.text.includes('class Widget'));
         assert.ok(classChunk, 'expected a chunk for Widget class');
 
-        assert.equal(classChunk.startLine, 9);
-        assert.equal(classChunk.endLine, 15);
+        assert.equal(classChunk!.startLine, 9);
+        assert.equal(classChunk!.endLine, 15);
     });
 });
 
@@ -2274,8 +2285,8 @@ struct Config {
 `;
 
 describe('chunking: header with #pragma once', () => {
-    it('should skip pragma once and includes', () => {
-        const { chunks } = chunkFixture(CHUNK_PRAGMA_ONCE_SOURCE, 'config.h');
+    it('should skip pragma once and includes', async () => {
+        const { chunks } = await chunkFixture(CHUNK_PRAGMA_ONCE_SOURCE, 'config.h');
         assert.ok(chunks.length == 1);
         for (const chunk of chunks) {
             assert.ok(!chunk.text.includes('#pragma once'),
@@ -2286,8 +2297,8 @@ describe('chunking: header with #pragma once', () => {
         const structChunk = chunks.find(c => c.text.includes('struct Config'));
         assert.ok(structChunk, 'expected a chunk for Config struct');
 
-        assert.equal(structChunk.startLine, 8);
-        assert.equal(structChunk.endLine, 14);
+        assert.equal(structChunk!.startLine, 8);
+        assert.equal(structChunk!.endLine, 14);
     });
 });
 
@@ -2308,8 +2319,8 @@ public:
 `;
 
 describe('chunking: class with constructor and destructor', () => {
-    it('should include constructor and destructor in class chunk', () => {
-        const { chunks } = chunkFixture(CHUNK_CTOR_DTOR_SOURCE);
+    it('should include constructor and destructor in class chunk', async () => {
+        const { chunks } = await chunkFixture(CHUNK_CTOR_DTOR_SOURCE);
         assert.ok(chunks.length == 1);
         const classChunk = chunks.find(c => c.text.includes('class Player'));
         assert.ok(classChunk, 'expected a chunk for Player class');
@@ -2318,8 +2329,8 @@ describe('chunking: class with constructor and destructor', () => {
         assert.ok(classChunk!.text.includes('~Player()'),
             'class chunk should include destructor');
 
-        assert.equal(classChunk.startLine, 3);
-        assert.equal(classChunk.endLine, 11);
+        assert.equal(classChunk!.startLine, 3);
+        assert.equal(classChunk!.endLine, 11);
     });
 });
 
@@ -2348,8 +2359,8 @@ void Player::play() {
 `;
 
 describe('chunking: out-of-line definitions', () => {
-    it('should produce separate chunks for each out-of-line definition', () => {
-        const { chunks } = chunkFixture(CHUNK_OUT_OF_LINE_SOURCE);
+    it('should produce separate chunks for each out-of-line definition', async () => {
+        const { chunks } = await chunkFixture(CHUNK_OUT_OF_LINE_SOURCE);
         assert.ok(chunks.length >= 3, 'expected at least 3 chunks');
         const ctorChunk = chunks.find(c => c.text.includes('Player::Player()'));
         const dtorChunk = chunks.find(c => c.text.includes('Player::~Player()'));
@@ -2359,8 +2370,8 @@ describe('chunking: out-of-line definitions', () => {
         assert.ok(playChunk, 'expected a chunk for play()');
     });
 
-    it('should have correct kind prefixes for out-of-line definitions', () => {
-        const { chunks } = chunkFixture(CHUNK_OUT_OF_LINE_SOURCE);
+    it('should have correct kind prefixes for out-of-line definitions', async () => {
+        const { chunks } = await chunkFixture(CHUNK_OUT_OF_LINE_SOURCE);
         const ctorChunk = chunks.find(c => c.text.includes('Player::Player()'));
         const dtorChunk = chunks.find(c => c.text.includes('Player::~Player()'));
         const playChunk = chunks.find(c => c.text.includes('Player::play()'));
@@ -2372,8 +2383,8 @@ describe('chunking: out-of-line definitions', () => {
             'play chunk should have Function prefix');
     });
 
-    it('should produce correct line numbers', () => {
-        const { chunks } = chunkFixture(CHUNK_OUT_OF_LINE_SOURCE);
+    it('should produce correct line numbers', async () => {
+        const { chunks } = await chunkFixture(CHUNK_OUT_OF_LINE_SOURCE);
         assert.ok(chunks.length == 3, 'expected at least 3 chunks');
         const ctorChunk = chunks[0];
         const dtorChunk = chunks[1];
@@ -2391,8 +2402,8 @@ describe('chunking: out-of-line definitions', () => {
 // -- Empty file ---------------------------------------------------------------
 
 describe('chunking: empty file', () => {
-    it('should produce no chunks', () => {
-        const chunks = cppParser.computeChunks([], [], 'empty.cpp');
+    it('should produce no chunks', async () => {
+        const chunks = await cppParser.computeChunks([], [], 'empty.cpp');
         assert.deepStrictEqual(chunks, []);
     });
 });
@@ -2404,8 +2415,8 @@ const CHUNK_ONLY_COMMENT_SOURCE = `\
 `;
 
 describe('chunking: file with only a comment', () => {
-    it('should produce no chunks (comment is too short / boilerplate)', () => {
-        const { chunks } = chunkFixture(CHUNK_ONLY_COMMENT_SOURCE);
+    it('should produce no chunks (comment is too short / boilerplate)', async () => {
+        const { chunks } = await chunkFixture(CHUNK_ONLY_COMMENT_SOURCE);
         // A single short comment line is below MIN_CHUNK_CHARS (75)
         assert.equal(chunks.length, 0);
     });
@@ -2436,8 +2447,8 @@ void second() {
 `;
 
 describe('chunking: chunks respect container boundaries', () => {
-    it('should not mix content from different containers', () => {
-        const { chunks } = chunkFixture(CHUNK_NO_OVERLAP_SOURCE);
+    it('should not mix content from different containers', async () => {
+        const { chunks } = await chunkFixture(CHUNK_NO_OVERLAP_SOURCE);
         // Find the chunk containing first() and verify it doesn't contain second()
         const firstChunk = chunks.find(c =>
             c.text.includes('void first()') && c.text.includes('x1'));
@@ -2470,8 +2481,8 @@ const CHUNK_SIGNATURE_PREFIX_SOURCE = (() => {
 })();
 
 describe('chunking: signature prefix on continuation chunks', () => {
-    it('should add signature prefix on non-first chunks of a large function', () => {
-        const { chunks } = chunkFixture(CHUNK_SIGNATURE_PREFIX_SOURCE);
+    it('should add signature prefix on non-first chunks of a large function', async () => {
+        const { chunks } = await chunkFixture(CHUNK_SIGNATURE_PREFIX_SOURCE);
         assert.ok(chunks.length >= 2,
             `expected at least 2 chunks for a function exceeding MAX_CHUNK_CHARS, got ${chunks.length}`);
         // First chunk should have the Function prefix but no signature prefix
@@ -2507,8 +2518,8 @@ union Variant {
 `;
 
 describe('chunking: union', () => {
-    it('should produce a chunk with Union prefix', () => {
-        const { chunks } = chunkFixture(CHUNK_UNION_SOURCE);
+    it('should produce a chunk with Union prefix', async () => {
+        const { chunks } = await chunkFixture(CHUNK_UNION_SOURCE);
         assert.ok(chunks.length == 1);
         const unionChunk = chunks.find(c => c.text.includes('union Variant'));
         assert.ok(unionChunk, 'expected a chunk for union Variant');
@@ -2565,8 +2576,8 @@ void freeFunction() {
 `;
 
 describe('chunking: mixed containers in one file', () => {
-    it('should produce chunks for each container type', () => {
-        const { chunks } = chunkFixture(CHUNK_MIXED_CONTAINERS_SOURCE);
+    it('should produce chunks for each container type', async () => {
+        const { chunks } = await chunkFixture(CHUNK_MIXED_CONTAINERS_SOURCE);
         const enumChunk = chunks.find(c => c.text.includes('enum class Color'));
         const structChunk = chunks.find(c => c.text.includes('struct Point'));
         const classChunk = chunks.find(c => c.text.includes('class Shape'));
@@ -2576,18 +2587,18 @@ describe('chunking: mixed containers in one file', () => {
         assert.ok(classChunk, 'expected a chunk for Shape class');
         assert.ok(funcChunk, 'expected a chunk for freeFunction');
 
-        assert.equal(enumChunk.startLine, 4);
-        assert.equal(enumChunk.endLine, 13);
-        assert.equal(structChunk.startLine, 15);
-        assert.equal(structChunk.endLine, 21);
-        assert.equal(classChunk.startLine, 23);
-        assert.equal(classChunk.endLine, 31);
-        assert.equal(funcChunk.startLine, 33);
-        assert.equal(funcChunk.endLine, 39);
+        assert.equal(enumChunk!.startLine, 4);
+        assert.equal(enumChunk!.endLine, 13);
+        assert.equal(structChunk!.startLine, 15);
+        assert.equal(structChunk!.endLine, 21);
+        assert.equal(classChunk!.startLine, 23);
+        assert.equal(classChunk!.endLine, 31);
+        assert.equal(funcChunk!.startLine, 33);
+        assert.equal(funcChunk!.endLine, 39);
     });
 
-    it('each container chunk should have the correct kind prefix', () => {
-        const { chunks } = chunkFixture(CHUNK_MIXED_CONTAINERS_SOURCE);
+    it('each container chunk should have the correct kind prefix', async () => {
+        const { chunks } = await chunkFixture(CHUNK_MIXED_CONTAINERS_SOURCE);
         const enumChunk = chunks.find(c => c.text.includes('enum class Color'));
         const structChunk = chunks.find(c => c.text.includes('struct Point'));
         const classChunk = chunks.find(c => c.text.includes('class Shape'));
@@ -2625,8 +2636,8 @@ class Engine {
 `;
 
 describe('chunking: includes after gap content', () => {
-    it('should skip all includes regardless of position', () => {
-        const { chunks } = chunkFixture(CHUNK_INTERLEAVED_INCLUDES_SOURCE);
+    it('should skip all includes regardless of position', async () => {
+        const { chunks } = await chunkFixture(CHUNK_INTERLEAVED_INCLUDES_SOURCE);
         assert.ok(chunks.length == 1);
         // The preamble ends after the LAST include (#include <vector> at line 11).
         // So the forward declarations between the two includes are skipped too.
@@ -2637,6 +2648,145 @@ describe('chunking: includes after gap content', () => {
 
         assert.equal(chunks[0].startLine, 14);
         assert.equal(chunks[0].endLine, 20);
+    });
+});
+
+// ── buildContextPrefix ──────────────────────────────────────────────────────
+
+describe('buildContextPrefix', () => {
+
+    const filePath = 'src/components/player.cpp';
+    const GENEROUS_BUDGET = 500;
+
+    // ── Full prefix (container + signature) ─────────────────────────────
+
+    it('produces full prefix with container and signature when within budget', () => {
+        const container = { kind: 'Function', qualifiedName: 'Player::play', signature: 'void Player::play(int vol)' };
+        const result = buildContextPrefix(filePath, GENEROUS_BUDGET, container, true);
+        assert.equal(result, `// file: ${filePath}\n// Function: Player::play\n// signature: void Player::play(int vol)\n\n`);
+    });
+
+    it('produces full prefix with container but no signature when includeSignature is false', () => {
+        const container = { kind: 'Function', qualifiedName: 'Player::play', signature: 'void Player::play()' };
+        const result = buildContextPrefix(filePath, GENEROUS_BUDGET, container, false);
+        assert.equal(result, `// file: ${filePath}\n// Function: Player::play\n\n`);
+        assert.ok(!result.includes('signature'));
+    });
+
+    it('does not include signature for non-SIGNATURE_KINDS (e.g. Class)', () => {
+        const container = { kind: 'Class', qualifiedName: 'Player', signature: 'class Player' };
+        const result = buildContextPrefix(filePath, GENEROUS_BUDGET, container, true);
+        assert.equal(result, `// file: ${filePath}\n// Class: Player\n\n`);
+        assert.ok(!result.includes('signature'));
+    });
+
+    it('does not include signature when container has no signature field', () => {
+        const container = { kind: 'Function', qualifiedName: 'doWork' };
+        const result = buildContextPrefix(filePath, GENEROUS_BUDGET, container, true);
+        assert.equal(result, `// file: ${filePath}\n// Function: doWork\n\n`);
+    });
+
+    // ── Fallback: signature dropped ─────────────────────────────────────
+
+    it('drops signature when it exceeds budget but keeps container', () => {
+        const container = { kind: 'Function', qualifiedName: 'fn', signature: 'void fn()' };
+        // Budget fits container but not container + signature
+        const containerLen = CONTAINER_OVERHEAD + filePath.length + container.kind.length + container.qualifiedName.length;
+        const budget = containerLen + SIGNATURE_LINE_OVERHEAD + container.signature.length - 1; // 1 char short
+        const result = buildContextPrefix(filePath, budget, container, true);
+        assert.ok(result.includes('// Function: fn'));
+        assert.ok(!result.includes('signature'));
+    });
+
+    // ── Fallback: container dropped, file path only ─────────────────────
+
+    it('falls back to file path only when container exceeds budget', () => {
+        const container = { kind: 'Function', qualifiedName: 'VeryLongNamespace::VeryLongClass::VeryLongMethod' };
+        // Budget fits file-only but not container
+        const budget = FILE_ONLY_OVERHEAD + filePath.length;
+        const result = buildContextPrefix(filePath, budget, container, false);
+        assert.equal(result, `// file: ${filePath}\n\n`);
+    });
+
+    it('produces file path only when no container is provided', () => {
+        const result = buildContextPrefix(filePath, GENEROUS_BUDGET);
+        assert.equal(result, `// file: ${filePath}\n\n`);
+    });
+
+    // ── Fallback: basename only ─────────────────────────────────────────
+
+    it('falls back to basename when full path exceeds budget', () => {
+        const longPath = 'a/'.repeat(100) + 'file.cpp';
+        const budget = FILE_ONLY_OVERHEAD + 10; // fits "file.cpp" (8 chars) but not the full path
+        const result = buildContextPrefix(longPath, budget);
+        assert.equal(result, '// file: file.cpp\n\n');
+    });
+
+    // ── Fallback: empty string ──────────────────────────────────────────
+
+    it('returns empty string when even basename exceeds budget', () => {
+        const result = buildContextPrefix('x.cpp', 5); // too small for anything
+        assert.equal(result, '');
+    });
+
+    // ── Overhead constants are correct ──────────────────────────────────
+
+    it('FILE_ONLY_OVERHEAD matches actual fixed text length', () => {
+        const prefix = buildContextPrefix('', GENEROUS_BUDGET);
+        // prefix = "// file: \n\n" with empty filePath
+        assert.equal(prefix.length, FILE_ONLY_OVERHEAD);
+    });
+
+    it('CONTAINER_OVERHEAD matches actual fixed text length', () => {
+        const container = { kind: '', qualifiedName: '' };
+        const prefix = buildContextPrefix('', GENEROUS_BUDGET, container);
+        // prefix = "// file: \n// : \n\n" with empty filePath, kind, and name
+        assert.equal(prefix.length, CONTAINER_OVERHEAD);
+    });
+
+    it('SIGNATURE_LINE_OVERHEAD matches actual fixed text length', () => {
+        const container = { kind: 'Function', qualifiedName: 'fn', signature: 'X' };
+        const withSig = buildContextPrefix('', GENEROUS_BUDGET, container, true);
+        const withoutSig = buildContextPrefix('', GENEROUS_BUDGET, container, false);
+        // The difference minus the signature content ('X' = 1 char) is the overhead
+        assert.equal(withSig.length - withoutSig.length - container.signature.length, SIGNATURE_LINE_OVERHEAD);
+    });
+
+    // ── Budget boundary (exact fit) ─────────────────────────────────────
+
+    it('includes container when length exactly equals budget', () => {
+        const container = { kind: 'Class', qualifiedName: 'Foo' };
+        const exactBudget = CONTAINER_OVERHEAD + filePath.length + container.kind.length + container.qualifiedName.length;
+        const result = buildContextPrefix(filePath, exactBudget, container);
+        assert.ok(result.includes('// Class: Foo'));
+    });
+
+    it('drops container when length is one over budget', () => {
+        const container = { kind: 'Class', qualifiedName: 'Foo' };
+        const exactBudget = CONTAINER_OVERHEAD + filePath.length + container.kind.length + container.qualifiedName.length;
+        const result = buildContextPrefix(filePath, exactBudget - 1, container);
+        assert.ok(!result.includes('Class'));
+        assert.ok(result.includes(`// file: ${filePath}`));
+    });
+
+    // ── SIGNATURE_KINDS coverage ────────────────────────────────────────
+
+    it('includes signature for all SIGNATURE_KINDS', () => {
+        for (const kind of ['Function', 'Method', 'Constructor', 'Destructor', 'Prototype']) {
+            const container = { kind, qualifiedName: 'test', signature: 'void test()' };
+            const result = buildContextPrefix(filePath, GENEROUS_BUDGET, container, true);
+            assert.ok(result.includes('// signature: void test()'),
+                `${kind} should include signature line`);
+        }
+    });
+
+    it('excludes signature for non-SIGNATURE_KINDS', () => {
+        for (const kind of ['Class', 'Struct', 'Enum', 'Union', 'Namespace']) {
+            const container = { kind, qualifiedName: 'test', signature: 'some sig' };
+            const result = buildContextPrefix(filePath, GENEROUS_BUDGET, container, true);
+            assert.ok(!result.includes('signature'),
+                `${kind} should not include signature line`);
+        }
     });
 });
 
@@ -2673,12 +2823,12 @@ describe('edge cases', () => {
         assert.deepStrictEqual(result, []);
     });
 
-    it('computeChunks with empty source should return empty array', () => {
-        const chunks = cppParser.computeChunks([], [], 'empty.cpp');
+    it('computeChunks with empty source should return empty array', async () => {
+        const chunks = await cppParser.computeChunks([], [], 'empty.cpp');
         assert.deepStrictEqual(chunks, []);
     });
 
-    it('computeChunks with no symbols should still produce chunks if file has content', () => {
+    it('computeChunks with no symbols should still produce chunks if file has content', async () => {
         const lines = [
             '#include <stdio.h>',
             '',
@@ -2690,7 +2840,7 @@ describe('edge cases', () => {
             '    return 0;',
             '}',
         ];
-        const chunks = cppParser.computeChunks(lines, [], 'main.cpp');
+        const chunks = await cppParser.computeChunks(lines, [], 'main.cpp');
         // With no symbols, the entire file is treated as trailing content
         assert.ok(chunks.length >= 1, 'expected at least one chunk from non-empty file');
     });

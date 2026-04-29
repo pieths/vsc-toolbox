@@ -17,10 +17,19 @@ import { describe, it, before } from 'node:test';
 import * as assert from 'node:assert/strict';
 import * as path from 'node:path';
 import { Parser, Language } from 'web-tree-sitter';
-import { markdownParser } from '../../src/common/index/parsers/markdownParser';
+import {
+    markdownParser,
+    _buildContextPrefix as buildContextPrefix,
+    _FILE_ONLY_OVERHEAD as FILE_ONLY_OVERHEAD,
+    _FULL_PREFIX_OVERHEAD as FULL_PREFIX_OVERHEAD,
+} from '../../src/common/index/parsers/markdownParser';
 import { SymbolType } from '../../src/common/index/parsers/types';
 import {
-    toComparable, expectedSymbol, filterSymbols, debugPrintSyntaxTree
+    toComparable,
+    expectedSymbol,
+    filterSymbols,
+    debugPrintSyntaxTree,
+    setUniformTokenizer,
 } from './parserTestUtils';
 
 // ── Paths ───────────────────────────────────────────────────────────────────
@@ -61,9 +70,9 @@ function parseFixture(source: string, filePath: string = 'test.md', debug: boole
  * Compute chunks through the full parseCst → readIndex → computeChunks
  * pipeline.
  */
-function chunkFixture(source: string, filePath: string = 'test.md') {
+async function chunkFixture(source: string, filePath: string = 'test.md') {
     const { symbols, lines } = parseFixture(source, filePath);
-    const chunks = markdownParser.computeChunks(lines, symbols, filePath);
+    const chunks = await markdownParser.computeChunks(lines, symbols, filePath);
     return { symbols, lines, chunks };
 }
 
@@ -74,6 +83,7 @@ before(async () => {
     mdLanguage = await Language.load(MD_WASM);
     parser = new Parser();
     parser.setLanguage(mdLanguage);
+    setUniformTokenizer(0.3);
 });
 
 // ── parseCst + readIndex ────────────────────────────────────────────────────
@@ -561,29 +571,29 @@ be retained by the chunking logic. This paragraph provides that.
 `;
 
 describe('chunking: single heading section', () => {
-    it('should produce at least one chunk', () => {
-        const { chunks } = chunkFixture(CHUNK_SINGLE_SECTION_SOURCE);
+    it('should produce at least one chunk', async () => {
+        const { chunks } = await chunkFixture(CHUNK_SINGLE_SECTION_SOURCE);
         assert.ok(chunks.length == 1, 'expected one chunk');
     });
 
-    it('chunks should have heading-aware context prefix', () => {
-        const { chunks } = chunkFixture(CHUNK_SINGLE_SECTION_SOURCE);
+    it('chunks should have heading-aware context prefix', async () => {
+        const { chunks } = await chunkFixture(CHUNK_SINGLE_SECTION_SOURCE);
         assert.ok(chunks[0].text.includes('file: test.md'),
             'chunk should include file path prefix');
         assert.ok(chunks[0].text.includes('section: Overview'),
             'chunk should include heading section name prefix');
     });
 
-    it('sha256 should be empty at parser level (computed by worker task)', () => {
-        const { chunks } = chunkFixture(CHUNK_SINGLE_SECTION_SOURCE);
+    it('sha256 should be empty at parser level (computed by worker task)', async () => {
+        const { chunks } = await chunkFixture(CHUNK_SINGLE_SECTION_SOURCE);
         for (const chunk of chunks) {
             assert.equal(chunk.sha256, '',
                 'sha256 should be empty at parser level');
         }
     });
 
-    it('chunk line numbers should be 1-based', () => {
-        const { chunks } = chunkFixture(CHUNK_SINGLE_SECTION_SOURCE);
+    it('chunk line numbers should be 1-based', async () => {
+        const { chunks } = await chunkFixture(CHUNK_SINGLE_SECTION_SOURCE);
         for (const chunk of chunks) {
             assert.ok(chunk.startLine == 1, 'startLine should be 1-based');
             assert.ok(chunk.endLine == 5, 'endLine should be 5');
@@ -606,8 +616,8 @@ the embedding chunks to be generated correctly by the chunking system.
 `;
 
 describe('chunking: multiple heading sections', () => {
-    it('should produce chunks for each section', () => {
-        const { chunks } = chunkFixture(CHUNK_MULTIPLE_SECTIONS_SOURCE);
+    it('should produce chunks for each section', async () => {
+        const { chunks } = await chunkFixture(CHUNK_MULTIPLE_SECTIONS_SOURCE);
         const ch1Chunk = chunks.find(c => c.text.includes('first chapter'));
         const ch2Chunk = chunks.find(c => c.text.includes('second chapter'));
         assert.ok(ch1Chunk, 'expected a chunk for Chapter 1');
@@ -615,8 +625,8 @@ describe('chunking: multiple heading sections', () => {
         assert.ok(chunks.length == 2, 'expected two chunks');
     });
 
-    it('each section chunk should have the correct heading prefix', () => {
-        const { chunks } = chunkFixture(CHUNK_MULTIPLE_SECTIONS_SOURCE);
+    it('each section chunk should have the correct heading prefix', async () => {
+        const { chunks } = await chunkFixture(CHUNK_MULTIPLE_SECTIONS_SOURCE);
         const ch1Chunk = chunks.find(c => c.text.includes('first chapter'));
         const ch2Chunk = chunks.find(c => c.text.includes('second chapter'));
         assert.ok(ch1Chunk!.text.includes('section: Chapter 1'));
@@ -625,8 +635,8 @@ describe('chunking: multiple heading sections', () => {
         assert.ok(!ch2Chunk!.text.includes('section: Chapter 1'));
     });
 
-    it('each chunk should have correct line numbers', () => {
-        const { chunks } = chunkFixture(CHUNK_MULTIPLE_SECTIONS_SOURCE);
+    it('each chunk should have correct line numbers', async () => {
+        const { chunks } = await chunkFixture(CHUNK_MULTIPLE_SECTIONS_SOURCE);
         assert.equal(chunks[0].startLine, 1);
         assert.equal(chunks[0].endLine, 5);
         assert.equal(chunks[1].startLine, 7);
@@ -646,8 +656,8 @@ minimum chunk size requirement of seventy-five characters in total.
 `;
 
 describe('chunking: content before first heading', () => {
-    it('should produce a gap chunk for the intro and a section chunk', () => {
-        const { chunks } = chunkFixture(CHUNK_CONTENT_BEFORE_HEADING_SOURCE);
+    it('should produce a gap chunk for the intro and a section chunk', async () => {
+        const { chunks } = await chunkFixture(CHUNK_CONTENT_BEFORE_HEADING_SOURCE);
         assert.ok(chunks.length == 2, 'expected two chunks');
         const introChunk = chunks.find(c => c.text.includes('introductory'));
         const headingChunk = chunks.find(c => c.text.includes('First Heading'));
@@ -655,16 +665,16 @@ describe('chunking: content before first heading', () => {
         assert.ok(headingChunk, 'expected a chunk for heading section');
     });
 
-    it('intro chunk should have file-only prefix (no heading)', () => {
-        const { chunks } = chunkFixture(CHUNK_CONTENT_BEFORE_HEADING_SOURCE);
+    it('intro chunk should have file-only prefix (no heading)', async () => {
+        const { chunks } = await chunkFixture(CHUNK_CONTENT_BEFORE_HEADING_SOURCE);
         const introChunk = chunks.find(c => c.text.includes('introductory'))!;
         assert.ok(introChunk.text.includes('file: test.md'));
         assert.ok(!introChunk.text.includes('section:'),
             'intro chunk should not have a heading prefix');
     });
 
-    it('each chunk should have correct line numbers', () => {
-        const { chunks } = chunkFixture(CHUNK_CONTENT_BEFORE_HEADING_SOURCE);
+    it('each chunk should have correct line numbers', async () => {
+        const { chunks } = await chunkFixture(CHUNK_CONTENT_BEFORE_HEADING_SOURCE);
         assert.equal(chunks[0].startLine, 1);
         assert.equal(chunks[0].endLine, 3);
         assert.equal(chunks[1].startLine, 5);
@@ -692,8 +702,8 @@ requirement of seventy-five characters for the embedding chunk system.
 `;
 
 describe('chunking: breadcrumb prefixes for nested H2', () => {
-    it('H1 intro chunk should have H1-only section prefix', () => {
-        const { chunks } = chunkFixture(CHUNK_BREADCRUMB_SOURCE);
+    it('H1 intro chunk should have H1-only section prefix', async () => {
+        const { chunks } = await chunkFixture(CHUNK_BREADCRUMB_SOURCE);
         assert.ok(chunks.length == 3);
         const introChunk = chunks.find(c => c.text.includes('API overview'));
         assert.ok(introChunk, 'expected a chunk for H1 intro');
@@ -703,8 +713,8 @@ describe('chunking: breadcrumb prefixes for nested H2', () => {
             'H1 intro chunk should not have a breadcrumb separator');
     });
 
-    it('H2 chunks should have breadcrumb prefix (H1 > H2)', () => {
-        const { chunks } = chunkFixture(CHUNK_BREADCRUMB_SOURCE);
+    it('H2 chunks should have breadcrumb prefix (H1 > H2)', async () => {
+        const { chunks } = await chunkFixture(CHUNK_BREADCRUMB_SOURCE);
         const methodsChunk = chunks.find(c => c.text.includes('Method details'));
         const eventsChunk = chunks.find(c => c.text.includes('Event details'));
         assert.ok(methodsChunk, 'expected a chunk for Methods');
@@ -715,8 +725,8 @@ describe('chunking: breadcrumb prefixes for nested H2', () => {
             'Events chunk should have breadcrumb prefix');
     });
 
-    it('should produce separate chunks for H1 intro, Methods, and Events', () => {
-        const { chunks } = chunkFixture(CHUNK_BREADCRUMB_SOURCE);
+    it('should produce separate chunks for H1 intro, Methods, and Events', async () => {
+        const { chunks } = await chunkFixture(CHUNK_BREADCRUMB_SOURCE);
         const introChunk = chunks.find(c => c.text.includes('API overview'));
         const methodsChunk = chunks.find(c => c.text.includes('Method details'));
         const eventsChunk = chunks.find(c => c.text.includes('Event details'));
@@ -725,8 +735,8 @@ describe('chunking: breadcrumb prefixes for nested H2', () => {
         assert.ok(eventsChunk, 'expected Events chunk');
     });
 
-    it('each chunk should have correct line numbers', () => {
-        const { chunks } = chunkFixture(CHUNK_BREADCRUMB_SOURCE);
+    it('each chunk should have correct line numbers', async () => {
+        const { chunks } = await chunkFixture(CHUNK_BREADCRUMB_SOURCE);
         // H1 intro: lines 1..4 (# API Reference + body, before ## Methods)
         assert.equal(chunks[0].startLine, 1);
         assert.equal(chunks[0].endLine, 4);
@@ -749,16 +759,16 @@ size requirement of seventy-five characters for the embedding system.
 `;
 
 describe('chunking: standalone H2 (no parent H1)', () => {
-    it('should have H2 name only in prefix (no breadcrumb)', () => {
-        const { chunks } = chunkFixture(CHUNK_STANDALONE_H2_SOURCE);
+    it('should have H2 name only in prefix (no breadcrumb)', async () => {
+        const { chunks } = await chunkFixture(CHUNK_STANDALONE_H2_SOURCE);
         assert.ok(chunks.length == 1);
         assert.ok(chunks[0].text.includes('section: Standalone Section'));
         assert.ok(!chunks[0].text.includes('>'),
             'standalone H2 should not have a breadcrumb separator');
     });
 
-    it('chunk should have correct line numbers', () => {
-        const { chunks } = chunkFixture(CHUNK_STANDALONE_H2_SOURCE);
+    it('chunk should have correct line numbers', async () => {
+        const { chunks } = await chunkFixture(CHUNK_STANDALONE_H2_SOURCE);
         assert.equal(chunks[0].startLine, 1);
         assert.equal(chunks[0].endLine, 4);
     });
@@ -776,8 +786,8 @@ of seventy-five characters for the embedding chunks to be generated here.
 `;
 
 describe('chunking: empty H1 section before H2', () => {
-    it('should skip the empty H1 intro and only chunk the H2', () => {
-        const { chunks } = chunkFixture(CHUNK_EMPTY_H1_BEFORE_H2_SOURCE);
+    it('should skip the empty H1 intro and only chunk the H2', async () => {
+        const { chunks } = await chunkFixture(CHUNK_EMPTY_H1_BEFORE_H2_SOURCE);
         assert.ok(chunks.length == 1);
         // The H1 has no body text before the H2, so no H1-only chunk
         const h1OnlyChunk = chunks.find(c =>
@@ -790,8 +800,8 @@ describe('chunking: empty H1 section before H2', () => {
         assert.ok(h2Chunk.text.includes('section: Title > Real Content'));
     });
 
-    it('chunk should have correct line numbers', () => {
-        const { chunks } = chunkFixture(CHUNK_EMPTY_H1_BEFORE_H2_SOURCE);
+    it('chunk should have correct line numbers', async () => {
+        const { chunks } = await chunkFixture(CHUNK_EMPTY_H1_BEFORE_H2_SOURCE);
         assert.equal(chunks[0].startLine, 3);
         assert.equal(chunks[0].endLine, 6);
     });
@@ -812,8 +822,8 @@ of seventy-five characters for the embedding chunks to be generated here.
 `;
 
 describe('chunking: empty H2 section', () => {
-    it('should skip the empty H2 and chunk the others', () => {
-        const { chunks } = chunkFixture(CHUNK_EMPTY_H2_SOURCE);
+    it('should skip the empty H2 and chunk the others', async () => {
+        const { chunks } = await chunkFixture(CHUNK_EMPTY_H2_SOURCE);
         assert.ok(chunks.length == 2);
         const emptyChunk = chunks.find(c =>
             c.text.includes('section: Overview > Empty Section'));
@@ -825,14 +835,131 @@ describe('chunking: empty H2 section', () => {
             'expected a chunk for the non-empty H2 section');
     });
 
-    it('each chunk should have correct line numbers', () => {
-        const { chunks } = chunkFixture(CHUNK_EMPTY_H2_SOURCE);
+    it('each chunk should have correct line numbers', async () => {
+        const { chunks } = await chunkFixture(CHUNK_EMPTY_H2_SOURCE);
         // H1 intro: lines 1..4 (# Overview + body, before ## Empty Section)
         assert.equal(chunks[0].startLine, 1);
         assert.equal(chunks[0].endLine, 4);
         // ## Content Section: lines 8..11
         assert.equal(chunks[1].startLine, 8);
         assert.equal(chunks[1].endLine, 11);
+    });
+});
+
+// ── buildContextPrefix ──────────────────────────────────────────────────────
+
+describe('buildContextPrefix', () => {
+
+    const filePath = 'docs/getting-started.md';
+    const GENEROUS_BUDGET = 500;
+
+    // ── Full prefix (with section) ──────────────────────────────────────
+
+    it('produces full prefix with file path and section breadcrumb', () => {
+        const section = { startLine: 0, endLine: 10, breadcrumb: 'API Reference > Methods' };
+        const result = buildContextPrefix(filePath, GENEROUS_BUDGET, section);
+        assert.equal(result, `---\nfile: ${filePath}\nsection: API Reference > Methods\n---\n\n`);
+    });
+
+    it('produces full prefix with simple section name (no breadcrumb separator)', () => {
+        const section = { startLine: 0, endLine: 10, breadcrumb: 'Overview' };
+        const result = buildContextPrefix(filePath, GENEROUS_BUDGET, section);
+        assert.equal(result, `---\nfile: ${filePath}\nsection: Overview\n---\n\n`);
+    });
+
+    // ── Fallback: section dropped ───────────────────────────────────────
+
+    it('drops section when full prefix exceeds budget but file path fits', () => {
+        const section = { startLine: 0, endLine: 10, breadcrumb: 'Very Long Section Name That Pushes Over Budget' };
+        const budget = FULL_PREFIX_OVERHEAD + filePath.length + section.breadcrumb.length - 1; // 1 char short
+        const result = buildContextPrefix(filePath, budget, section);
+        assert.equal(result, `---\nfile: ${filePath}\n---\n\n`);
+        assert.ok(!result.includes('section:'));
+    });
+
+    // ── File path only (no section) ─────────────────────────────────────
+
+    it('produces file-only prefix when no section is provided', () => {
+        const result = buildContextPrefix(filePath, GENEROUS_BUDGET);
+        assert.equal(result, `---\nfile: ${filePath}\n---\n\n`);
+    });
+
+    it('produces file-only prefix when section is undefined', () => {
+        const result = buildContextPrefix(filePath, GENEROUS_BUDGET, undefined);
+        assert.equal(result, `---\nfile: ${filePath}\n---\n\n`);
+    });
+
+    // ── Fallback: basename only ─────────────────────────────────────────
+
+    it('falls back to basename when full path exceeds budget', () => {
+        const longPath = 'a/'.repeat(100) + 'readme.md';
+        const budget = FILE_ONLY_OVERHEAD + 12; // fits "readme.md" (9 chars) but not the full path
+        const result = buildContextPrefix(longPath, budget);
+        assert.equal(result, '---\nfile: readme.md\n---\n\n');
+    });
+
+    // ── Fallback: empty string ──────────────────────────────────────────
+
+    it('returns empty string when even basename exceeds budget', () => {
+        const result = buildContextPrefix('x.md', 5); // too small for anything
+        assert.equal(result, '');
+    });
+
+    // ── Overhead constants are correct ──────────────────────────────────
+
+    it('FILE_ONLY_OVERHEAD matches actual fixed text length', () => {
+        const prefix = buildContextPrefix('', GENEROUS_BUDGET);
+        // prefix = "---\nfile: \n---\n\n" with empty filePath
+        assert.equal(prefix.length, FILE_ONLY_OVERHEAD);
+    });
+
+    it('FULL_PREFIX_OVERHEAD matches actual fixed text length', () => {
+        const section = { startLine: 0, endLine: 10, breadcrumb: '' };
+        const prefix = buildContextPrefix('', GENEROUS_BUDGET, section);
+        // prefix = "---\nfile: \nsection: \n---\n\n" with empty filePath and breadcrumb
+        assert.equal(prefix.length, FULL_PREFIX_OVERHEAD);
+    });
+
+    // ── Budget boundary (exact fit) ─────────────────────────────────────
+
+    it('includes section when length exactly equals budget', () => {
+        const section = { startLine: 0, endLine: 10, breadcrumb: 'Intro' };
+        const exactBudget = FULL_PREFIX_OVERHEAD + filePath.length + section.breadcrumb.length;
+        const result = buildContextPrefix(filePath, exactBudget, section);
+        assert.ok(result.includes('section: Intro'));
+    });
+
+    it('drops section when length is one over budget', () => {
+        const section = { startLine: 0, endLine: 10, breadcrumb: 'Intro' };
+        const exactBudget = FULL_PREFIX_OVERHEAD + filePath.length + section.breadcrumb.length;
+        const result = buildContextPrefix(filePath, exactBudget - 1, section);
+        assert.ok(!result.includes('section:'));
+        assert.ok(result.includes(`file: ${filePath}`));
+    });
+
+    it('includes file path when length exactly equals budget', () => {
+        const exactBudget = FILE_ONLY_OVERHEAD + filePath.length;
+        const result = buildContextPrefix(filePath, exactBudget);
+        assert.equal(result, `---\nfile: ${filePath}\n---\n\n`);
+    });
+
+    it('drops file path when length is one over budget (falls back to basename)', () => {
+        const exactBudget = FILE_ONLY_OVERHEAD + filePath.length;
+        const result = buildContextPrefix(filePath, exactBudget - 1);
+        assert.ok(!result.includes(filePath));
+        assert.ok(result.includes('getting-started.md'));
+    });
+
+    // ── YAML front-matter format ────────────────────────────────────────
+
+    it('prefix starts with YAML front-matter delimiter', () => {
+        const result = buildContextPrefix(filePath, GENEROUS_BUDGET);
+        assert.ok(result.startsWith('---\n'));
+    });
+
+    it('prefix ends with closing delimiter and blank line', () => {
+        const result = buildContextPrefix(filePath, GENEROUS_BUDGET);
+        assert.ok(result.endsWith('\n---\n\n'));
     });
 });
 
@@ -867,19 +994,19 @@ describe('edge cases', () => {
         assert.deepStrictEqual(result, []);
     });
 
-    it('computeChunks with empty source should return empty array', () => {
-        const chunks = markdownParser.computeChunks([], [], 'empty.md');
+    it('computeChunks with empty source should return empty array', async () => {
+        const chunks = await markdownParser.computeChunks([], [], 'empty.md');
         assert.deepStrictEqual(chunks, []);
     });
 
-    it('computeChunks with no symbols should still produce chunks if file has content', () => {
+    it('computeChunks with no symbols should still produce chunks if file has content', async () => {
         const lines = [
             'This is a plain text file without any headings at all.',
             'It has multiple lines of content that should still be chunked.',
             'The chunking system needs enough text to meet the minimum threshold.',
             'So we add a few more lines here to make sure we exceed it safely.',
         ];
-        const chunks = markdownParser.computeChunks(lines, [], 'plain.md');
+        const chunks = await markdownParser.computeChunks(lines, [], 'plain.md');
         assert.ok(chunks.length == 1, 'expected one chunk from non-empty file');
     });
 });

@@ -13,7 +13,7 @@
 import type { Node as SyntaxNode } from 'web-tree-sitter';
 import type { IndexSymbol, IFileParser } from './types';
 import type { Chunk } from '../types';
-import { splitIntoChunks, chunksToOneBased } from './chunkUtils';
+import { splitIntoChunks, type ChunkRange } from './chunkUtils';
 
 /**
  * Fallback parser singleton.
@@ -38,14 +38,20 @@ export const defaultParser: IFileParser = {
         return [];  // empty index → no symbols
     },
 
-    computeChunks(
+    async computeChunks(
         sourceLines: readonly string[],
         _symbols: readonly IndexSymbol[],
         _filePath: string,
-    ): Chunk[] {
+    ): Promise<Chunk[]> {
         // No structure — fall back to plain sliding-window chunking
-        const chunks = splitIntoChunks(sourceLines, 0, sourceLines.length);
-        chunksToOneBased(chunks);
-        return chunks;
+        const chunkRanges: ChunkRange[] = [{
+            startLine: 0,
+            endLine: sourceLines.length,
+            primaryPrefix: '',
+            secondaryPrefix: '',
+        }];
+        const result = await splitIntoChunks(
+            sourceLines, chunkRanges, 2048, 3584, 8384);
+        return result[0];
     },
 };

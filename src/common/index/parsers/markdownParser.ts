@@ -25,6 +25,7 @@
  *   heading-aware embedding chunks aligned to section boundaries.
  */
 
+import * as path from 'path';
 import { Query } from 'web-tree-sitter';
 import type { Node as SyntaxNode } from 'web-tree-sitter';
 import type { Chunk } from '../types';
@@ -32,7 +33,7 @@ import {
     SymbolType,
 } from './types';
 import type { IndexSymbol, IFileParser, MutableAttrMap } from './types';
-import { splitIntoChunks, chunksToOneBased } from './chunkUtils';
+import { splitIntoChunks, getPrefixBudget, type ChunkRange } from './chunkUtils';
 
 
 // ── Query-based CST heading extraction ──────────────────────────────────────
@@ -190,40 +191,48 @@ interface SectionRange {
     readonly breadcrumb: string;
 }
 
+/** Fixed overhead for "---\nfile: \n---\n\n" (no section line). */
+const FILE_ONLY_OVERHEAD = 16;
+
+/** Fixed overhead for "---\nfile: \nsection: \n---\n\n" (with section line). */
+const FULL_PREFIX_OVERHEAD = 26;
+
 /**
  * Build a context prefix string for a chunk using YAML front-matter syntax.
+ * Falls back gracefully if the full prefix exceeds the budget:
+ *  1. Full prefix with section breadcrumb
+ *  2. Without section line
+ *  3. File name only
+ *  4. Empty string if nothing fits
  *
- * ```
- * ---
- * file: <filePath>
- * section: <breadcrumb>  ← only if inside a heading section
- * ---
- *
- * ```
+ * @param filePath - Display path for the file
+ * @param maxPrefixChars - Maximum allowed prefix length from getPrefixBudget()
+ * @param section - Optional section range with breadcrumb
  */
 function buildContextPrefix(
     filePath: string,
+    maxPrefixChars: number,
     section?: SectionRange,
 ): string {
-    let prefix = `---\nfile: ${filePath}`;
+    // Try full prefix with section (length check before string allocation)
     if (section) {
-        prefix += `\nsection: ${section.breadcrumb}`;
+        if (FULL_PREFIX_OVERHEAD + filePath.length + section.breadcrumb.length <= maxPrefixChars) {
+            return `---\nfile: ${filePath}\nsection: ${section.breadcrumb}\n---\n\n`;
+        }
     }
-    return prefix + '\n---\n\n';
-}
 
-/**
- * Prepend a context prefix to each chunk's text (mutates in place).
- */
-function prependPrefixes(
-    chunks: Chunk[],
-    filePath: string,
-    section?: SectionRange,
-): void {
-    const prefix = buildContextPrefix(filePath, section);
-    for (const chunk of chunks) {
-        chunk.text = prefix + chunk.text;
+    // Try without section
+    if (FILE_ONLY_OVERHEAD + filePath.length <= maxPrefixChars) {
+        return `---\nfile: ${filePath}\n---\n\n`;
     }
+
+    // Fall back to basename only (avoids ambiguous truncated paths)
+    const basename = path.basename(filePath);
+    if (FILE_ONLY_OVERHEAD + basename.length <= maxPrefixChars) {
+        return `---\nfile: ${basename}\n---\n\n`;
+    }
+
+    return '';
 }
 
 
@@ -387,12 +396,13 @@ export const markdownParser: IFileParser = {
 
     // ── computeChunks ───────────────────────────────────────────────────
 
-    computeChunks(
+    async computeChunks(
         sourceLines: readonly string[],
         symbols: readonly IndexSymbol[],
         filePath: string,
-    ): Chunk[] {
+    ): Promise<Chunk[]> {
         const totalLines = sourceLines.length;
+        const maxPrefixChars = getPrefixBudget(3584);
 
         // 1. Filter to heading symbols and build per-section ranges
         const headingSymbols = symbols.filter(
@@ -401,39 +411,57 @@ export const markdownParser: IFileParser = {
         );
         const sectionRanges = buildSectionRanges(headingSymbols, sourceLines);
 
-        // All positions below are 0-based end-exclusive.
-        const chunks: Chunk[] = [];
+        // 2. Collect all ChunkRanges (gaps + sections) in document order
+        const chunkRanges: ChunkRange[] = [];
         let cursor = 0;
 
-        // 2. Walk through section ranges, chunking gaps and sections
         for (const range of sectionRanges) {
-            // Chunk the gap before this section (e.g. front-matter, intro text)
+            // Gap before this section (e.g. front-matter, intro text)
             if (cursor < range.startLine) {
-                const gapChunks = splitIntoChunks(sourceLines, cursor, range.startLine);
-                prependPrefixes(gapChunks, filePath);
-                chunks.push(...gapChunks);
+                const prefix = buildContextPrefix(filePath, maxPrefixChars);
+                chunkRanges.push({
+                    startLine: cursor,
+                    endLine: range.startLine,
+                    primaryPrefix: prefix,
+                    secondaryPrefix: prefix,
+                });
             }
 
-            // Chunk the section itself with heading-aware prefix
-            const sectionChunks = splitIntoChunks(
-                sourceLines, range.startLine, range.endLine,
-            );
-            prependPrefixes(sectionChunks, filePath, range);
-            chunks.push(...sectionChunks);
+            // The section itself with heading-aware prefix
+            const prefix = buildContextPrefix(filePath, maxPrefixChars, range);
+            chunkRanges.push({
+                startLine: range.startLine,
+                endLine: range.endLine,
+                primaryPrefix: prefix,
+                secondaryPrefix: prefix,
+            });
 
             cursor = range.endLine;
         }
 
-        // 3. Chunk any trailing lines after the last section
+        // Trailing lines after the last section
         if (cursor < totalLines) {
-            const trailingChunks = splitIntoChunks(sourceLines, cursor, totalLines);
-            prependPrefixes(trailingChunks, filePath);
-            chunks.push(...trailingChunks);
+            const prefix = buildContextPrefix(filePath, maxPrefixChars);
+            chunkRanges.push({
+                startLine: cursor,
+                endLine: totalLines,
+                primaryPrefix: prefix,
+                secondaryPrefix: prefix,
+            });
         }
 
-        // Convert from 0-based end-exclusive to 1-based end-inclusive
-        // (the public Chunk contract used by the rest of the extension).
-        chunksToOneBased(chunks);
-        return chunks;
+        // 3. Single call to splitIntoChunks for the entire file
+        const result = await splitIntoChunks(sourceLines, chunkRanges, 2048, 3584, 8384);
+        return result.flat();
     },
+};
+
+// ── Test-only exports ───────────────────────────────────────────────────────
+// These are internal helpers exported solely for unit testing.
+// Do not use outside of test files.
+
+export {
+    buildContextPrefix as _buildContextPrefix,
+    FILE_ONLY_OVERHEAD as _FILE_ONLY_OVERHEAD,
+    FULL_PREFIX_OVERHEAD as _FULL_PREFIX_OVERHEAD,
 };

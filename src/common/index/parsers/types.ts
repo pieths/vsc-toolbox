@@ -236,7 +236,7 @@ export interface IFileParser {
         sourceLines: readonly string[],
         symbols: readonly IndexSymbol[],
         filePath: string,
-    ): Chunk[];
+    ): Promise<Chunk[]>;
 
     /**
      * File extensions this parser handles (e.g. `[".cc", ".cpp", ".h"]`).

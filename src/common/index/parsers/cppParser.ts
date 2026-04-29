@@ -15,6 +15,7 @@
  *   boundaries.
  */
 
+import * as path from 'path';
 import { Query } from 'web-tree-sitter';
 import type { Node as SyntaxNode } from 'web-tree-sitter';
 import type { Chunk } from '../types';
@@ -24,7 +25,7 @@ import {
     symbolTypeToString,
 } from './types';
 import type { IndexSymbol, IFileParser, MutableAttrMap } from './types';
-import { splitIntoChunks, chunksToOneBased } from './chunkUtils';
+import { splitIntoChunks, getPrefixBudget, type ChunkRange } from './chunkUtils';
 import type { BoilerplateFilter } from './chunkUtils';
 
 
@@ -561,6 +562,15 @@ const CHUNK_CONTAINER_TYPES: ReadonlySet<SymbolType> = new Set<SymbolType>([
     SymbolType.Destructor,
 ]);
 
+/** Fixed overhead for "// file: \n\n" (no container line). */
+const FILE_ONLY_OVERHEAD = 11;
+
+/** Fixed overhead for "// file: \n// : \n\n" (with container, no signature). */
+const CONTAINER_OVERHEAD = 17;
+
+/** Extra overhead for "\n// signature: " when adding a signature line. */
+const SIGNATURE_LINE_OVERHEAD = 15;
+
 /**
  * Build a context prefix string for a chunk.
  *
@@ -573,42 +583,52 @@ const CHUNK_CONTAINER_TYPES: ReadonlySet<SymbolType> = new Set<SymbolType>([
  * // signature: <signature>  ← only for non-first chunks of callable containers
  *
  * ```
+ *
+ * Falls back gracefully if the full prefix exceeds the budget:
+ *  1. Full prefix (with container and optional signature)
+ *  2. Without signature line
+ *  3. Without container line (file path only)
+ *  4. File name only
+ *  5. Empty string if nothing fits
  */
 function buildContextPrefix(
     filePath: string,
+    maxPrefixChars: number,
     container?: { kind: string; qualifiedName: string; signature?: string },
-    isFirstChunk: boolean = true,
+    includeSignature: boolean = false,
 ): string {
-    let prefix = `// file: ${filePath}`;
-
     if (container) {
-        prefix += `\n// ${container.kind}: ${container.qualifiedName}`;
+        const containerLen =
+            CONTAINER_OVERHEAD +
+            filePath.length +
+            container.kind.length +
+            container.qualifiedName.length;
 
-        if (!isFirstChunk && SIGNATURE_KINDS.has(container.kind) && container.signature) {
-            prefix += `\n// signature: ${container.signature}`;
+        // Try with signature line
+        if (includeSignature && SIGNATURE_KINDS.has(container.kind) && container.signature) {
+            if (containerLen + SIGNATURE_LINE_OVERHEAD + container.signature.length <= maxPrefixChars) {
+                return `// file: ${filePath}\n// ${container.kind}: ${container.qualifiedName}\n// signature: ${container.signature}\n\n`;
+            }
+        }
+
+        // Try with container but no signature
+        if (containerLen <= maxPrefixChars) {
+            return `// file: ${filePath}\n// ${container.kind}: ${container.qualifiedName}\n\n`;
         }
     }
 
-    return prefix + '\n\n';
-}
-
-/**
- * Prepend a context prefix to each chunk's text (mutates in place).
- *
- * The first chunk receives a basic prefix; subsequent chunks of a
- * callable container additionally receive a signature line so that
- * each chunk carries enough context for embedding search.
- */
-function prependPrefixes(
-    chunks: Chunk[],
-    filePath: string,
-    container?: { kind: string; qualifiedName: string; signature?: string },
-): void {
-    for (let i = 0; i < chunks.length; i++) {
-        const isFirstChunk = i === 0;
-        const prefix = buildContextPrefix(filePath, container, isFirstChunk);
-        chunks[i].text = prefix + chunks[i].text;
+    // Try file path only
+    if (FILE_ONLY_OVERHEAD + filePath.length <= maxPrefixChars) {
+        return `// file: ${filePath}\n\n`;
     }
+
+    // Fall back to basename only (avoids ambiguous truncated paths)
+    const basename = path.basename(filePath);
+    if (FILE_ONLY_OVERHEAD + basename.length <= maxPrefixChars) {
+        return `// file: ${basename}\n\n`;
+    }
+
+    return '';
 }
 
 // ── Structure-aware chunking helpers (computeChunks) ────────────────────────
@@ -811,59 +831,79 @@ export const cppParser: IFileParser = {
 
     // ── computeChunks ───────────────────────────────────────────────────
 
-    computeChunks(
+    async computeChunks(
         sourceLines: readonly string[],
         symbols: readonly IndexSymbol[],
         filePath: string,
-    ): Chunk[] {
+    ): Promise<Chunk[]> {
         const totalLines = sourceLines.length;
+        const maxPrefixChars = getPrefixBudget(3584);
 
         // 1. Filter to container symbols and build top-level ranges
         const containerSymbols = symbols.filter(s => CHUNK_CONTAINER_TYPES.has(s.type));
         const topLevelRanges = findTopLevelRanges(containerSymbols);
         expandRangesToIncludePrecedingLines(topLevelRanges, sourceLines);
 
-        // All positions below are 0-based end-exclusive.
-        const chunks: Chunk[] = [];
+        // 2. Collect all ChunkRanges (gaps + containers) in document order
+        const chunkRanges: ChunkRange[] = [];
         let cursor = 0;
 
         // Skip preamble (copyright header, include guard, #include
         // directives) so it doesn't pollute embedding chunks.
         cursor = findPreambleEnd(symbols);
 
-        // 2. Walk through container ranges, chunking gaps and containers
         for (const range of topLevelRanges) {
-            // Chunk the gap before this container (includes, forward decls, etc.)
+            // Gap before this container (includes, forward decls, etc.)
             if (cursor < range.startLine) {
-                const gapChunks = splitIntoChunks(
-                    sourceLines, cursor, range.startLine, isCppBoilerplate,
-                );
-                prependPrefixes(gapChunks, filePath);
-                chunks.push(...gapChunks);
+                const prefix = buildContextPrefix(filePath, maxPrefixChars);
+                chunkRanges.push({
+                    startLine: cursor,
+                    endLine: range.startLine,
+                    primaryPrefix: prefix,
+                    secondaryPrefix: prefix,
+                });
             }
 
-            // Chunk the container itself with container-aware prefix
-            const containerChunks = splitIntoChunks(
-                sourceLines, range.startLine, range.endLine, isCppBoilerplate,
-            );
-            prependPrefixes(containerChunks, filePath, range);
-            chunks.push(...containerChunks);
+            // The container itself — first chunk gets no signature,
+            // subsequent chunks get the signature for callable containers.
+            const primaryPrefix = buildContextPrefix(filePath, maxPrefixChars, range);
+            const secondaryPrefix = buildContextPrefix(filePath, maxPrefixChars, range, true);
+            chunkRanges.push({
+                startLine: range.startLine,
+                endLine: range.endLine,
+                primaryPrefix,
+                secondaryPrefix,
+            });
 
             cursor = range.endLine;
         }
 
-        // 3. Chunk any trailing lines after the last container
+        // Trailing lines after the last container
         if (cursor < totalLines) {
-            const trailingChunks = splitIntoChunks(
-                sourceLines, cursor, totalLines, isCppBoilerplate,
-            );
-            prependPrefixes(trailingChunks, filePath);
-            chunks.push(...trailingChunks);
+            const prefix = buildContextPrefix(filePath, maxPrefixChars);
+            chunkRanges.push({
+                startLine: cursor,
+                endLine: totalLines,
+                primaryPrefix: prefix,
+                secondaryPrefix: prefix,
+            });
         }
 
-        // Convert from 0-based end-exclusive to 1-based end-inclusive
-        // (the public Chunk contract used by the rest of the extension).
-        chunksToOneBased(chunks);
-        return chunks;
+        // 3. Single call to splitIntoChunks for the entire file
+        const result = await splitIntoChunks(
+            sourceLines, chunkRanges, 2048, 3584, 8384, isCppBoilerplate,
+        );
+        return result.flat();
     },
+};
+
+// ── Test-only exports ───────────────────────────────────────────────────────
+// These are internal helpers exported solely for unit testing.
+// Do not use outside of test files.
+
+export {
+    buildContextPrefix as _buildContextPrefix,
+    FILE_ONLY_OVERHEAD as _FILE_ONLY_OVERHEAD,
+    CONTAINER_OVERHEAD as _CONTAINER_OVERHEAD,
+    SIGNATURE_LINE_OVERHEAD as _SIGNATURE_LINE_OVERHEAD,
 };
