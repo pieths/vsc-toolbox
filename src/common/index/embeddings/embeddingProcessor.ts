@@ -26,7 +26,7 @@ import * as http from 'http';
  *   4. Update file versions in a single setFileVersions call.
  */
 export class EmbeddingProcessor {
-    private readonly batchSize = 50;
+    private readonly batchSize = 100;
     private readonly flushThreshold = 300;
 
     // Accumulated diff state (reset on flush)
