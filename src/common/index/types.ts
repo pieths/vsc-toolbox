@@ -130,6 +130,20 @@ export interface IndexOutput {
 }
 
 /**
+ * Configuration for the chunking pipeline.
+ */
+export interface ChunkingConfig {
+    /** Hard token budget per chunk (must be ≤ embedding model's context size). */
+    maxTokens: number;
+    /** Hard character budget per chunk. */
+    maxCharacters: number;
+    /** Hostname of the embedding server `/tokenize` endpoint. */
+    tokenizerHostName: string;
+    /** TCP port of the embedding server `/tokenize` endpoint. */
+    tokenizerPort: number;
+}
+
+/**
  * A single chunk of text from a file, defined by line range.
  */
 export interface Chunk {
@@ -249,6 +263,7 @@ export interface ComputeChunksBatchRequest {
     type: 'computeChunksBatch';
     messageId: number;
     inputs: ComputeChunksInput[];
+    config: ChunkingConfig;
 }
 
 /** Batch compute chunks response sent from a worker thread to ThreadPool */

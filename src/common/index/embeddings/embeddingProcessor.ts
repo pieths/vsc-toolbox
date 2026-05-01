@@ -3,7 +3,13 @@
 
 import { FileRef } from '../fileRef';
 import { ThreadPool } from '../workers/threadPool';
-import { Chunk, ComputeChunksInput, ComputeChunksOutput, ComputeChunksStatus } from '../types';
+import {
+    Chunk,
+    ChunkingConfig,
+    ComputeChunksInput,
+    ComputeChunksOutput,
+    ComputeChunksStatus
+} from '../types';
 import { LlamaServer } from './llamaServer';
 import { FileChunkInput, FileChunkRecord, VectorDatabase } from './vectorDatabase';
 import { VectorCacheClient } from '../vectorCache/vectorCacheClient';
@@ -14,7 +20,7 @@ import * as http from 'http';
  * Method-object that encapsulates the embedding pipeline for a set of files.
  *
  * Files are processed in small batches (chunking + diffing), and the diff
- * state is accumulated across batches.  When the total pending work reaches
+ * state is accumulated across batches. When the total pending work reaches
  * a threshold (or no more files remain), the accumulated changes are flushed
  * to the database in one pass — minimising the number of LanceDB versions
  * created.
@@ -43,6 +49,7 @@ export class EmbeddingProcessor {
         private readonly vectorDatabase: VectorDatabase | null,
         private readonly llamaServer: LlamaServer,
         private readonly threadPool: ThreadPool,
+        private readonly chunkingConfig: ChunkingConfig,
         private readonly vectorCacheClient: VectorCacheClient | null = null,
         private readonly remoteServerAddress: string = '',
     ) { }
@@ -170,7 +177,7 @@ export class EmbeddingProcessor {
             workspacePath: fi.getWorkspacePath(),
         }));
 
-        const outputs = await this.threadPool.computeChunksAll(inputs);
+        const outputs = await this.threadPool.computeChunksAll(inputs, this.chunkingConfig);
 
         // Deduplicate chunks by sha256 within each file. Duplicate chunks
         // can appear when preprocessor guards produce identical blocks

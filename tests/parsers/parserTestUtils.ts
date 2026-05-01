@@ -8,11 +8,12 @@
 import type { Node as SyntaxNode } from 'web-tree-sitter';
 import { SymbolType, AttrKey } from '../../src/common/index/parsers/types';
 import type { IndexSymbol } from '../../src/common/index/parsers/types';
+import type { ChunkingConfig } from '../../src/common/index/types';
 import { _setGetTokenCountsMock } from '../../src/common/index/parsers/chunkUtils';
 
 // Re-export for convenience so test files don't need a separate import.
 export { SymbolType, AttrKey };
-export type { IndexSymbol };
+export type { IndexSymbol, ChunkingConfig };
 
 /** Plain-object form of IndexSymbol for deep-equal comparison. */
 export interface ComparableSymbol {
@@ -139,6 +140,26 @@ export function debugPrintSyntaxTree(
 }
 
 // ── Tokenizer mock utilities ────────────────────────────────────────────────
+
+/**
+ * Build a {@link ChunkingConfig} for tests. The hostname/port values are
+ * irrelevant when using the mock tokenizer (set via {@link setUniformTokenizer}
+ * or directly via `_setGetTokenCountsMock`).
+ *
+ * @param maxTokens - Token budget per chunk
+ * @param maxCharacters - Character budget per chunk (default: 2000)
+ */
+export function makeChunkingConfig(
+    maxTokens: number,
+    maxCharacters: number = 2000,
+): ChunkingConfig {
+    return {
+        maxTokens,
+        maxCharacters,
+        tokenizerHostName: 'localhost',
+        tokenizerPort: 0,
+    };
+}
 
 /**
  * Install a mock tokenizer that returns `tokensPerChar * text.length`

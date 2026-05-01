@@ -12,7 +12,7 @@
  */
 
 import * as http from 'http';
-import type { Chunk } from '../types';
+import type { Chunk, ChunkingConfig } from '../types';
 import { SplitLineView } from './splitLineView';
 
 // ── Token-per-character ratio assumption ────────────────────────────────────
@@ -141,13 +141,14 @@ const tokenizeAgent = new http.Agent({
  * /tokenize endpoint. Returns -1 on any error.
  *
  * @param content - The text to tokenize
+ * @param hostname - Server hostname
  * @param port - Server port
  */
-function getTokenCount(content: string, port: number): Promise<number> {
+function getTokenCount(content: string, hostname: string, port: number): Promise<number> {
     return new Promise((resolve) => {
         const data = JSON.stringify({ content });
         const req = http.request({
-            hostname: 'localhost',
+            hostname,
             port,
             path: '/tokenize',
             method: 'POST',
@@ -183,12 +184,13 @@ function getTokenCount(content: string, port: number): Promise<number> {
  * or -1 if that request failed.
  *
  * @param contents - Array of text strings to tokenize
+ * @param hostname - Server hostname
  * @param port - Server port
  * @returns Array of token counts, one per input string
  */
-export function getTokenCounts(contents: string[], port: number): Promise<number[]> {
-    if (_getTokenCountsMock) return _getTokenCountsMock(contents, port);
-    return Promise.all(contents.map(c => getTokenCount(c, port)));
+export function getTokenCounts(contents: string[], hostname: string, port: number): Promise<number[]> {
+    if (_getTokenCountsMock) return _getTokenCountsMock(contents, hostname, port);
+    return Promise.all(contents.map(c => getTokenCount(c, hostname, port)));
 }
 
 // ── Initial split (single range) ────────────────────────────────────────────
@@ -380,15 +382,13 @@ function splitChunkRange(
  * All positions use 0-based, end-exclusive conventions.
  *
  * **Precondition:** Every prefix in `chunkRanges` must be at most
- * {@link getPrefixBudget | getPrefixBudget(maxCharacters)} characters
+ * {@link getPrefixBudget | getPrefixBudget(config.maxCharacters)} characters
  * long. Violating this may cause the tokenization loop to never
  * converge.
  *
  * @param lines - All lines in the source file
  * @param chunkRanges - Parser-determined ranges with prefixes
- * @param maxTokens - Hard token budget per chunk
- * @param maxCharacters - Hard character budget per chunk
- * @param port - Tokenize server port
+ * @param config - Chunking config
  * @param isBoilerplate - Optional boilerplate filter
  * @returns One Chunk[] per input ChunkRange, in the same order
  * @throws If the tokenize server is unreachable or returns errors
@@ -396,12 +396,12 @@ function splitChunkRange(
 export async function splitIntoChunks(
     lines: readonly string[],
     chunkRanges: ChunkRange[],
-    maxTokens: number,
-    maxCharacters: number,
-    port: number,
+    config: ChunkingConfig,
     isBoilerplate?: BoilerplateFilter,
 ): Promise<Chunk[][]> {
     if (chunkRanges.length === 0) return [];
+
+    const { maxTokens, maxCharacters, tokenizerHostName, tokenizerPort } = config;
 
     if (maxCharacters < MAX_LINE_LENGTH) {
         // SplitLineView caps virtual lines at MAX_LINE_LENGTH chars. If
@@ -461,7 +461,8 @@ export async function splitIntoChunks(
     // Iterative tokenization and correction loop
     while (texts.length > 0) {
         // Batch tokenize
-        const tokenCounts = await getTokenCounts(texts, port);
+        const tokenCounts = await getTokenCounts(
+            texts, tokenizerHostName, tokenizerPort);
 
         // Find over-budget chunks, update ratios, and collect affected ranges.
         rangesToProcess.length = 0;
@@ -539,11 +540,11 @@ export async function splitIntoChunks(
 // Do not use outside of test files.
 
 /** @internal Test-only: set to override getTokenCounts in unit tests. */
-let _getTokenCountsMock: ((contents: string[], port: number) => Promise<number[]>) | null = null;
+let _getTokenCountsMock: ((contents: string[], hostname: string, port: number) => Promise<number[]>) | null = null;
 
 /** @internal Test-only: set or clear the getTokenCounts mock. */
 export function _setGetTokenCountsMock(
-    mock: ((contents: string[], port: number) => Promise<number[]>) | null,
+    mock: ((contents: string[], hostname: string, port: number) => Promise<number[]>) | null,
 ): void {
     _getTokenCountsMock = mock;
 }

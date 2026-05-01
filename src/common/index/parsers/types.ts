@@ -9,7 +9,7 @@
  */
 
 import type { Node as SyntaxNode } from 'web-tree-sitter';
-import type { Chunk } from '../types';
+import type { Chunk, ChunkingConfig } from '../types';
 
 export type { Chunk };
 
@@ -230,12 +230,14 @@ export interface IFileParser {
      * @param symbols     - The `IndexSymbol[]` from `readIndex()`
      * @param filePath    - Display path for the context prefix
      *                      (workspace-relative or filename-only)
+     * @param config      - Chunking config
      * @returns Array of Chunk objects
      */
     computeChunks(
         sourceLines: readonly string[],
         symbols: readonly IndexSymbol[],
         filePath: string,
+        config: ChunkingConfig,
     ): Promise<Chunk[]>;
 
     /**

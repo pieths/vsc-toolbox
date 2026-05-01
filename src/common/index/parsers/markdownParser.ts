@@ -28,7 +28,7 @@
 import * as path from 'path';
 import { Query } from 'web-tree-sitter';
 import type { Node as SyntaxNode } from 'web-tree-sitter';
-import type { Chunk } from '../types';
+import type { Chunk, ChunkingConfig } from '../types';
 import {
     SymbolType,
 } from './types';
@@ -400,9 +400,10 @@ export const markdownParser: IFileParser = {
         sourceLines: readonly string[],
         symbols: readonly IndexSymbol[],
         filePath: string,
+        config: ChunkingConfig,
     ): Promise<Chunk[]> {
         const totalLines = sourceLines.length;
-        const maxPrefixChars = getPrefixBudget(3584);
+        const maxPrefixChars = getPrefixBudget(config.maxCharacters);
 
         // 1. Filter to heading symbols and build per-section ranges
         const headingSymbols = symbols.filter(
@@ -451,7 +452,7 @@ export const markdownParser: IFileParser = {
         }
 
         // 3. Single call to splitIntoChunks for the entire file
-        const result = await splitIntoChunks(sourceLines, chunkRanges, 2048, 3584, 8384);
+        const result = await splitIntoChunks(sourceLines, chunkRanges, config);
         return result.flat();
     },
 };

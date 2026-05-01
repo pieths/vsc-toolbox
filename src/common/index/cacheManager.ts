@@ -6,7 +6,12 @@ import * as fs from 'fs';
 import picomatch from 'picomatch';
 import { FileRef } from './fileRef';
 import { ThreadPool } from './workers/threadPool';
-import { IndexInput, IndexStatus, NearestEmbeddingResult } from './types';
+import {
+    ChunkingConfig,
+    IndexInput,
+    IndexStatus,
+    NearestEmbeddingResult
+} from './types';
 import { LlamaServer } from './embeddings/llamaServer';
 import { VectorDatabase } from './embeddings/vectorDatabase';
 import { EmbeddingProcessor } from './embeddings/embeddingProcessor';
@@ -65,6 +70,7 @@ export class CacheManager {
     private symbolCache = new SymbolCache();
     private workspaceRoot: string = '';
     private preParseScrubPatterns: FileScrubPatterns = {};
+    private chunkingConfig: ChunkingConfig | null = null;
 
     // ── Dirty-set drain loop state ──────────────────────────────────────────
     private fileMutationQueue: FileMutationEntry[] = [];
@@ -162,10 +168,20 @@ export class CacheManager {
                 log(`Content index: VectorCacheClient created at ${cachePath}`);
             }
 
+            this.chunkingConfig = {
+                // Use 2048 - 2 to leave room for the BOS/EOS tokens
+                // TODO: Account for embedding models with non-empty index prefixes.
+                maxTokens: 2046,
+                maxCharacters: 3584, // 1024 * 3.5
+                tokenizerHostName: 'localhost',
+                tokenizerPort: this.llamaServer.getPort(),
+            };
+
             this.embeddingProcessor = new EmbeddingProcessor(
                 this.vectorDatabase,
                 this.llamaServer,
                 this.threadPool,
+                this.chunkingConfig,
                 this.vectorCacheClient,
                 remoteEmbeddingServerAddress,
             );
@@ -791,6 +807,7 @@ export class CacheManager {
         this.pathFilter = null;
         this.cache.clear();
         this.workspaceRoot = '';
+        this.chunkingConfig = null;
         this.indexingComplete = false;
         this.indexingPromise = null;
         this.mutationQueueInitialized = false;

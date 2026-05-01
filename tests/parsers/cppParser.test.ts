@@ -31,6 +31,7 @@ import {
     filterSymbols,
     debugPrintSyntaxTree,
     setUniformTokenizer,
+    makeChunkingConfig,
 } from './parserTestUtils';
 
 // ── Paths ───────────────────────────────────────────────────────────────────
@@ -1711,11 +1712,17 @@ describe('function-like macro multi-line', () => {
 // ── Chunking (computeChunks) ────────────────────────────────────────────────
 
 /**
+ * Default chunking config matching the production budgets passed to
+ * the parser by {@link CacheManager}.
+ */
+const CHUNKING_CONFIG = makeChunkingConfig(2046, 3584);
+
+/**
  * Helper: parse source through the full pipeline and return chunks.
  */
 async function chunkFixture(source: string, filePath: string = 'test.cpp') {
     const { lines, symbols } = parseFixture(source, filePath);
-    const chunks = await cppParser.computeChunks(lines, symbols, filePath);
+    const chunks = await cppParser.computeChunks(lines, symbols, filePath, CHUNKING_CONFIG);
     return { chunks, lines, symbols };
 }
 
@@ -2403,7 +2410,7 @@ describe('chunking: out-of-line definitions', () => {
 
 describe('chunking: empty file', () => {
     it('should produce no chunks', async () => {
-        const chunks = await cppParser.computeChunks([], [], 'empty.cpp');
+        const chunks = await cppParser.computeChunks([], [], 'empty.cpp', CHUNKING_CONFIG);
         assert.deepStrictEqual(chunks, []);
     });
 });
@@ -2824,7 +2831,7 @@ describe('edge cases', () => {
     });
 
     it('computeChunks with empty source should return empty array', async () => {
-        const chunks = await cppParser.computeChunks([], [], 'empty.cpp');
+        const chunks = await cppParser.computeChunks([], [], 'empty.cpp', CHUNKING_CONFIG);
         assert.deepStrictEqual(chunks, []);
     });
 
@@ -2840,7 +2847,7 @@ describe('edge cases', () => {
             '    return 0;',
             '}',
         ];
-        const chunks = await cppParser.computeChunks(lines, [], 'main.cpp');
+        const chunks = await cppParser.computeChunks(lines, [], 'main.cpp', CHUNKING_CONFIG);
         // With no symbols, the entire file is treated as trailing content
         assert.ok(chunks.length >= 1, 'expected at least one chunk from non-empty file');
     });

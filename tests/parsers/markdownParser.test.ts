@@ -30,6 +30,7 @@ import {
     filterSymbols,
     debugPrintSyntaxTree,
     setUniformTokenizer,
+    makeChunkingConfig,
 } from './parserTestUtils';
 
 // ── Paths ───────────────────────────────────────────────────────────────────
@@ -67,12 +68,18 @@ function parseFixture(source: string, filePath: string = 'test.md', debug: boole
 }
 
 /**
+ * Default chunking config matching the production budgets passed to
+ * the parser by {@link CacheManager}.
+ */
+const CHUNKING_CONFIG = makeChunkingConfig(2046, 3584);
+
+/**
  * Compute chunks through the full parseCst → readIndex → computeChunks
  * pipeline.
  */
 async function chunkFixture(source: string, filePath: string = 'test.md') {
     const { symbols, lines } = parseFixture(source, filePath);
-    const chunks = await markdownParser.computeChunks(lines, symbols, filePath);
+    const chunks = await markdownParser.computeChunks(lines, symbols, filePath, CHUNKING_CONFIG);
     return { symbols, lines, chunks };
 }
 
@@ -995,7 +1002,7 @@ describe('edge cases', () => {
     });
 
     it('computeChunks with empty source should return empty array', async () => {
-        const chunks = await markdownParser.computeChunks([], [], 'empty.md');
+        const chunks = await markdownParser.computeChunks([], [], 'empty.md', CHUNKING_CONFIG);
         assert.deepStrictEqual(chunks, []);
     });
 
@@ -1006,7 +1013,7 @@ describe('edge cases', () => {
             'The chunking system needs enough text to meet the minimum threshold.',
             'So we add a few more lines here to make sure we exceed it safely.',
         ];
-        const chunks = await markdownParser.computeChunks(lines, [], 'plain.md');
+        const chunks = await markdownParser.computeChunks(lines, [], 'plain.md', CHUNKING_CONFIG);
         assert.ok(chunks.length == 1, 'expected one chunk from non-empty file');
     });
 });

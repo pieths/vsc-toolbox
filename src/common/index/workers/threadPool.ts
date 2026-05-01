@@ -16,6 +16,7 @@ import {
     SearchBatchRequest,
     IndexBatchRequest,
     ComputeChunksBatchRequest,
+    ChunkingConfig,
 } from '../types';
 import type { FileScrubPatterns } from '../fileScrubber';
 import { debug, log, warn, error } from '../../logger';
@@ -254,9 +255,13 @@ export class ThreadPool {
      * Compute chunks for multiple files in parallel.
      *
      * @param inputs - Array of compute chunks inputs to process
+     * @param config - Chunking config
      * @returns Promise that resolves with all computed chunks
      */
-    async computeChunksAll(inputs: ComputeChunksInput[]): Promise<ComputeChunksOutput[]> {
+    async computeChunksAll(
+        inputs: ComputeChunksInput[],
+        config: ChunkingConfig,
+    ): Promise<ComputeChunksOutput[]> {
         if (this.disposed) {
             return inputs.map(input => ({
                 type: 'computeChunks' as const,
@@ -300,7 +305,10 @@ export class ThreadPool {
 
                     worker.on('message', onMessage);
                     const request: ComputeChunksBatchRequest = {
-                        type: 'computeChunksBatch', messageId, inputs: chunks[i],
+                        type: 'computeChunksBatch',
+                        messageId,
+                        inputs: chunks[i],
+                        config,
                     };
                     worker.postMessage(request);
                 }

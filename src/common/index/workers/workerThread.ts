@@ -59,7 +59,7 @@ if (parentPort) {
         } else if (msg.type === 'computeChunksBatch') {
             const outputs: ComputeChunksOutput[] = [];
             for (const input of msg.inputs) {
-                outputs.push(await computeChunks(input));
+                outputs.push(await computeChunks(input, msg.config));
             }
             const response: ComputeChunksBatchResponse = {
                 type: 'computeChunksBatch', messageId: msg.messageId, outputs,

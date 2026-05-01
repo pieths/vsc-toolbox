@@ -13,7 +13,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { ComputeChunksStatus } from '../../types';
-import type { ComputeChunksInput, ComputeChunksOutput } from '../../types';
+import type {
+    ComputeChunksInput,
+    ComputeChunksOutput,
+    ChunkingConfig
+} from '../../types';
 import type { IndexFile } from '../../parsers/types';
 import { getParserForFile } from '../../parsers/registry';
 
@@ -37,9 +41,13 @@ function getChunkHash(text: string): string {
  * 5. Delegate to `parser.computeChunks()` with the display path.
  *
  * @param input - Input containing file path and idx path
+ * @param config - Chunking config
  * @returns Output with extracted chunks
  */
-export async function computeChunks(input: ComputeChunksInput): Promise<ComputeChunksOutput> {
+export async function computeChunks(
+    input: ComputeChunksInput,
+    config: ChunkingConfig,
+): Promise<ComputeChunksOutput> {
     try {
         const contentBuffer = await fs.promises.readFile(input.filePath);
         const sha256 = crypto.createHash('sha256').update(contentBuffer).digest('hex');
@@ -90,7 +98,9 @@ export async function computeChunks(input: ComputeChunksInput): Promise<ComputeC
         // Use workspace-relative path for chunk prefixes when available,
         // otherwise fall back to just the filename.
         const displayPath = input.workspacePath || path.basename(input.filePath);
-        const chunks = await fileParser.computeChunks(sourceLines, symbols, displayPath);
+
+        const chunks = await fileParser.computeChunks(
+            sourceLines, symbols, displayPath, config);
 
         // Compute sha256 over the final chunk text (including context prefix)
         // so that the hash accurately reflects what gets embedded.

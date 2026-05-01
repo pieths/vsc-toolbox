@@ -22,6 +22,7 @@ import {
     MAX_LINE_LENGTH,
 } from '../../src/common/index/parsers/chunkUtils';
 import type { ChunkRange } from '../../src/common/index/parsers/chunkUtils';
+import type { ChunkingConfig } from '../../src/common/index/types';
 import { setUniformTokenizer, clearTokenizerMock } from './parserTestUtils';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -946,11 +947,21 @@ describe('splitChunkRange', () => {
 
 describe('splitIntoChunks', () => {
 
-    // Port value is irrelevant when using the mock
-    const PORT = 0;
-
     // Typical maxCharacters — generous enough for normal test content
     const MAX_CHARS = 2000;
+
+    /**
+     * Build a {@link ChunkingConfig} for tests. Hostname/port are
+     * irrelevant when the tokenizer is mocked.
+     */
+    function makeConfig(maxTokens: number, maxCharacters: number = MAX_CHARS): ChunkingConfig {
+        return {
+            maxTokens,
+            maxCharacters,
+            tokenizerHostName: 'localhost',
+            tokenizerPort: 0,
+        };
+    }
 
     afterEach(() => {
         clearTokenizerMock();
@@ -960,14 +971,14 @@ describe('splitIntoChunks', () => {
 
     it('returns empty array for empty chunkRanges', async () => {
         setUniformTokenizer(0.3);
-        const result = await splitIntoChunks([], [], 100, MAX_CHARS, PORT);
+        const result = await splitIntoChunks([], [], makeConfig(100));
         assert.equal(result.length, 0);
     });
 
     it('throws when maxCharacters < MAX_LINE_LENGTH', async () => {
         setUniformTokenizer(0.3);
         await assert.rejects(
-            () => splitIntoChunks(['hello'], [chunkRange(0, 1)], 100, MAX_LINE_LENGTH - 1, PORT),
+            () => splitIntoChunks(['hello'], [chunkRange(0, 1)], makeConfig(100, MAX_LINE_LENGTH - 1)),
             /maxCharacters.*must be >= MAX_LINE_LENGTH/,
         );
     });
@@ -977,7 +988,7 @@ describe('splitIntoChunks', () => {
     it('produces a single chunk for a small range within budget', async () => {
         setUniformTokenizer(0.3);
         const lines = createContentLines(5, 99);
-        const result = await splitIntoChunks(lines, [chunkRange(0, 5)], 500, MAX_CHARS, PORT);
+        const result = await splitIntoChunks(lines, [chunkRange(0, 5)], makeConfig(500));
         assert.equal(result.length, 1); // one range
         assert.equal(result[0].length, 1); // one chunk
         // 1-based inclusive start
@@ -989,7 +1000,7 @@ describe('splitIntoChunks', () => {
     it('chunk text contains all content lines', async () => {
         setUniformTokenizer(0.3);
         const lines = createContentLines(3, 99);
-        const result = await splitIntoChunks(lines, [chunkRange(0, 3)], 500, MAX_CHARS, PORT);
+        const result = await splitIntoChunks(lines, [chunkRange(0, 3)], makeConfig(500));
         assert.equal(result[0][0].text, lines.join('\n'));
     });
 
@@ -998,7 +1009,7 @@ describe('splitIntoChunks', () => {
         const lines = createContentLines(3, 99);
         const prefix = 'file: test.cpp\n';
         const result = await splitIntoChunks(
-            lines, [chunkRange(0, 3, prefix)], 500, MAX_CHARS, PORT,
+            lines, [chunkRange(0, 3, prefix)], makeConfig(500),
         );
         assert.equal(result[0][0].text, prefix + lines.join('\n'));
     });
@@ -1011,7 +1022,7 @@ describe('splitIntoChunks', () => {
         const result = await splitIntoChunks(
             lines,
             [chunkRange(0, 5), chunkRange(5, 10)],
-            500, MAX_CHARS, PORT,
+            makeConfig(500),
         );
         assert.equal(result.length, 2);
         assert.equal(result[0].length, 1);
@@ -1030,7 +1041,7 @@ describe('splitIntoChunks', () => {
         const result = await splitIntoChunks(
             lines,
             [chunkRange(0, 5), chunkRange(5, 5)], // second range is empty
-            500, MAX_CHARS, PORT,
+            makeConfig(500),
         );
         assert.equal(result.length, 2);
         assert.equal(result[0].length, 1);
@@ -1057,7 +1068,7 @@ describe('splitIntoChunks', () => {
         setUniformTokenizer(1.0);
         const lines = createContentLines(30, 99);
         const result = await splitIntoChunks(
-            lines, [chunkRange(0, 30)], 1500, 1500, PORT,
+            lines, [chunkRange(0, 30)], makeConfig(1500, 1500),
         );
         assert.equal(result.length, 1); // one range
         assert.equal(result[0].length, 4);
@@ -1101,7 +1112,7 @@ describe('splitIntoChunks', () => {
         });
 
         const result = await splitIntoChunks(
-            lines, [chunkRange(0, 200)], 2048, 3584, PORT);
+            lines, [chunkRange(0, 200)], makeConfig(2048, 3584));
 
         // Should converge in exactly 2 tokenization rounds
         assert.equal(callCount, 2, 'Should need exactly 2 tokenization rounds');
@@ -1132,7 +1143,7 @@ describe('splitIntoChunks', () => {
         const primary = 'PRIMARY\n';
         const secondary = 'SECONDARY\n';
         const result = await splitIntoChunks(
-            lines, [chunkRange(0, 30, primary, secondary)], 500, MAX_CHARS, PORT,
+            lines, [chunkRange(0, 30, primary, secondary)], makeConfig(500),
         );
         assert.ok(result[0].length >= 2);
         assert.ok(result[0][0].text.startsWith(primary));
@@ -1148,7 +1159,7 @@ describe('splitIntoChunks', () => {
         setUniformTokenizer(0.3);
         const lines = createContentLines(5, 99);
         const result = await splitIntoChunks(
-            lines, [chunkRange(0, 5)], 500, MAX_CHARS, PORT,
+            lines, [chunkRange(0, 5)], makeConfig(500),
         );
         const chunk = result[0][0];
         // 0-based [0, 5) → 1-based start=1, end=5 (inclusive)
@@ -1164,7 +1175,7 @@ describe('splitIntoChunks', () => {
         );
         const lines = createContentLines(5, 99);
         await assert.rejects(
-            () => splitIntoChunks(lines, [chunkRange(0, 5)], 500, MAX_CHARS, PORT),
+            () => splitIntoChunks(lines, [chunkRange(0, 5)], makeConfig(500)),
             /Tokenization failed/,
         );
     });
@@ -1186,7 +1197,7 @@ describe('splitIntoChunks', () => {
         });
         const lines = createContentLines(30, 99);
         const result = await splitIntoChunks(
-            lines, [chunkRange(0, 30)], 500, MAX_CHARS, PORT,
+            lines, [chunkRange(0, 30)], makeConfig(500),
         );
         // Should have called getTokenCounts at least twice
         assert.ok(callCount >= 2,
@@ -1219,7 +1230,7 @@ describe('splitIntoChunks', () => {
         const result = await splitIntoChunks(
             lines,
             [chunkRange(0, 5), chunkRange(5, 20)],
-            500, MAX_CHARS, PORT,
+            makeConfig(500),
         );
 
         assert.ok(callCount >= 2);
@@ -1260,7 +1271,7 @@ describe('splitIntoChunks', () => {
 
         const lines = createContentLines(30, 99);
         await splitIntoChunks(
-            lines, [chunkRange(0, 30)], 500, MAX_CHARS, PORT,
+            lines, [chunkRange(0, 30)], makeConfig(500),
         );
 
         assert.ok(callCount === 2);
@@ -1277,7 +1288,7 @@ describe('splitIntoChunks', () => {
         setUniformTokenizer(0.1); // very low ratio → always within budget
         const lines = createContentLines(50, 99);
         const result = await splitIntoChunks(
-            lines, [chunkRange(0, 50)], 500, MAX_CHARS, PORT,
+            lines, [chunkRange(0, 50)], makeConfig(500),
         );
         // Should produce valid output without infinite looping
         assert.ok(result[0].length >= 1);
@@ -1300,7 +1311,7 @@ describe('splitIntoChunks', () => {
 
         const lines = createContentLines(30, 99);
         const result = await splitIntoChunks(
-            lines, [chunkRange(0, 30)], 500, MAX_CHARS, PORT,
+            lines, [chunkRange(0, 30)], makeConfig(500),
         );
 
         assert.equal(callCount, 3);
@@ -1316,7 +1327,7 @@ describe('splitIntoChunks', () => {
         const longLine = 'word '.repeat(100); // ~500 chars, well over MAX_LINE_LENGTH
         const lines = [longLine, ...createContentLines(3, 99)];
         const result = await splitIntoChunks(
-            lines, [chunkRange(0, 4)], 500, MAX_CHARS, PORT,
+            lines, [chunkRange(0, 4)], makeConfig(500),
         );
         assert.equal(result.length, 1);
         assert.equal(result[0].length, 1);
@@ -1337,7 +1348,7 @@ describe('splitIntoChunks', () => {
             'z'.repeat(99),
         ];
         const result = await splitIntoChunks(
-            lines, [chunkRange(0, 3)], 5000, MAX_CHARS, PORT,
+            lines, [chunkRange(0, 3)], makeConfig(5000),
         );
         assert.equal(result.length, 1);
         assert.equal(result[0].length, 1);
@@ -1358,7 +1369,7 @@ describe('splitIntoChunks', () => {
         const lines = createContentLines(5, 99);
         // Boilerplate filter that rejects everything
         const result = await splitIntoChunks(
-            lines, [chunkRange(0, 5)], 500, MAX_CHARS, PORT,
+            lines, [chunkRange(0, 5)], makeConfig(500),
             () => true, // all boilerplate
         );
 
@@ -1371,7 +1382,7 @@ describe('splitIntoChunks', () => {
         setUniformTokenizer(0.3);
         const lines = createContentLines(5, 99);
         const result = await splitIntoChunks(
-            lines, [chunkRange(0, 5)], 500, MAX_CHARS, PORT,
+            lines, [chunkRange(0, 5)], makeConfig(500),
             () => false, // nothing is boilerplate
         );
         assert.ok(result[0].length >= 1);
@@ -1383,7 +1394,7 @@ describe('splitIntoChunks', () => {
         setUniformTokenizer(0.3);
         const lines = createContentLines(30, 99);
         const result = await splitIntoChunks(
-            lines, [chunkRange(0, 30)], 500, MAX_CHARS, PORT,
+            lines, [chunkRange(0, 30)], makeConfig(500),
         );
         for (const chunks of result) {
             for (const chunk of chunks) {
@@ -1398,7 +1409,7 @@ describe('splitIntoChunks', () => {
         setUniformTokenizer(0.3);
         const lines = createContentLines(5, 99);
         const result = await splitIntoChunks(
-            lines, [chunkRange(0, 5)], 500, MAX_CHARS, PORT,
+            lines, [chunkRange(0, 5)], makeConfig(500),
         );
         for (const chunk of result[0]) {
             assert.equal(chunk.sha256, '');
@@ -1412,7 +1423,7 @@ describe('splitIntoChunks', () => {
         // Very short lines that won't meet MIN_CHUNK_CHARS
         const lines = ['ab', 'cd', 'ef'];
         const result = await splitIntoChunks(
-            lines, [chunkRange(0, 3)], 500, MAX_CHARS, PORT,
+            lines, [chunkRange(0, 3)], makeConfig(500),
         );
         assert.equal(result[0].length, 0);
     });
@@ -1423,7 +1434,7 @@ describe('splitIntoChunks', () => {
         setUniformTokenizer(0.3);
         const lines = ['', '', ...createContentLines(3, 99), '', ''];
         const result = await splitIntoChunks(
-            lines, [chunkRange(0, 7)], 500, MAX_CHARS, PORT,
+            lines, [chunkRange(0, 7)], makeConfig(500),
         );
         assert.equal(result[0].length, 1);
         // 1-based: should start at line 3 (skipping 2 blanks), end at line 5
@@ -1442,7 +1453,7 @@ describe('splitIntoChunks', () => {
         );
         const lines = [createContentLines(1, 99)[0]];
         const result = await splitIntoChunks(
-            lines, [chunkRange(0, 1)], 500, MAX_CHARS, PORT,
+            lines, [chunkRange(0, 1)], makeConfig(500),
         );
         assert.equal(result.length, 1);
         assert.equal(result[0].length, 0, 'Single-line over-budget chunk should be dropped');
@@ -1471,7 +1482,7 @@ describe('splitIntoChunks', () => {
         });
 
         const result = await splitIntoChunks(
-            lines, [chunkRange(0, 5)], 105, MAX_CHARS, PORT,
+            lines, [chunkRange(0, 5)], makeConfig(105),
         );
 
         // The over-budget line should not appear in any surviving chunk
