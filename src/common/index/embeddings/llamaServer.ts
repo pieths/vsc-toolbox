@@ -804,6 +804,12 @@ export class LlamaServer {
         let index = 0;
         let active = 0;
 
+        // Progress logging: log every ~10% (or every 10 items for small batches)
+        const total = texts.length;
+        const logFrequency = Math.max(10, Math.floor(total / 10));
+        const startTime = Date.now();
+        let completed = 0;
+
         return new Promise((resolve) => {
             const next = () => {
                 // If all dispatched and all finished
@@ -830,6 +836,12 @@ export class LlamaServer {
                         })
                         .finally(() => {
                             active--;
+                            completed++;
+                            if (completed % logFrequency === 0 || completed === total) {
+                                const elapsedSec = (Date.now() - startTime) / 1000;
+                                const rate = elapsedSec > 0 ? completed / elapsedSec : 0;
+                                log(`Embedding progress: ${completed}/${total} (${rate.toFixed(1)} embeddings/sec)`);
+                            }
                             next();
                         });
                 }
