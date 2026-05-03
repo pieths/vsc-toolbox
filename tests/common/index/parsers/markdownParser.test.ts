@@ -10,20 +10,20 @@
  *   computeChunks()  — source lines + symbols → Chunk[]
  *
  * This test can be run from the command line with:
- * npx tsc -p tsconfig.test.json; node --test out-test/tests/parsers/markdownParser.test.js
+ * npx tsc -p tsconfig.test.json; node --test out-test/tests/common/index/parsers/markdownParser.test.js
  */
 
 import { describe, it, before } from 'node:test';
 import * as assert from 'node:assert/strict';
 import * as path from 'node:path';
 import { Parser, Language } from 'web-tree-sitter';
-import { markdownParser } from '../../src/common/index/parsers/markdown/markdownParser';
+import { markdownParser } from '../../../../src/common/index/parsers/markdown/markdownParser';
 import {
     _buildContextPrefix as buildContextPrefix,
     _FILE_ONLY_OVERHEAD as FILE_ONLY_OVERHEAD,
     _FULL_PREFIX_OVERHEAD as FULL_PREFIX_OVERHEAD,
-} from '../../src/common/index/parsers/markdown/chunker';
-import { SymbolType } from '../../src/common/index/parsers/types';
+} from '../../../../src/common/index/parsers/markdown/chunker';
+import { SymbolType } from '../../../../src/common/index/parsers/types';
 import {
     toComparable,
     expectedSymbol,
@@ -35,8 +35,8 @@ import {
 
 // ── Paths ───────────────────────────────────────────────────────────────────
 
-/** Project root (three levels up from out-test/tests/parsers/) */
-const ROOT = path.resolve(__dirname, '..', '..', '..');
+/** Project root (five levels up from out-test/tests/common/index/parsers/) */
+const ROOT = path.resolve(__dirname, '..', '..', '..', '..', '..');
 
 /** WASM grammar for Markdown (block-level only) */
 const MD_WASM = path.join(ROOT, 'bin', 'tree-sitter', 'languages', 'markdown.wasm');

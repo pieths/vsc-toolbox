@@ -5,12 +5,12 @@
  * Tests for internal helpers in {@link chunkUtils}.
  *
  * This test can be run from the command line with:
- * npx tsc -p tsconfig.test.json; node --test out-test/tests/parsers/chunkUtils.test.js
+ * npx tsc -p tsconfig.test.json; node --test out-test/tests/common/index/parsers/chunkUtils.test.js
  */
 
 import { describe, it, afterEach } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { SplitLineView } from '../../src/common/index/parsers/splitLineView';
+import { SplitLineView } from '../../../../src/common/index/parsers/splitLineView';
 import {
     _findChunkEndByTokenEstimate as findChunkEndByTokenEstimate,
     _findChunkStartByTokenEstimate as findChunkStartByTokenEstimate,
@@ -20,9 +20,9 @@ import {
     OVERLAP_LINES,
     MIN_CHUNK_CHARS,
     MAX_LINE_LENGTH,
-} from '../../src/common/index/parsers/chunkUtils';
-import type { ChunkRange } from '../../src/common/index/parsers/chunkUtils';
-import type { ChunkingConfig } from '../../src/common/index/types';
+} from '../../../../src/common/index/parsers/chunkUtils';
+import type { ChunkRange } from '../../../../src/common/index/parsers/chunkUtils';
+import type { ChunkingConfig } from '../../../../src/common/index/types';
 import { setUniformTokenizer, clearTokenizerMock } from './parserTestUtils';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
