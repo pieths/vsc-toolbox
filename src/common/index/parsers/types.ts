@@ -127,7 +127,7 @@ export interface MutableAttrMap extends AttrMap {
  *   - `[2]` version         — the parser's {@link IFileParser.formatVersion}
  *                             at write time.
  *   - `[3]` filePath        — absolute path to the source file.
- *   - `[4]` symbols         — array of symbol arrays produced by `parseCst()`.
+ *   - `[4]` symbols         — array of symbol arrays produced by `extractSymbols()`.
  *                             Layout of each inner array is parser-private.
  */
 export type IndexFile = [
@@ -190,9 +190,9 @@ export interface IndexSymbol {
 /**
  * Contract that every language parser must implement.
  *
- * - `parseCst()`      runs in worker threads (no vscode dependency).
- * - `readIndex()`     runs in the extension host to hydrate `*.idx` files.
- * - `computeChunks()` runs in worker threads (no vscode dependency).
+ * - `extractSymbols()` runs in worker threads (no vscode dependency).
+ * - `readIndex()`      runs in the extension host to hydrate `*.idx` files.
+ * - `computeChunks()`  runs in worker threads (no vscode dependency).
  */
 export interface IFileParser {
     /**
@@ -206,7 +206,7 @@ export interface IFileParser {
      * @param filePath - Absolute path to the source file (for logging / context)
      * @returns Array of symbol arrays (one inner array per extracted symbol)
      */
-    parseCst(rootNode: SyntaxNode | null, filePath: string): unknown[][];
+    extractSymbols(rootNode: SyntaxNode | null, filePath: string): unknown[][];
 
     /**
      * Hydrate symbol arrays (read from an `*.idx` file) into fully

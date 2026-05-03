@@ -5,9 +5,9 @@
  * Tests for the Markdown parser ({@link markdownParser}).
  *
  * Exercises the full IFileParser contract:
- *   parseCst()      — CST → raw symbol arrays
- *   readIndex()     — raw symbol arrays → IndexSymbol[]
- *   computeChunks() — source lines + symbols → Chunk[]
+ *   extractSymbols() — CST → raw symbol arrays
+ *   readIndex()      — raw symbol arrays → IndexSymbol[]
+ *   computeChunks()  — source lines + symbols → Chunk[]
  *
  * This test can be run from the command line with:
  * npx tsc -p tsconfig.test.json; node --test out-test/tests/parsers/markdownParser.test.js
@@ -49,7 +49,7 @@ let mdLanguage: Language;
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
- * Parse a Markdown source string through the full parseCst → readIndex
+ * Parse a Markdown source string through the full extractSymbols → readIndex
  * pipeline. Returns everything needed for assertions.
  *
  * Set `debug: true` to print the tree-sitter syntax tree to stdout
@@ -58,7 +58,7 @@ let mdLanguage: Language;
 function parseFixture(source: string, filePath: string = 'test.md', debug: boolean = false) {
     const tree = parser.parse(source);
     assert.ok(tree, `tree-sitter failed to parse ${filePath}`);
-    const rawSymbols = markdownParser.parseCst(tree.rootNode, filePath);
+    const rawSymbols = markdownParser.extractSymbols(tree.rootNode, filePath);
     const symbols = markdownParser.readIndex(rawSymbols);
     const lines = source.split('\n');
     if (debug) {
@@ -74,7 +74,7 @@ function parseFixture(source: string, filePath: string = 'test.md', debug: boole
 const CHUNKING_CONFIG = makeChunkingConfig(2046, 3584);
 
 /**
- * Compute chunks through the full parseCst → readIndex → computeChunks
+ * Compute chunks through the full extractSymbols → readIndex → computeChunks
  * pipeline.
  */
 async function chunkFixture(source: string, filePath: string = 'test.md') {
@@ -93,7 +93,7 @@ before(async () => {
     setUniformTokenizer(0.3);
 });
 
-// ── parseCst + readIndex ────────────────────────────────────────────────────
+// ── extractSymbols + readIndex ──────────────────────────────────────────────
 
 // ── H1 heading ──────────────────────────────────────────────────────────────
 
@@ -547,7 +547,7 @@ describe('no headings', () => {
 // ── readIndex round-trip ────────────────────────────────────────────────────
 
 describe('readIndex round-trip', () => {
-    it('parseCst → readIndex → parseCst → readIndex should produce identical symbols', () => {
+    it('extractSymbols → readIndex → extractSymbols → readIndex should produce identical symbols', () => {
         const source = `\
 # Title
 
@@ -991,8 +991,8 @@ describe('static properties', () => {
 // ── Edge cases ──────────────────────────────────────────────────────────────
 
 describe('edge cases', () => {
-    it('parseCst with null rootNode should return empty array', () => {
-        const result = markdownParser.parseCst(null, 'test.md');
+    it('extractSymbols with null rootNode should return empty array', () => {
+        const result = markdownParser.extractSymbols(null, 'test.md');
         assert.deepStrictEqual(result, []);
     });
 

@@ -17,8 +17,9 @@
  * inside level-1 sections, analogous to methods inside namespaces
  * in C++.
  *
- * - {@link markdownParser.parseCst parseCst} uses a tree-sitter query
- *   to extract heading symbols as compact arrays for `*.idx` files.
+ * - {@link markdownParser.extractSymbols extractSymbols} uses a
+ *   tree-sitter query to extract heading symbols as compact arrays
+ *   for `*.idx` files.
  * - {@link markdownParser.readIndex readIndex} hydrates those arrays
  *   into typed {@link IndexSymbol} objects.
  * - {@link markdownParser.computeChunks computeChunks} produces
@@ -40,7 +41,10 @@ export const markdownParser: IFileParser = {
     wasmGrammars: ['markdown.wasm'],
     formatVersion: 1,
 
-    parseCst(rootNode: SyntaxNode | null, _filePath: string): unknown[][] {
+    extractSymbols(
+        rootNode: SyntaxNode | null,
+        _filePath: string
+    ): unknown[][] {
         if (!rootNode) {
             return [];
         }

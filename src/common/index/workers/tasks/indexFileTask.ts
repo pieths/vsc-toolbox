@@ -137,7 +137,7 @@ function readIdxHeader(idxPath: string): {
  *
  * 1. Read source file, compute SHA-256.
  * 2. Fast-path: check existing `*.idx` for matching hash + format version.
- * 3. Parse with tree-sitter (if grammar available) → `parser.parseCst()`.
+ * 3. Parse with tree-sitter (if grammar available) → `parser.extractSymbols()`.
  * 4. Wrap in {@link IndexFile} tuple, write `*.idx`.
  *
  * @param input - Index input containing file path and idx output path
@@ -234,14 +234,14 @@ export async function indexFile(
                 throw new Error(`tree-sitter parse returned null for ${input.filePath}`);
             }
             try {
-                symbols = fileParser.parseCst(tree.rootNode, input.filePath);
+                symbols = fileParser.extractSymbols(tree.rootNode, input.filePath);
             } finally {
                 // Free WASM memory for the tree to prevent unbounded heap growth
                 tree.delete();
             }
         } else {
             // Default parser — no grammar needed
-            symbols = fileParser.parseCst(null, input.filePath);
+            symbols = fileParser.extractSymbols(null, input.filePath);
         }
 
         // Build IndexFile tuple and write

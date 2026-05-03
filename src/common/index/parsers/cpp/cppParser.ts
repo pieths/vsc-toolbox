@@ -6,8 +6,9 @@
  *
  * Handles `.c`, `.cc`, `.cpp`, `.cxx`, `.h`, `.hh`, `.hpp`, `.hxx`.
  *
- * - {@link cppParser.parseCst parseCst} uses tree-sitter queries to
- *   extract symbols from the CST as compact arrays for `*.idx` files.
+ * - {@link cppParser.extractSymbols extractSymbols} uses tree-sitter
+ *   queries to extract symbols from the CST as compact arrays for
+ *   `*.idx` files.
  * - {@link cppParser.readIndex readIndex} hydrates those arrays into
  *   typed {@link IndexSymbol} objects.
  * - {@link cppParser.computeChunks computeChunks} produces
@@ -32,7 +33,10 @@ export const cppParser: IFileParser = {
     wasmGrammars: ['cpp.wasm'],
     formatVersion: 1,
 
-    parseCst(rootNode: SyntaxNode | null, _filePath: string): unknown[][] {
+    extractSymbols(
+        rootNode: SyntaxNode | null,
+        _filePath: string
+    ): unknown[][] {
         if (!rootNode) {
             return [];
         }

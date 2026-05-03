@@ -5,9 +5,9 @@
  * Tests for the C/C++ parser ({@link cppParser}).
  *
  * Exercises the full IFileParser contract:
- *   parseCst()      — CST → raw symbol arrays
- *   readIndex()     — raw symbol arrays → IndexSymbol[]
- *   computeChunks() — source lines + symbols → Chunk[]
+ *   extractSymbols() — CST → raw symbol arrays
+ *   readIndex()      — raw symbol arrays → IndexSymbol[]
+ *   computeChunks()  — source lines + symbols → Chunk[]
  *
  * This test can be run from the command line with:
  * npx tsc -p tsconfig.test.json; node --test out-test/tests/parsers/cppParser.test.js
@@ -50,13 +50,13 @@ let cppLanguage: Language;
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
- * Parse a source string through the full parseCst → readIndex pipeline.
+ * Parse a source string through the full extractSymbols → readIndex pipeline.
  * Returns everything needed for assertions.
  */
 function parseFixture(source: string, filePath: string = 'test.cpp', debug: boolean = false) {
     const tree = parser.parse(source);
     assert.ok(tree, `tree-sitter failed to parse ${filePath}`);
-    const rawSymbols = cppParser.parseCst(tree.rootNode, filePath);
+    const rawSymbols = cppParser.extractSymbols(tree.rootNode, filePath);
     const symbols = cppParser.readIndex(rawSymbols);
     const lines = source.split('\n');
     if (debug) {
@@ -75,7 +75,7 @@ before(async () => {
     setUniformTokenizer(0.3);
 });
 
-// ── parseCst + readIndex ────────────────────────────────────────────────────
+// ── extractSymbols + readIndex ──────────────────────────────────────────────
 
 const SINGLE_NAMESPACE_SOURCE = `\
 // Comment at first line
@@ -2820,8 +2820,8 @@ describe('static properties', () => {
 // ── Edge cases ──────────────────────────────────────────────────────────────
 
 describe('edge cases', () => {
-    it('parseCst with null rootNode should return empty array', () => {
-        const result = cppParser.parseCst(null, 'test.cpp');
+    it('extractSymbols with null rootNode should return empty array', () => {
+        const result = cppParser.extractSymbols(null, 'test.cpp');
         assert.deepStrictEqual(result, []);
     });
 
