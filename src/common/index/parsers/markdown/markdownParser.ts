@@ -20,8 +20,8 @@
  * - {@link markdownParser.extractSymbols extractSymbols} uses a
  *   tree-sitter query to extract heading symbols as compact arrays
  *   for `*.idx` files.
- * - {@link markdownParser.readIndex readIndex} hydrates those arrays
- *   into typed {@link IndexSymbol} objects.
+ * - {@link markdownParser.hydrateSymbols hydrateSymbols} hydrates those
+ *   arrays into typed {@link IndexSymbol} objects.
  * - {@link markdownParser.computeChunks computeChunks} produces
  *   heading-aware embedding chunks aligned to section boundaries.
  */
@@ -51,7 +51,7 @@ export const markdownParser: IFileParser = {
         return extractSymbolsFromSyntaxTree(rootNode);
     },
 
-    readIndex(symbols: unknown[][]): IndexSymbol[] {
+    hydrateSymbols(symbols: unknown[][]): IndexSymbol[] {
         return hydrateSymbols(symbols);
     },
 

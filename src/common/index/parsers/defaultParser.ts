@@ -22,7 +22,7 @@ import { splitIntoChunks, type ChunkRange } from './chunkUtils';
  *   only when the registry finds no language-specific parser.
  * - `wasmGrammars` is empty — no tree-sitter grammar is needed.
  * - `extractSymbols()` returns an empty array (no structured symbols).
- * - `readIndex()` returns an empty array.
+ * - `hydrateSymbols()` returns an empty array.
  * - `computeChunks()` uses plain sliding-window chunking.
  */
 export const defaultParser: IFileParser = {
@@ -37,7 +37,7 @@ export const defaultParser: IFileParser = {
         return [];  // no structured symbols to extract
     },
 
-    readIndex(_symbols: unknown[][]): IndexSymbol[] {
+    hydrateSymbols(_symbols: unknown[][]): IndexSymbol[] {
         return [];  // empty index → no symbols
     },
 

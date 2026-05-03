@@ -6,7 +6,7 @@
  *
  * Exercises the full IFileParser contract:
  *   extractSymbols() — CST → raw symbol arrays
- *   readIndex()      — raw symbol arrays → IndexSymbol[]
+ *   hydrateSymbols() — raw symbol arrays → IndexSymbol[]
  *   computeChunks()  — source lines + symbols → Chunk[]
  *
  * This test can be run from the command line with:
@@ -50,14 +50,14 @@ let cppLanguage: Language;
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
- * Parse a source string through the full extractSymbols → readIndex pipeline.
+ * Parse a source string through the full extractSymbols → hydrateSymbols pipeline.
  * Returns everything needed for assertions.
  */
 function parseFixture(source: string, filePath: string = 'test.cpp', debug: boolean = false) {
     const tree = parser.parse(source);
     assert.ok(tree, `tree-sitter failed to parse ${filePath}`);
     const rawSymbols = cppParser.extractSymbols(tree.rootNode, filePath);
-    const symbols = cppParser.readIndex(rawSymbols);
+    const symbols = cppParser.hydrateSymbols(rawSymbols);
     const lines = source.split('\n');
     if (debug) {
         console.log(debugPrintSyntaxTree(tree.rootNode));
@@ -75,7 +75,7 @@ before(async () => {
     setUniformTokenizer(0.3);
 });
 
-// ── extractSymbols + readIndex ──────────────────────────────────────────────
+// ── extractSymbols + hydrateSymbols ──────────────────────────────────────────────
 
 const SINGLE_NAMESPACE_SOURCE = `\
 // Comment at first line
@@ -2825,8 +2825,8 @@ describe('edge cases', () => {
         assert.deepStrictEqual(result, []);
     });
 
-    it('readIndex with empty array should return empty array', () => {
-        const result = cppParser.readIndex([]);
+    it('hydrateSymbols with empty array should return empty array', () => {
+        const result = cppParser.hydrateSymbols([]);
         assert.deepStrictEqual(result, []);
     });
 

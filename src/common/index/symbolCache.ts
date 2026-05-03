@@ -120,7 +120,7 @@ export class SymbolCache {
             ] = JSON.parse(content) as IndexFile;
 
             const fileParser = getParserForFile(filePath);
-            const symbols = this.sortSymbols(fileParser.readIndex(rawSymbols));
+            const symbols = this.sortSymbols(fileParser.hydrateSymbols(rawSymbols));
 
             // Cache with the original mtime to avoid marking the
             // cached entry as newer than it could be.

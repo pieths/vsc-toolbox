@@ -6,7 +6,7 @@
  *
  * Exercises the full IFileParser contract:
  *   extractSymbols() — CST → raw symbol arrays
- *   readIndex()      — raw symbol arrays → IndexSymbol[]
+ *   hydrateSymbols() — raw symbol arrays → IndexSymbol[]
  *   computeChunks()  — source lines + symbols → Chunk[]
  *
  * This test can be run from the command line with:
@@ -49,7 +49,7 @@ let mdLanguage: Language;
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
- * Parse a Markdown source string through the full extractSymbols → readIndex
+ * Parse a Markdown source string through the full extractSymbols → hydrateSymbols
  * pipeline. Returns everything needed for assertions.
  *
  * Set `debug: true` to print the tree-sitter syntax tree to stdout
@@ -59,7 +59,7 @@ function parseFixture(source: string, filePath: string = 'test.md', debug: boole
     const tree = parser.parse(source);
     assert.ok(tree, `tree-sitter failed to parse ${filePath}`);
     const rawSymbols = markdownParser.extractSymbols(tree.rootNode, filePath);
-    const symbols = markdownParser.readIndex(rawSymbols);
+    const symbols = markdownParser.hydrateSymbols(rawSymbols);
     const lines = source.split('\n');
     if (debug) {
         console.log(debugPrintSyntaxTree(tree.rootNode));
@@ -74,7 +74,7 @@ function parseFixture(source: string, filePath: string = 'test.md', debug: boole
 const CHUNKING_CONFIG = makeChunkingConfig(2046, 3584);
 
 /**
- * Compute chunks through the full extractSymbols → readIndex → computeChunks
+ * Compute chunks through the full extractSymbols → hydrateSymbols → computeChunks
  * pipeline.
  */
 async function chunkFixture(source: string, filePath: string = 'test.md') {
@@ -93,7 +93,7 @@ before(async () => {
     setUniformTokenizer(0.3);
 });
 
-// ── extractSymbols + readIndex ──────────────────────────────────────────────
+// ── extractSymbols + hydrateSymbols ──────────────────────────────────────
 
 // ── H1 heading ──────────────────────────────────────────────────────────────
 
@@ -544,10 +544,10 @@ describe('no headings', () => {
     });
 });
 
-// ── readIndex round-trip ────────────────────────────────────────────────────
+// ── hydrateSymbols round-trip ────────────────────────────────────────────
 
-describe('readIndex round-trip', () => {
-    it('extractSymbols → readIndex → extractSymbols → readIndex should produce identical symbols', () => {
+describe('hydrateSymbols round-trip', () => {
+    it('extractSymbols → hydrateSymbols → extractSymbols → hydrateSymbols should produce identical symbols', () => {
         const source = `\
 # Title
 
@@ -559,7 +559,7 @@ More text.
 `;
         const { rawSymbols, symbols } = parseFixture(source);
         // Re-hydrate from the same raw data
-        const rehydrated = markdownParser.readIndex(rawSymbols);
+        const rehydrated = markdownParser.hydrateSymbols(rawSymbols);
         assert.equal(symbols.length, rehydrated.length);
         for (let i = 0; i < symbols.length; i++) {
             assert.deepStrictEqual(toComparable(symbols[i]), toComparable(rehydrated[i]));
@@ -996,8 +996,8 @@ describe('edge cases', () => {
         assert.deepStrictEqual(result, []);
     });
 
-    it('readIndex with empty array should return empty array', () => {
-        const result = markdownParser.readIndex([]);
+    it('hydrateSymbols with empty array should return empty array', () => {
+        const result = markdownParser.hydrateSymbols([]);
         assert.deepStrictEqual(result, []);
     });
 

@@ -9,8 +9,8 @@
  * - {@link cppParser.extractSymbols extractSymbols} uses tree-sitter
  *   queries to extract symbols from the CST as compact arrays for
  *   `*.idx` files.
- * - {@link cppParser.readIndex readIndex} hydrates those arrays into
- *   typed {@link IndexSymbol} objects.
+ * - {@link cppParser.hydrateSymbols hydrateSymbols} hydrates those arrays
+ *   into typed {@link IndexSymbol} objects.
  * - {@link cppParser.computeChunks computeChunks} produces
  *   structure-aware embedding chunks aligned to function / class
  *   boundaries.
@@ -43,7 +43,7 @@ export const cppParser: IFileParser = {
         return extractSymbolsFromSyntaxTree(rootNode);
     },
 
-    readIndex(symbols: unknown[][]): IndexSymbol[] {
+    hydrateSymbols(symbols: unknown[][]): IndexSymbol[] {
         return hydrateSymbols(symbols);
     },
 

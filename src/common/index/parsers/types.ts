@@ -142,8 +142,7 @@ export type IndexFile = [
 
 /**
  * Hydrated in-memory representation of a symbol, produced by
- * {@link IFileParser.readIndex}. This is the type that `FileRef`
- * query methods operate on (replacing the current `Tag` interface).
+ * {@link IFileParser.hydrateSymbols}.
  *
  * Every instance has exactly the same 11 properties (uniform V8
  * hidden class). Type-dependent data lives in the `attrs` Map.
@@ -191,14 +190,14 @@ export interface IndexSymbol {
  * Contract that every language parser must implement.
  *
  * - `extractSymbols()` runs in worker threads (no vscode dependency).
- * - `readIndex()`      runs in the extension host to hydrate `*.idx` files.
+ * - `hydrateSymbols()` runs in the extension host to hydrate `*.idx` files.
  * - `computeChunks()`  runs in worker threads (no vscode dependency).
  */
 export interface IFileParser {
     /**
      * Walk a tree-sitter CST and emit an array of symbol arrays
      * suitable for writing to an `*.idx` file. The layout of each
-     * inner array is parser-private — only this parser's `readIndex()`
+     * inner array is parser-private — only this parser's `hydrateSymbols()`
      * needs to understand it.
      *
      * @param rootNode - The root SyntaxNode from web-tree-sitter, or `null`
@@ -215,19 +214,19 @@ export interface IFileParser {
      * @param symbols - The raw symbol arrays from the {@link IndexFile} tuple
      * @returns Array of IndexSymbol objects
      */
-    readIndex(symbols: unknown[][]): IndexSymbol[];
+    hydrateSymbols(symbols: unknown[][]): IndexSymbol[];
 
     /**
      * Split a source file into overlapping text chunks suitable for
      * embedding. The parser uses the hydrated `IndexSymbol[]` (produced
-     * by `readIndex()` from the `*.idx` file) to align chunk boundaries
+     * by `hydrateSymbols()` from the `*.idx` file) to align chunk boundaries
      * with structural elements (e.g. functions, classes, headings).
      *
      * Fully decoupled from the CST step — no web-tree-sitter re-parse
      * is needed. Runs in worker threads (no vscode dependency).
      *
      * @param sourceLines - The source file split into lines
-     * @param symbols     - The `IndexSymbol[]` from `readIndex()`
+     * @param symbols     - The `IndexSymbol[]` from `hydrateSymbols()`
      * @param filePath    - Display path for the context prefix
      *                      (workspace-relative or filename-only)
      * @param config      - Chunking config

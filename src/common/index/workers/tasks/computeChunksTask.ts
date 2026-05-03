@@ -89,7 +89,7 @@ export async function computeChunks(
         }
 
         const fileParser = getParserForFile(input.filePath);
-        const symbols = fileParser.readIndex(rawSymbols);
+        const symbols = fileParser.hydrateSymbols(rawSymbols);
 
         // Delegate chunking to the parser
         const content = contentBuffer.toString('utf8');
