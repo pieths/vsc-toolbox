@@ -17,13 +17,13 @@ import { describe, it, before } from 'node:test';
 import * as assert from 'node:assert/strict';
 import * as path from 'node:path';
 import { Parser, Language } from 'web-tree-sitter';
+import { cppParser } from '../../src/common/index/parsers/cpp/cppParser';
 import {
-    cppParser,
     _buildContextPrefix as buildContextPrefix,
     _FILE_ONLY_OVERHEAD as FILE_ONLY_OVERHEAD,
     _CONTAINER_OVERHEAD as CONTAINER_OVERHEAD,
     _SIGNATURE_LINE_OVERHEAD as SIGNATURE_LINE_OVERHEAD,
-} from '../../src/common/index/parsers/cppParser';
+} from '../../src/common/index/parsers/cpp/chunker';
 import { SymbolType, AttrKey } from '../../src/common/index/parsers/types';
 import {
     toComparable,

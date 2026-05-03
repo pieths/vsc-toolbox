@@ -11,7 +11,7 @@
 
 import type { IFileParser } from './types';
 import { defaultParser } from './defaultParser';
-import { cppParser } from './cppParser';
+import { cppParser } from './cpp/cppParser';
 import { markdownParser } from './markdownParser';
 
 /** All language-specific parsers (order does not matter). */

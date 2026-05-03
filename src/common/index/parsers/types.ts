@@ -11,7 +11,7 @@
 import type { Node as SyntaxNode } from 'web-tree-sitter';
 import type { Chunk, ChunkingConfig } from '../types';
 
-export type { Chunk };
+export type { Chunk, ChunkingConfig };
 
 // ── SymbolType ──────────────────────────────────────────────────────────────
 
