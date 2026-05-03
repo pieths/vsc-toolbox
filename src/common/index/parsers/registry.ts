@@ -12,7 +12,7 @@
 import type { IFileParser } from './types';
 import { defaultParser } from './defaultParser';
 import { cppParser } from './cpp/cppParser';
-import { markdownParser } from './markdownParser';
+import { markdownParser } from './markdown/markdownParser';
 
 /** All language-specific parsers (order does not matter). */
 const LANGUAGE_PARSERS: readonly IFileParser[] = [

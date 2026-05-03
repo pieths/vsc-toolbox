@@ -17,12 +17,12 @@ import { describe, it, before } from 'node:test';
 import * as assert from 'node:assert/strict';
 import * as path from 'node:path';
 import { Parser, Language } from 'web-tree-sitter';
+import { markdownParser } from '../../src/common/index/parsers/markdown/markdownParser';
 import {
-    markdownParser,
     _buildContextPrefix as buildContextPrefix,
     _FILE_ONLY_OVERHEAD as FILE_ONLY_OVERHEAD,
     _FULL_PREFIX_OVERHEAD as FULL_PREFIX_OVERHEAD,
-} from '../../src/common/index/parsers/markdownParser';
+} from '../../src/common/index/parsers/markdown/chunker';
 import { SymbolType } from '../../src/common/index/parsers/types';
 import {
     toComparable,
