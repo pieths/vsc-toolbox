@@ -8,6 +8,7 @@
     "name": "pieths"
   },
   "license": "MIT",
+  "type": "commonjs",
   "engines": {
     "vscode": "^1.85.0"
   },
