@@ -5,7 +5,7 @@
  * Tests for {@link ScopedFileCache}.
  *
  * Run with:
- * npx tsc -p tsconfig.test.json; node --test out-test/tests/common/scopedFileCache.test.js
+ * npx tsc -p tests/tsconfig.json; node --test out-test/tests/common/scopedFileCache.test.js
  */
 
 import { describe, it, beforeEach, afterEach } from 'node:test';

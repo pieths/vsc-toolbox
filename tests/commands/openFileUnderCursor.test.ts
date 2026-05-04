@@ -15,7 +15,7 @@
  *   - Edge cases (cursor at boundaries, no match, empty lines, etc.)
  *
  * This test can be run from the command line with:
- * npx tsc -p tsconfig.test.json; node --test out-test/tests/commands/openFileUnderCursor.test.js
+ * npx tsc -p tests/tsconfig.json; node --test out-test/tests/commands/openFileUnderCursor.test.js
  */
 
 import Module from 'node:module';

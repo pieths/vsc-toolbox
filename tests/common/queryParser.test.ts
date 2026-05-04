@@ -16,7 +16,7 @@
  *   - Glob wildcards inside OR groups
  *
  * Run with:
- * npx tsc -p tsconfig.test.json; node --test out-test/tests/common/queryParser.test.js
+ * npx tsc -p tests/tsconfig.json; node --test out-test/tests/common/queryParser.test.js
  */
 
 import { describe, it } from 'node:test';

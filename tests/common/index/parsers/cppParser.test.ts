@@ -10,7 +10,7 @@
  *   computeChunks()  — source lines + symbols → Chunk[]
  *
  * This test can be run from the command line with:
- * npx tsc -p tsconfig.test.json; node --test out-test/tests/common/index/parsers/cppParser.test.js
+ * npx tsc -p tests/tsconfig.json; node --test out-test/tests/common/index/parsers/cppParser.test.js
  */
 
 import { describe, it, before } from 'node:test';

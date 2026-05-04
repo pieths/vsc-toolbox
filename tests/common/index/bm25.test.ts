@@ -16,7 +16,7 @@
  *   - Score is always non-negative
  *
  * Run with:
- * npx tsc -p tsconfig.test.json; node --test out-test/tests/common/index/bm25.test.js
+ * npx tsc -p tests/tsconfig.json; node --test out-test/tests/common/index/bm25.test.js
  */
 
 import { describe, it } from 'node:test';

@@ -15,7 +15,7 @@
  *     cache invalidation)
  *
  * Run with:
- * npx tsc -p tsconfig.test.json; node --test out-test/tests/common/index/fileScrubber.test.js
+ * npx tsc -p tests/tsconfig.json; node --test out-test/tests/common/index/fileScrubber.test.js
  */
 
 import { describe, it } from 'node:test';
