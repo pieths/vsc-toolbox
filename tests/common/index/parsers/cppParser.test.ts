@@ -15,7 +15,6 @@
 
 import { describe, it, before } from 'node:test';
 import * as assert from 'node:assert/strict';
-import * as path from 'node:path';
 import { Parser, Language } from 'web-tree-sitter';
 import { cppParser } from '../../../../src/common/index/parsers/cpp/cppParser';
 import {
@@ -32,15 +31,13 @@ import {
     debugPrintSyntaxTree,
     setUniformTokenizer,
     makeChunkingConfig,
+    getWasmPath,
 } from './parserTestUtils';
 
 // ── Paths ───────────────────────────────────────────────────────────────────
 
-/** Project root (five levels up from out-test/tests/common/index/parsers/) */
-const ROOT = path.resolve(__dirname, '..', '..', '..', '..', '..');
-
 /** WASM grammar for C++ */
-const CPP_WASM = path.join(ROOT, 'bin', 'tree-sitter', 'languages', 'cpp.wasm');
+const CPP_WASM = getWasmPath('cpp.wasm');
 
 // ── Shared state ────────────────────────────────────────────────────────────
 

@@ -5,6 +5,7 @@
  * Shared test utilities for parser unit tests.
  */
 
+import * as path from 'node:path';
 import type { Node as SyntaxNode } from 'web-tree-sitter';
 import { SymbolType, AttrKey } from '../../../../src/common/index/parsers/types';
 import type { IndexSymbol } from '../../../../src/common/index/parsers/types';
@@ -14,6 +15,19 @@ import { _setGetTokenCountsMock } from '../../../../src/common/index/parsers/chu
 // Re-export for convenience so test files don't need a separate import.
 export { SymbolType, AttrKey };
 export type { IndexSymbol, ChunkingConfig };
+
+/**
+ * Resolve the absolute path to a tree-sitter WASM grammar file.
+ *
+ * Assumes tests are launched via `npm test` (or any equivalent that runs
+ * from the project root), so that `process.cwd()` resolves to the
+ * project root.
+ *
+ * @param grammar - The grammar filename (e.g. `'cpp.wasm'`, `'markdown.wasm'`).
+ */
+export function getWasmPath(grammar: string): string {
+    return path.join(process.cwd(), 'bin', 'tree-sitter', 'languages', grammar);
+}
 
 /** Plain-object form of IndexSymbol for deep-equal comparison. */
 export interface ComparableSymbol {

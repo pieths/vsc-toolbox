@@ -15,7 +15,6 @@
 
 import { describe, it, before } from 'node:test';
 import * as assert from 'node:assert/strict';
-import * as path from 'node:path';
 import { Parser, Language } from 'web-tree-sitter';
 import { markdownParser } from '../../../../src/common/index/parsers/markdown/markdownParser';
 import {
@@ -31,15 +30,13 @@ import {
     debugPrintSyntaxTree,
     setUniformTokenizer,
     makeChunkingConfig,
+    getWasmPath,
 } from './parserTestUtils';
 
 // ── Paths ───────────────────────────────────────────────────────────────────
 
-/** Project root (five levels up from out-test/tests/common/index/parsers/) */
-const ROOT = path.resolve(__dirname, '..', '..', '..', '..', '..');
-
 /** WASM grammar for Markdown (block-level only) */
-const MD_WASM = path.join(ROOT, 'bin', 'tree-sitter', 'languages', 'markdown.wasm');
+const MD_WASM = getWasmPath('markdown.wasm');
 
 // ── Shared state ────────────────────────────────────────────────────────────
 
