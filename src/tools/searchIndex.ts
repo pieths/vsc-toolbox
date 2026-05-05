@@ -13,7 +13,7 @@ import {
     AttrKey,
     symbolTypeToString,
     CALLABLE_TYPES
-} from '../common/index';
+} from '../contentIndex';
 import { log } from '../common/logger';
 import { createMarkdownCodeBlock } from '../common/markdownUtils';
 import { sendLanguageModelRequest } from '../common/languageModelUtils';

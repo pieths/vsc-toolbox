@@ -9,8 +9,8 @@ import {
     AttrKey,
     symbolTypeToString,
     CALLABLE_TYPES,
-} from '../common/index';
-import type { FileSymbols, IndexSymbol } from '../common/index';
+} from '../contentIndex';
+import type { FileSymbols, IndexSymbol } from '../contentIndex';
 import { sendLanguageModelRequest } from '../common/languageModelUtils';
 import { log } from '../common/logger';
 import { createMarkdownCodeBlock } from '../common/markdownUtils';

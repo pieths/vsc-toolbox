@@ -9,14 +9,14 @@
  *   hydrateSymbols() — raw symbol arrays → IndexSymbol[]
  *
  * This test can be run from the command line with:
- * npx tsc -p tests/tsconfig.json; node --test out-test/tests/common/index/parsers/markdownParser.symbols.test.js
+ * npx tsc -p tests/tsconfig.json; node --test out-test/tests/contentIndex/parsers/markdownParser.symbols.test.js
  */
 
 import { describe, it, before } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { Parser, Language } from 'web-tree-sitter';
-import { markdownParser } from '../../../../src/common/index/parsers/markdown/markdownParser';
-import { SymbolType } from '../../../../src/common/index/parsers/types';
+import { markdownParser } from '../../../src/contentIndex/parsers/markdown/markdownParser';
+import { SymbolType } from '../../../src/contentIndex/parsers/types';
 import {
     toComparable,
     expectedSymbol,

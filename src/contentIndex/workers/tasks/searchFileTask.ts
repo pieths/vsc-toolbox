@@ -11,7 +11,7 @@ import * as path from 'path';
 import type {
     SearchOutput,
 } from '../../types';
-import { parseQueryAsAndOr } from '../../../queryParser';
+import { parseQueryAsAndOr } from '../../../common/queryParser';
 
 // Load the native addon using an absolute path to the .node file.
 // The require() call loads the generated index.js which handles

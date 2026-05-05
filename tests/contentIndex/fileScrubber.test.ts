@@ -15,13 +15,13 @@
  *     cache invalidation)
  *
  * Run with:
- * npx tsc -p tests/tsconfig.json; node --test out-test/tests/common/index/fileScrubber.test.js
+ * npx tsc -p tests/tsconfig.json; node --test out-test/tests/contentIndex/fileScrubber.test.js
  */
 
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { FileScrubber } from '../../../src/common/index/fileScrubber';
-import type { FileScrubPatterns } from '../../../src/common/index/fileScrubber';
+import { FileScrubber } from '../../src/contentIndex/fileScrubber';
+import type { FileScrubPatterns } from '../../src/contentIndex/fileScrubber';
 
 // ── validatePatterns ────────────────────────────────────────────────
 

@@ -4,7 +4,7 @@
 import watcher from '@parcel/watcher';
 import { CacheManager } from './cacheManager';
 import { PathFilter } from './pathFilter';
-import { log, warn } from '../logger';
+import { log, warn } from '../common/logger';
 
 /**
  * FileWatcher monitors file system changes and updates the cache accordingly.

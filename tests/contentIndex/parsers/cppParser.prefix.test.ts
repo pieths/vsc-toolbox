@@ -5,18 +5,18 @@
  * Tests for the C/C++ parser ({@link cppParser}).
  *
  * This test can be run from the command line with:
- * npx tsc -p tests/tsconfig.json; node --test out-test/tests/common/index/parsers/cppParser.prefix.test.js
+ * npx tsc -p tests/tsconfig.json; node --test out-test/tests/contentIndex/parsers/cppParser.prefix.test.js
  */
 
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { cppParser } from '../../../../src/common/index/parsers/cpp/cppParser';
+import { cppParser } from '../../../src/contentIndex/parsers/cpp/cppParser';
 import {
     _buildContextPrefix as buildContextPrefix,
     _FILE_ONLY_OVERHEAD as FILE_ONLY_OVERHEAD,
     _CONTAINER_OVERHEAD as CONTAINER_OVERHEAD,
     _SIGNATURE_LINE_OVERHEAD as SIGNATURE_LINE_OVERHEAD,
-} from '../../../../src/common/index/parsers/cpp/chunker';
+} from '../../../src/contentIndex/parsers/cpp/chunker';
 
 // ── buildContextPrefix ──────────────────────────────────────────────────────
 

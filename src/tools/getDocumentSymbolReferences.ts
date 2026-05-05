@@ -5,7 +5,7 @@ import * as vscode from 'vscode';
 import picomatch from 'picomatch';
 import { createMarkdownCodeBlock } from '../common/markdownUtils';
 import { getFunctionSignatureRange } from '../common/documentUtils';
-import { ContentIndex, IndexSymbol, AttrKey, symbolTypeToString, CALLABLE_TYPES } from '../common/index';
+import { ContentIndex, IndexSymbol, AttrKey, symbolTypeToString, CALLABLE_TYPES } from '../contentIndex';
 import { ScopedFileCache } from '../common/scopedFileCache';
 import { sendLanguageModelRequest } from '../common/languageModelUtils';
 import { log } from '../common/logger';

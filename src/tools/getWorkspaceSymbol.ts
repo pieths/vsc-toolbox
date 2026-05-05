@@ -6,7 +6,7 @@ import picomatch from 'picomatch';
 import { createMarkdownCodeBlock } from '../common/markdownUtils';
 import { getFunctionSignatureRange } from '../common/documentUtils';
 import { ScopedFileCache } from '../common/scopedFileCache';
-import { ContentIndex } from '../common/index/contentIndex';
+import { ContentIndex } from '../contentIndex';
 import { sendLanguageModelRequest } from '../common/languageModelUtils';
 import { log } from '../common/logger';
 

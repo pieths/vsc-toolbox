@@ -4,7 +4,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { ContentIndex } from '../../common/index';
+import { ContentIndex } from '../../contentIndex';
 import { log } from '../../common/logger';
 import { ChunkRef, TrainingSample } from './types';
 

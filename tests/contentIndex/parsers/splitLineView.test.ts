@@ -5,12 +5,12 @@
  * Tests for the {@link SplitLineView} class.
  *
  * This test can be run from the command line with:
- * npx tsc -p tests/tsconfig.json; node --test out-test/tests/common/index/parsers/splitLineView.test.js
+ * npx tsc -p tests/tsconfig.json; node --test out-test/tests/contentIndex/parsers/splitLineView.test.js
  */
 
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { SplitLineView } from '../../../../src/common/index/parsers/splitLineView';
+import { SplitLineView } from '../../../src/contentIndex/parsers/splitLineView';
 
 // ── Constructor / Fast Path ─────────────────────────────────────────────────
 

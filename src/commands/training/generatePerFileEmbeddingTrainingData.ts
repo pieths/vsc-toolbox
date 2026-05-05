@@ -12,7 +12,7 @@ import {
     getModel,
     sendLanguageModelRequest,
 } from '../../common/languageModelUtils';
-import { ContentIndex, NearestEmbeddingResult } from '../../common/index';
+import { ContentIndex, NearestEmbeddingResult } from '../../contentIndex';
 import { ChunkRef, TrainingSample } from './types';
 import { ScopedFileCache } from '../../common/scopedFileCache';
 import { log } from '../../common/logger';

@@ -3,7 +3,7 @@
 
 import * as path from 'path';
 import picomatch from 'picomatch';
-import { log } from '../logger';
+import { log } from '../common/logger';
 
 /**
  * PathFilter centralizes all file/directory inclusion and exclusion logic

@@ -26,7 +26,7 @@ import { LlamaServer } from './embeddings/llamaServer';
 import { PathFilter } from './pathFilter';
 import { FileSymbols } from './fileSymbols';
 import { rankFiles } from './bm25';
-import { configureLogger } from '../logger';
+import { configureLogger } from '../common/logger';
 import type {
     ContentIndexConfig,
     ContentIndexRequest,

@@ -40,7 +40,7 @@ import * as path from 'path';
 import type { Connection, Table } from '@lancedb/lancedb';
 import type { Table as ArrowTable } from 'apache-arrow';
 import { DatabaseSync } from 'node:sqlite';
-import { log, warn, error } from '../../logger';
+import { log, warn, error } from '../../common/logger';
 
 // ── Public types ────────────────────────────────────────────────────────────
 

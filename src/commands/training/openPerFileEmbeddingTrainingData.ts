@@ -4,7 +4,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { ContentIndex, NearestEmbeddingResult } from '../../common/index';
+import { ContentIndex, NearestEmbeddingResult } from '../../contentIndex';
 import { ScopedFileCache } from '../../common/scopedFileCache';
 import { ChunkRef, TrainingSample } from './types';
 

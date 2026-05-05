@@ -21,7 +21,7 @@ import { FileSymbols } from './fileSymbols';
 import { FileScrubber } from './fileScrubber';
 import type { FileScrubPatterns } from './fileScrubber';
 import type { IndexSymbol } from './parsers/types';
-import { debug, log, warn, error } from '../logger';
+import { debug, log, warn, error } from '../common/logger';
 
 /** Query request types that use messageId-based correlation. */
 type ContentIndexQueryRequest =

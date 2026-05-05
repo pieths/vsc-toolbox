@@ -51,7 +51,7 @@ const extensionConfig = {
 // real value so the emscripten bootstrap can resolve paths correctly.
 const workerConfig = {
     ...sharedOptions,
-    entryPoints: ['src/common/index/workers/workerThread.ts'],
+    entryPoints: ['src/contentIndex/workers/workerThread.ts'],
     outfile: 'out/workerThread.js',
     define: {
         'import.meta.url': 'importMetaUrl',
@@ -67,7 +67,7 @@ const workerConfig = {
 // imports @lancedb/lancedb which depends on the native addon.
 const vectorCacheHostConfig = {
     ...sharedOptions,
-    entryPoints: ['src/common/index/vectorCache/vectorCacheHost.ts'],
+    entryPoints: ['src/contentIndex/vectorCache/vectorCacheHost.ts'],
     outfile: 'out/vectorCacheHost.js',
     external: ['@lancedb/lancedb-win32-x64-msvc'],
 };
@@ -77,7 +77,7 @@ const vectorCacheHostConfig = {
 // Native addons must be external since esbuild cannot bundle them.
 const contentIndexHostConfig = {
     ...sharedOptions,
-    entryPoints: ['src/common/index/contentIndexHost.ts'],
+    entryPoints: ['src/contentIndex/contentIndexHost.ts'],
     outfile: 'out/contentIndexHost.js',
     external: ['@parcel/watcher-win32-x64', '@lancedb/lancedb-win32-x64-msvc'],
 };

@@ -5,17 +5,17 @@
  * Tests for the Markdown parser ({@link markdownParser}).
  *
  * This test can be run from the command line with:
- * npx tsc -p tests/tsconfig.json; node --test out-test/tests/common/index/parsers/markdownParser.prefix.test.js
+ * npx tsc -p tests/tsconfig.json; node --test out-test/tests/contentIndex/parsers/markdownParser.prefix.test.js
  */
 
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { markdownParser } from '../../../../src/common/index/parsers/markdown/markdownParser';
+import { markdownParser } from '../../../src/contentIndex/parsers/markdown/markdownParser';
 import {
     _buildContextPrefix as buildContextPrefix,
     _FILE_ONLY_OVERHEAD as FILE_ONLY_OVERHEAD,
     _FULL_PREFIX_OVERHEAD as FULL_PREFIX_OVERHEAD,
-} from '../../../../src/common/index/parsers/markdown/chunker';
+} from '../../../src/contentIndex/parsers/markdown/chunker';
 
 // ── buildContextPrefix ──────────────────────────────────────────────────────
 

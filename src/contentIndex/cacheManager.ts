@@ -20,7 +20,7 @@ import { PathFilter } from './pathFilter';
 import { SymbolCache } from './symbolCache';
 import type { IndexSymbol } from './parsers/types';
 import type { FileScrubPatterns } from './fileScrubber';
-import { log, warn, error } from '../logger';
+import { log, warn, error } from '../common/logger';
 
 /** Mutation queue entry — ordered for temporal "last action wins" collapse. */
 interface FileMutationEntry {

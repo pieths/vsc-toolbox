@@ -6,7 +6,7 @@ import { TOOL_REGISTRY } from './tools/index';
 import { COMMAND_REGISTRY } from './commands/index';
 import { configureLogger, log } from './common/logger';
 import { initializeLanguageModelUtils } from './common/languageModelUtils';
-import { ContentIndex } from './common/index';
+import { ContentIndex } from './contentIndex';
 
 // ── Logger initialization ─────────────────────────────────────────────
 

@@ -19,7 +19,7 @@ import {
     ChunkingConfig,
 } from '../types';
 import type { FileScrubPatterns } from '../fileScrubber';
-import { debug, log, warn, error } from '../../logger';
+import { debug, log, warn, error } from '../../common/logger';
 
 type WorkerMessage = WorkerBatchResponse | WorkerLogMessage;
 

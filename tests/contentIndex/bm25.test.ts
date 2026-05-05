@@ -16,13 +16,13 @@
  *   - Score is always non-negative
  *
  * Run with:
- * npx tsc -p tests/tsconfig.json; node --test out-test/tests/common/index/bm25.test.js
+ * npx tsc -p tests/tsconfig.json; node --test out-test/tests/contentIndex/bm25.test.js
  */
 
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { rankFiles } from '../../../src/common/index/bm25';
-import type { SearchOutput } from '../../../src/common/index/types';
+import { rankFiles } from '../../src/contentIndex/bm25';
+import type { SearchOutput } from '../../src/contentIndex/types';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 

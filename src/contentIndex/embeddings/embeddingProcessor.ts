@@ -13,7 +13,7 @@ import {
 import { LlamaServer } from './llamaServer';
 import { FileChunkInput, FileChunkRecord, VectorDatabase } from './vectorDatabase';
 import { VectorCacheClient } from '../vectorCache/vectorCacheClient';
-import { log, warn } from '../../logger';
+import { log, warn } from '../../common/logger';
 import * as http from 'http';
 
 /**

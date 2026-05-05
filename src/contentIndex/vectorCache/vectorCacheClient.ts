@@ -19,7 +19,7 @@ import type {
     VectorCacheGetEmbeddingsResponse,
     VectorCacheAddEmbeddingsResponse,
 } from '../types';
-import { debug, log, warn, error } from '../../logger';
+import { debug, log, warn, error } from '../../common/logger';
 
 /** Maximum time (ms) to wait for the child process to send init-ack */
 const INIT_TIMEOUT_MS = 30000;

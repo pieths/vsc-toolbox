@@ -7,10 +7,10 @@
 
 import * as path from 'node:path';
 import type { Node as SyntaxNode } from 'web-tree-sitter';
-import { SymbolType, AttrKey } from '../../../../src/common/index/parsers/types';
-import type { IndexSymbol } from '../../../../src/common/index/parsers/types';
-import type { ChunkingConfig } from '../../../../src/common/index/types';
-import { _setGetTokenCountsMock } from '../../../../src/common/index/parsers/chunkUtils';
+import { SymbolType, AttrKey } from '../../../src/contentIndex/parsers/types';
+import type { IndexSymbol } from '../../../src/contentIndex/parsers/types';
+import type { ChunkingConfig } from '../../../src/contentIndex/types';
+import { _setGetTokenCountsMock } from '../../../src/contentIndex/parsers/chunkUtils';
 
 // Re-export for convenience so test files don't need a separate import.
 export { SymbolType, AttrKey };
