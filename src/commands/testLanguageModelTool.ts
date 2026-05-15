@@ -224,12 +224,12 @@ export class TestLanguageModelToolCommand {
         const maxResults = maxResultsStr ? parseInt(maxResultsStr, 10) : undefined;
 
         const contextLinesStr = await vscode.window.showInputBox({
-            prompt: 'Enter number of context lines before and after each match (default 5)',
+            prompt: 'Enter number of context lines before and after each match (default 0)',
             placeHolder: 'e.g., 0, 5, 10',
-            value: '5',
+            value: '0',
         });
 
-        const contextLines = contextLinesStr ? parseInt(contextLinesStr, 10) : 5;
+        const contextLines = contextLinesStr ? parseInt(contextLinesStr, 10) : 0;
 
         // If the query starts with "/" treat it as a regex pattern
         const isRegexp = query.startsWith('/');
