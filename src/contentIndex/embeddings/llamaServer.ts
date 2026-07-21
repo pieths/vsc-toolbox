@@ -770,7 +770,12 @@ export class LlamaServer {
             logError('Unexpected embedding response format');
             return null;
         } catch (err) {
-            logError(`Embedding error: ${err}`);
+            logError(
+                `Embedding error: ${err}\n` +
+                `  forIndexing:  ${forIndexing}\n` +
+                `  Text Length:  ${text.length}\n` +
+                `  Text:         ${text}`
+            );
             return null;
         }
     }
@@ -896,7 +901,7 @@ export class LlamaServer {
                 });
             });
             request.on('error', reject);
-            request.setTimeout(300000, () => {
+            request.setTimeout(10000, () => {
                 request.destroy();
                 reject(new Error('Request timed out'));
             });
