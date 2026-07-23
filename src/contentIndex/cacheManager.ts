@@ -279,6 +279,20 @@ export class CacheManager {
                 }
             }
 
+            // Purge embeddings for files that are still indexed but are now
+            // excluded from embedding (e.g. embeddingExcludePatterns changed).
+            // Runs before the drain loop starts, so there is no concurrent
+            // database access.
+            if (this.vectorDatabase) {
+                const toPurge = this.vectorDatabase.getAllFilePaths().filter(
+                    p => this.pathFilter!.shouldIncludeFile(p) && !this.pathFilter!.shouldEmbedFile(p)
+                );
+                if (toPurge.length > 0) {
+                    await this.vectorDatabase.deleteByFilePaths(toPurge);
+                    log(`Content index: Purged embeddings for ${toPurge.length} now-excluded files`);
+                }
+            }
+
             // Initial mutation queue is fully assembled — allow
             // the drain loop to start. Any mutations queued by the
             // FileWatcher during the directory scan are still in the
@@ -427,7 +441,15 @@ export class CacheManager {
             return;
         }
 
-        await this.embeddingProcessor.run(files);
+        // Skip files excluded from embeddings
+        const embeddable = files.filter(
+            fi => this.pathFilter!.shouldEmbedFile(fi.getFilePath())
+        );
+        if (embeddable.length === 0) {
+            return;
+        }
+
+        await this.embeddingProcessor.run(embeddable);
     }
 
     /**

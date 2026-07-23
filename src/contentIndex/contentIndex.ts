@@ -47,6 +47,7 @@ function getConfig(): ContentIndexConfig {
 
     const includePaths = config.get<string[]>('includePaths', []);
     const excludePatterns = config.get<string[]>('excludePatterns', []);
+    const embeddingExcludePatterns = config.get<string[]>('embeddingExcludePatterns', []);
     const fileExtensions = config.get<string[]>('fileExtensions', ['.cc', '.h']);
     const enableEmbeddings = config.get<boolean>('enableEmbeddings', false);
     const enableInMemoryVectorSearch = config.get<boolean>('enableInMemoryVectorSearch', false);
@@ -71,6 +72,7 @@ function getConfig(): ContentIndexConfig {
         workerThreads,
         includePaths,
         excludePatterns,
+        embeddingExcludePatterns,
         fileExtensions,
         enableEmbeddings,
         enableInMemoryVectorSearch,

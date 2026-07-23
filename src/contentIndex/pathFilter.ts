@@ -19,6 +19,7 @@ export class PathFilter {
     private normalizedIncludePaths: string[] = [];
     private readonly fileExtensions: string[];
     private readonly excludeMatcher: ((testPath: string) => boolean) | null;
+    private readonly embeddingExcludeMatcher: ((testPath: string) => boolean) | null;
 
     /**
      * Create a new PathFilter.
@@ -34,6 +35,8 @@ export class PathFilter {
      * @param includePaths - Directory paths to include (empty = workspace folders)
      * @param excludePatterns - Picomatch glob patterns to exclude
      *   (e.g., `d:/cs/src/chrome/{fuchsia,mac,linux}/**`)
+     * @param embeddingExcludePatterns - Picomatch glob patterns for files that
+     *   are indexed but excluded from embeddings
      * @param fileExtensions - File extensions to include (e.g., '.cc', '.h')
      * @param knowledgeBaseDirectory - Optional knowledge base directory to always include
      * @param workspaceFolders - Workspace folder paths used as fallback when includePaths is empty
@@ -41,6 +44,7 @@ export class PathFilter {
     constructor(
         includePaths: string[],
         excludePatterns: string[],
+        embeddingExcludePatterns: string[],
         fileExtensions: string[],
         knowledgeBaseDirectory?: string,
         workspaceFolders?: string[],
@@ -81,8 +85,14 @@ export class PathFilter {
             ? picomatch(excludePatterns, { windows: true })
             : null;
 
+        // Compile embedding-exclude patterns.
+        this.embeddingExcludeMatcher = embeddingExcludePatterns.length > 0
+            ? picomatch(embeddingExcludePatterns, { windows: true })
+            : null;
+
         log(`PathFilter: includePaths =\n${JSON.stringify(this.includePaths, null, 2)}`);
         log(`PathFilter: excludePatterns =\n${JSON.stringify(excludePatterns, null, 2)}`);
+        log(`PathFilter: embeddingExcludePatterns =\n${JSON.stringify(embeddingExcludePatterns, null, 2)}`);
         log(`PathFilter: fileExtensions =\n${JSON.stringify(this.fileExtensions, null, 2)}`);
     }
 
@@ -120,6 +130,26 @@ export class PathFilter {
             return false;
         }
 
+        return true;
+    }
+
+    /**
+     * Check whether a file should be embedded (i.e. have vectors generated).
+     *
+     * A file is embedded when it is included in the index
+     * ({@link shouldIncludeFile}) and does not match any embedding-exclude
+     * pattern.
+     *
+     * @param filePath - Absolute file path to test
+     * @returns true if the file should be embedded
+     */
+    shouldEmbedFile(filePath: string): boolean {
+        if (!this.shouldIncludeFile(filePath)) {
+            return false;
+        }
+        if (this.embeddingExcludeMatcher && this.embeddingExcludeMatcher(filePath)) {
+            return false;
+        }
         return true;
     }
 

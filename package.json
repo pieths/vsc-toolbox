@@ -194,6 +194,14 @@
           "default": [],
           "description": "List of picomatch glob patterns to exclude from the index. Files matching any pattern will not be indexed. Supports brace expansion for compact notation. Example: 'd:/cs/src/chrome/{fuchsia,mac,linux}/**' excludes the fuchsia, mac, and linux subdirectories under chrome."
         },
+        "vscToolbox.contentIndex.embeddingExcludePatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "List of picomatch glob patterns to exclude from embeddings."
+        },
         "vscToolbox.contentIndex.fileExtensions": {
           "type": "array",
           "items": {

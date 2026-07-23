@@ -102,6 +102,7 @@ async function startComponents(config: ContentIndexConfig): Promise<number> {
             workerThreads: configWorkerThreads,
             includePaths,
             excludePatterns,
+            embeddingExcludePatterns,
             fileExtensions,
             enableEmbeddings,
             enableInMemoryVectorSearch,
@@ -126,8 +127,12 @@ async function startComponents(config: ContentIndexConfig): Promise<number> {
         cacheManager = new CacheManager();
         threadPool = new ThreadPool(workerThreads);
         pathFilter = new PathFilter(
-            includePaths, excludePatterns, fileExtensions,
-            knowledgeBaseDirectory, workspaceFolders,
+            includePaths,
+            excludePatterns,
+            embeddingExcludePatterns,
+            fileExtensions,
+            knowledgeBaseDirectory,
+            workspaceFolders,
         );
         fileWatcher = new FileWatcher(cacheManager, pathFilter);
         await fileWatcher.initialize();

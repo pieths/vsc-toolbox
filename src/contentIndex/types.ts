@@ -384,6 +384,8 @@ export interface ContentIndexConfig {
     includePaths: string[];
     /** Picomatch glob patterns to exclude from the index */
     excludePatterns: string[];
+    /** Picomatch glob patterns for files that are indexed but excluded from embeddings */
+    embeddingExcludePatterns: string[];
     /** List of file extensions to include (e.g., '.cc', '.h') */
     fileExtensions: string[];
     /** Whether to enable embedding generation and vector search */
